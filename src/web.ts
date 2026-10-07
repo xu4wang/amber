@@ -161,6 +161,15 @@ export function startWeb(port: number, store: Store, deps: WebDeps): void {
           if (!r || r.callerUnionId !== who.unionId) return json(res, 404, { ok: false, error: 'not_found', message: '没有这条运行记录' });
           return json(res, 200, { ok: true, id: r.id, status: r.status, markdown: r.result ?? '', error: r.error, startedAt: r.startedAt });
         }
+        if (req.method === 'GET' && (m = /^\/web\/api\/commands\/([A-Za-z0-9-]{1,40})\/source$/.exec(url.pathname))) {
+          // Same visibility rule as running it: anyone who may run a command may read its code.
+          const t = await target(store, deps, who.unionId, String(url.searchParams.get('scope') ?? ''), m[1]);
+          const c = t.cmd;
+          const review = store.getReview(c.id);
+          return json(res, 200, { ok: true, id: c.id, name: c.name, specHash: c.specHash, createdAt: c.createdAt,
+            script: { kind: c.script.kind, lang: c.script.lang, network: !!c.script.network, services: c.script.services ?? [], timeoutMs: c.script.timeoutMs ?? 30000, code: c.script.code },
+            params: c.params, options: c.options, reviewDocUrl: review.docUrl ?? null });
+        }
         if (req.method !== 'POST') return json(res, 404, { ok: false, error: 'not_found' });
         // Cross-site request protection: JSON only (forces a CORS preflight, which is never granted) and same origin.
         const origin = req.headers.origin;

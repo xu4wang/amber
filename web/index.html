@@ -100,6 +100,11 @@ details.node details.node > summary { font-weight: 500; color: var(--muted); }
 .output td.num { text-align: right; font-variant-numeric: tabular-nums; }
 .output .meta { color: var(--muted); font-size: 12px; margin-top: 10px; border-top: 1px dashed var(--line); padding-top: 8px; }
 .output .chart { width: 100%; margin: 8px 0; }
+.code { background: var(--bg); border: 1px solid var(--line); border-radius: 10px; overflow: auto; font: 13px/1.55 ui-monospace, Menlo, monospace; margin: 0; padding: 10px 0; max-height: 70vh; }
+.code .ln { display: inline-block; width: 3.5em; padding-right: 12px; text-align: right; color: var(--muted); user-select: none; }
+.code .row { white-space: pre; padding-right: 16px; }
+.kv { display: grid; grid-template-columns: 110px 1fr; gap: 4px 12px; font-size: 14px; margin-bottom: 12px; }
+.kv dt { color: var(--muted); } .kv dd { margin: 0; word-break: break-all; }
 .welcome { color: var(--muted); max-width: 560px; margin-top: 40px; }
 .welcome h2 { color: var(--ink); font-size: 20px; }
 .back { display: none; }
@@ -301,7 +306,7 @@ function cmdPane(key, { c, scope }) {
     <div class="where">${esc(scopeName(scope))} · 指令 ${esc(c.id)}</div>
     ${c.description ? `<div class="desc">${esc(c.description)}</div>` : '<div class="desc"></div>'}
     <div class="box">
-      ${c.options.schedulable ? '<div class="tabs"><button class="on" data-tab="run">执行</button><button data-tab="sch">定时</button></div>' : ''}
+      <div class="tabs"><button class="on" data-tab="run">执行</button>${c.options.schedulable ? '<button data-tab="sch">定时</button>' : ''}<button data-tab="code">代码</button></div>
       <form data-form="run">${c.params.length ? paramInputs(c) : '<p class="note">这条指令没有参数。</p>'}
         ${c.options.confirm ? '<p class="note" style="color:var(--warn)">⚠️ 执行前需要确认：请核对参数，按钮要点两次。</p>' : ''}
         <div class="actions"><button class="btn ${c.options.confirm ? 'danger' : 'primary'}" data-do="run">${c.options.confirm ? '确认执行' : '执行'}</button>
@@ -312,9 +317,10 @@ function cmdPane(key, { c, scope }) {
         <p class="note">每次都以你的身份自动执行；结果发到${scope.startsWith('group:') ? '这个群' : '你和 Amber 的私聊'}，没有输出时不发。</p>
         <div class="actions"><button class="btn primary" data-do="sch">${c.options.confirm ? '确认并创建定时任务' : '创建定时任务'}</button></div>
         <div class="sch-msg note" style="margin-top:8px"></div></form>` : ''}
+      <form data-form="code" style="display:none"><div id="src" class="note">读取中……</div></form>
     </div>
-    <h3 class="note" style="margin:0 0 8px">执行结果</h3>
-    <div class="output wait" id="out">${last ? '' : '还没有在这里执行过。'}</div>`;
+    <div class="result-area"><h3 class="note" style="margin:0 0 8px">执行结果</h3>
+    <div class="output wait" id="out">${last ? '' : '还没有在这里执行过。'}</div></div>`;
   if (last) showOutput(document.getElementById('out'), last.r, last.meta);
 }
 
@@ -350,6 +356,29 @@ async function runPane({ r }) {
   showOutput(out, { ok: true, markdown: x.markdown });
 }
 
+async function loadSource() {
+  const el = document.getElementById('src');
+  const it = ITEMS.get(SEL);
+  if (!el || !it || it.kind !== 'cmd' || el.dataset.loaded) return;
+  const x = await fetch(`/web/api/commands/${encodeURIComponent(it.c.id)}/source?scope=${encodeURIComponent(it.scope)}`).then(r => r.json()).catch(() => ({ ok: false }));
+  if (!x.ok) { el.textContent = x.message || '读取失败'; return; }
+  el.dataset.loaded = '1';
+  const sc = x.script;
+  const how = sc.kind === 'privileged' ? '特权脚本（不在沙盒里运行，管理员批准）' : '沙盒脚本';
+  const net = sc.network ? '可访问外网' : sc.services.length ? `以执行人身份调用：${sc.services.join('、')}（不能访问外网）` : '不联网';
+  const lines = sc.code.replace(/\n$/, '').split('\n').map((l, i) => `<div class="row"><span class="ln">${i + 1}</span>${esc(l)}</div>`).join('');
+  el.className = '';
+  el.innerHTML = `<dl class="kv">
+      <dt>运行方式</dt><dd>${esc(how)}，${esc(net)}，超时 ${sc.timeoutMs / 1000} 秒</dd>
+      <dt>语言</dt><dd>${esc(sc.lang)}</dd>
+      <dt>版本</dt><dd><code>${esc(x.specHash)}</code></dd>
+      <dt>生效时间</dt><dd>${fmtTime(x.createdAt)}</dd>
+      ${x.reviewDocUrl ? `<dt>审核文档</dt><dd><a href="${esc(x.reviewDocUrl)}" target="_blank" rel="noopener noreferrer">在飞书知识库查看</a></dd>` : ''}
+    </dl>
+    <pre class="code">${lines}</pre>
+    <p class="note">这就是审核通过、实际运行的代码。版本是指令定义（名称、参数、代码、选项）的哈希，每次执行前都会重新核对。</p>`;
+}
+
 function formArgs(form) {
   const args = {};
   form.querySelectorAll('input[name]').forEach(i => { if (!i.name.startsWith('__') && i.value.trim()) args[i.name] = i.value.trim(); });
@@ -378,6 +407,8 @@ document.addEventListener('click', async ev => {
   if (tab) {
     tab.parentElement.querySelectorAll('button').forEach(b => b.classList.toggle('on', b === tab));
     document.querySelectorAll('#pane form').forEach(f => { f.style.display = f.dataset.form === tab.dataset.tab ? '' : 'none'; });
+    document.querySelectorAll('#pane .result-area').forEach(x => { x.style.display = tab.dataset.tab === 'code' ? 'none' : ''; });
+    if (tab.dataset.tab === 'code') loadSource();
     return;
   }
   const doBtn = ev.target.closest('[data-do]');
