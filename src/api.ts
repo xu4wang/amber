@@ -20,7 +20,7 @@ function readBody(req: IncomingMessage): Promise<any> {
   });
 }
 
-export function startApi(port: number, machines: Record<string, string>, flow: Flow, agent: AgentGate, jwks: () => object, info: { webUrl: string }): void {
+export function startApi(port: number, machines: Record<string, string>, flow: Flow, agent: AgentGate, jwks: () => object, info: { webUrl: string }): import('node:http').Server {
   const server = createServer(async (req, res) => {
     const reply = (status: number, body: unknown) => {
       res.writeHead(status, { 'content-type': 'application/json; charset=utf-8' });
@@ -71,4 +71,5 @@ export function startApi(port: number, machines: Record<string, string>, flow: F
     }
   });
   server.listen(port, '127.0.0.1', () => console.log(new Date().toISOString(), `api listening on 127.0.0.1:${port}`));
+  return server;
 }

@@ -4,11 +4,14 @@
   "private": true,
   "description": "Run it once. Keep it forever. — freeze LLM-assisted operations into reviewed, deterministic commands for Feishu.",
   "type": "module",
-  "engines": { "node": ">=24" },
+  "engines": {
+    "node": ">=24"
+  },
   "scripts": {
     "start": "node src/main.ts",
     "cli": "node src/cli.ts",
-    "test": "node --test test/"
+    "test": "node --no-warnings --test --test-force-exit --test-timeout=60000 test/*.test.ts",
+    "smoke": "node --no-warnings test/smoke.ts"
   },
   "dependencies": {
     "@larksuiteoapi/node-sdk": "1.74.0"

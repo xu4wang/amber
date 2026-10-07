@@ -101,7 +101,7 @@ const SECURITY_HEADERS = {
   'cache-control': 'no-store',
 };
 
-export function startWeb(port: number, store: Store, deps: WebDeps): void {
+export function startWeb(port: number, store: Store, deps: WebDeps): import('node:http').Server {
   const page = readFileSync(join(import.meta.dirname, '..', 'web', 'index.html'), 'utf8').replace('__FEISHU_CHAT_LINK__', deps.feishuChatLink);
   const logo = readFileSync(join(import.meta.dirname, '..', 'web', 'logo.svg'));
   // Documentation (docs/*.md), readable without logging in. Rendered in the browser.
@@ -246,6 +246,7 @@ export function startWeb(port: number, store: Store, deps: WebDeps): void {
     }
   });
   server.listen(port, '127.0.0.1', () => console.log(new Date().toISOString(), `web listening on 127.0.0.1:${port}`));
+  return server;
 }
 
 function cmdView(c: CommandRow, viewer?: string, isAdmin?: (u: string) => boolean, store?: Store) {

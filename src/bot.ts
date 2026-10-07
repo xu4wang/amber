@@ -40,11 +40,15 @@ export class AmberBot {
   agent: AgentGate;
   scheduler: Scheduler;
 
-  constructor(cfg: AmberConfig, store: Store) {
+  private timers: boolean;
+
+  /** `inject` is for tests: a fake Feishu client / long connection, and no background timers. */
+  constructor(cfg: AmberConfig, store: Store, inject: { client?: unknown; ws?: unknown; timers?: boolean } = {}) {
     this.cfg = cfg;
     this.store = store;
-    this.client = new lark.Client({ appId: cfg.appId, appSecret: cfg.appSecret });
-    this.ws = new lark.WSClient({ appId: cfg.appId, appSecret: cfg.appSecret, loggerLevel: lark.LoggerLevel.warn });
+    this.timers = inject.timers ?? true;
+    this.client = (inject.client as lark.Client) ?? new lark.Client({ appId: cfg.appId, appSecret: cfg.appSecret });
+    this.ws = (inject.ws as lark.WSClient) ?? new lark.WSClient({ appId: cfg.appId, appSecret: cfg.appSecret, loggerLevel: lark.LoggerLevel.warn });
     this.signer = new Signer(cfg.configDir);
     this.flow = new Flow(this.client, store, cfg.reviewers);
     this.flow.signer = this.signer;
@@ -144,6 +148,7 @@ export class AmberBot {
       }
     };
     await poll();
+    if (!this.timers) return;
     setInterval(() => { poll().catch(() => {}); }, 60_000);
     this.scheduler.start();
   }
