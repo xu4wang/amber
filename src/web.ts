@@ -101,6 +101,11 @@ const SECURITY_HEADERS = {
 export function startWeb(port: number, store: Store, deps: WebDeps): void {
   const page = readFileSync(join(import.meta.dirname, '..', 'web', 'index.html'), 'utf8').replace('__FEISHU_CHAT_LINK__', deps.feishuChatLink);
   const logo = readFileSync(join(import.meta.dirname, '..', 'web', 'logo.svg'));
+  // Front-end libraries are served from this repo, never from an outside CDN.
+  const vendor = new Map<string, Buffer>();
+  for (const f of ['marked.min.js', 'purify.min.js', 'vega.min.js', 'vega-lite.min.js', 'vega-embed.min.js']) {
+    vendor.set(`/vendor/${f}`, readFileSync(join(import.meta.dirname, '..', 'web', 'vendor', f)));
+  }
 
   const send = (res: ServerResponse, status: number, type: string, body: string | Buffer, extra: Record<string, string | string[]> = {}) => {
     res.writeHead(status, { 'content-type': type, ...SECURITY_HEADERS, ...extra });
@@ -113,6 +118,7 @@ export function startWeb(port: number, store: Store, deps: WebDeps): void {
     const url = new URL(req.url ?? '/', 'http://amber');
     try {
       if (req.method === 'GET' && (url.pathname === '/' || url.pathname === '/index.html')) return send(res, 200, 'text/html; charset=utf-8', page);
+      if (req.method === 'GET' && vendor.has(url.pathname)) return send(res, 200, 'text/javascript; charset=utf-8', vendor.get(url.pathname)!, { 'cache-control': 'max-age=86400' });
       if (req.method === 'GET' && url.pathname === '/logo.svg') return send(res, 200, 'image/svg+xml', logo, { 'cache-control': 'max-age=86400' });
 
       if (req.method === 'GET' && url.pathname === '/login') {
