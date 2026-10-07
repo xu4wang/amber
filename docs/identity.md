@@ -1,0 +1,144 @@
+# 可信身份
+
+Amber 的核心约定是：**执行人是谁，只能由飞书告诉 Amber**，不能由 agent、模型或请求方自己声明。下面分三部分说明：Amber 怎么确认执行人；脚本调用后端服务时，怎么把这个身份可靠地交给服务；服务方怎么验证。
+
+## 1. 身份从哪来
+
+| 入口 | 执行人 | 身份来源 |
+|---|---|---|
+| 飞书里 @Amber 或私聊 Amber，在表单卡片上执行 | 发消息或点卡片的人 | 飞书事件里的 `sender` 或 `operator`（union_id） |
+| agent 调用 `amber run`，需要身份的指令 | **点确认卡片的人** | 卡片回调事件里的 `operator` |
+| agent 调用 `amber run`，不需要身份的指令 | 记为 `agent:<机器名>` | 不代表任何人，也不签发凭证 |
+| 定时任务 | 定时任务的创建人 | 创建时点「创建定时任务」的人（卡片事件），或者网站上已登录的人 |
+| 网站 | 已登录的人 | 网站登录（见下文），登录凭证只由 Amber 在本人私聊里发出 |
+| 认领时试运行 | 认领人 | 认领卡的点击事件 |
+
+几条刻意的限制：
+
+- **agent 接口不带凭证、只按 IP 放行**，所以它永远不能代表某个人。`--user` 只决定谁能点卡片、私聊里看哪个人的指令，不会作为执行身份。
+- 卡片指定了被请求人时，别人点击会被拒绝；群里的卡片只能在原来的群里点。
+- 确认卡片只能处理一次，24 小时后过期。
+- 指令的执行身份可以以后再加第四种来源：botmux MCP 网关在每次调用时签发的可信调用人。前提是 botmux 先修好「身份绑定在最后一次输入上」的问题。目前没有启用。
+
+## 2. 网站登录
+
+网站不用飞书 OAuth，也就不需要配置回调地址。
+
+1. 用户在飞书**私聊** Amber，发送「登录」。在群里发会被拒绝。
+2. Amber 生成一个 256 位的随机登录码，数据库里只存它的 sha256。回复一张卡片，按钮链接是 `<webBaseUrl>/login?t=<登录码>`。登录码和发消息的人（union_id）绑定，**5 分钟内有效、只能用一次**。
+3. 浏览器打开链接后，Amber 发放会话 cookie：`HttpOnly`、`SameSite=Lax`，有效期 7 天，服务端同样只存哈希。随后把那张卡片改成「已登录」，用户能立刻发现是否有人冒用。
+4. 私聊发「退出网站」，会让这个人在所有浏览器里的登录失效。
+
+为什么不用「网页上显示一串码，到 Amber 那里输入」：这种方式会被钓鱼。攻击者可以把自己网页上的码发给别人，骗对方去确认，结果攻击者的浏览器就以对方的身份登录了。现在的做法是登录凭证只出现在本人的私聊里，剩下的风险只有「本人把卡片转发给别人」，所以设计成一次性加短有效期。
+
+网站的写操作只接受 `application/json`，而且 `Origin` 必须是本站，用来防跨站请求。群指令只有确认登录人是群成员才能用；确认不了（比如缺权限）就一律拒绝。
+
+## 3. 执行身份凭证
+
+指令脚本要以执行人的身份调用后端服务（例如查数仓）时，Amber 会为**每次执行、每个声明的服务**签发一张短时效凭证。服务方只要信任 Amber 的公钥，不需要信任 Amber 的进程，更不需要信任脚本。
+
+### 3.1 Amber 保证什么
+
+| 保证 | 怎么做到 |
+|---|---|
+| 执行人可靠 | 只来自上面第 1 节的飞书事件或网站登录 |
+| 代码经过审核 | 认领人先试运行，所有审核人同意后指令才生效。凭证里的 `rev` 是审核通过那一版定义的哈希，每次执行前都会重新计算核对 |
+| 数据不外传 | 声明了服务的脚本，沙盒只放行这些服务的本机端口或 unix socket，外网和其他本机端口全部断开。声明服务和开放外网不能同时选，提交草稿时就会被拒绝 |
+| 用途受限 | 一张凭证只对一个服务有效（`aud` 由 Amber 配置决定，脚本改不了）；5 分钟过期；带一次性编号 `jti`；每次签发都写审计 |
+
+### 3.2 格式
+
+JWS Compact（即 JWT），算法 EdDSA（Ed25519）。
+
+```text
+header  { "alg": "EdDSA", "typ": "JWT", "kid": "<公钥指纹>" }
+payload {
+  "iss": "amber",
+  "aud": "data-mcp",          服务名，取自 Amber 配置 services.<名称>.audience
+  "sub": "on_…",              执行人的飞书 union_id
+  "cmd": "9bba8b5d",          指令 id
+  "rev": "075b025f…",         指令定义哈希（审核通过的那一版）
+  "run": "85df3e7f",          本次执行 id
+  "chat": "oc_…",             指令所属的群或私聊
+  "channel": "bot",           bot / web / agent / schedule；试运行时加 .trial，例如 bot.trial
+  "iat": 1791389686, "exp": 1791389986,
+  "jti": "uuid"
+}
+```
+
+### 3.3 配置服务
+
+在 Amber 的 `config.json` 里登记服务：
+
+```json
+"services": {
+  "data-mcp": { "audience": "data-mcp", "tcpPort": 8765 }
+}
+```
+
+`tcpPort` 也可以换成 `"unixSocket": "/path/to/service.sock"`。指令脚本声明 `"services": ["data-mcp"]` 后，运行时会从标准输入收到：
+
+```json
+{"services": {"data-mcp": {"token": "eyJhbGciOiJFZERTQSIs…", "tcpPort": 8765}}}
+```
+
+脚本调用服务时带上这个凭证，例如 `Authorization: Amber <token>`，具体怎么带由服务方决定。
+
+### 3.4 服务方怎么验证
+
+1. **取公钥**：在 Amber 所在的机器上请求 `GET http://127.0.0.1:7341/v1/keys`，返回 JWKS。可以缓存，遇到不认识的 `kid` 再刷新一次。
+2. **验签**：用 `kid` 对应的 Ed25519 公钥验证签名。
+3. **检查声明**：`iss == "amber"`，`aud ==` 本服务名，`exp` 没过期（建议允许 30 秒时钟误差）。
+4. **防重放**（建议）：记录用过的 `jti`，5 分钟内拒绝重复。
+5. **以 `sub`（union_id）作为调用人**，走和其他入口完全相同的权限判断；请求体里自称的任何身份字段一律忽略。
+6. **审计**：记录 `caller_source = "amber"`，以及 `cmd`、`rev`、`run`、`channel`。
+
+服务方还可以自己决定一些策略，比如拒绝试运行（`channel` 以 `.trial` 结尾）、对 `schedule` 来源单独限流、限制能查的库表。这些都在服务方实现，Amber 不需要改动。
+
+Node.js（只用内置模块）：
+
+```js
+import { createPublicKey, verify } from 'node:crypto';
+
+const jwks = await (await fetch('http://127.0.0.1:7341/v1/keys')).json();
+const keys = Object.fromEntries(jwks.keys.map(k => [k.kid, createPublicKey({ key: k, format: 'jwk' })]));
+
+function verifyAmber(token, audience) {
+  const [h, p, s] = token.split('.');
+  const header = JSON.parse(Buffer.from(h, 'base64url'));
+  const payload = JSON.parse(Buffer.from(p, 'base64url'));
+  const key = keys[header.kid];
+  if (header.alg !== 'EdDSA' || !key) throw new Error('unknown key');
+  if (!verify(null, Buffer.from(`${h}.${p}`), key, Buffer.from(s, 'base64url'))) throw new Error('bad signature');
+  const now = Date.now() / 1000;
+  if (payload.iss !== 'amber' || payload.aud !== audience || payload.exp < now - 30) throw new Error('bad claims');
+  return payload;   // payload.sub 就是执行人的 union_id
+}
+```
+
+Python（需要 `cryptography`）：
+
+```python
+import base64, json, time, urllib.request
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+
+def b64(s): return base64.urlsafe_b64decode(s + "=" * (-len(s) % 4))
+
+jwks = json.load(urllib.request.urlopen("http://127.0.0.1:7341/v1/keys"))
+KEYS = {k["kid"]: Ed25519PublicKey.from_public_bytes(b64(k["x"])) for k in jwks["keys"]}
+
+def verify_amber(token, audience):
+    h, p, s = token.split(".")
+    header, payload = json.loads(b64(h)), json.loads(b64(p))
+    key = KEYS.get(header.get("kid"))
+    if header.get("alg") != "EdDSA" or key is None:
+        raise ValueError("unknown key")
+    key.verify(b64(s), f"{h}.{p}".encode())          # 签名不对会抛 InvalidSignature
+    if payload["iss"] != "amber" or payload["aud"] != audience or payload["exp"] < time.time() - 30:
+        raise ValueError("bad claims")
+    return payload                                    # payload["sub"] 就是执行人的 union_id
+```
+
+### 3.5 密钥
+
+私钥在 `~/.config/amber/signing-key.pem`（0600），首次启动时自动生成。轮换时让 `/v1/keys` 同时发布新旧两把公钥，用 `kid` 区分；等旧凭证全部过期后再撤掉旧的。目前只有一把固定密钥，轮换功能还没实现。

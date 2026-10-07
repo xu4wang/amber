@@ -22,19 +22,22 @@ Amber 把「和 LLM agent 一起跑通的一次操作」封存成经过审核的
 - **作用域**：指令属于创建它的群或私聊；管理员可以把它设为全局可用。
 - **执行身份凭证**：脚本声明要调用的服务时，Amber 为本次执行签发短时效的 Ed25519 签名凭证（`iss amber`、`aud`、`sub` = 执行人 union_id、指令、版本哈希、执行编号、过期时间）。服务方用 `/v1/keys` 的公钥验证。声明了服务的脚本不能访问外网。
 
-## 运行
+## 文档
 
-需要 Node.js ≥ 24（直接运行 TypeScript）和 macOS（`sandbox-exec`）。
+| 文档 | 内容 |
+|---|---|
+| [安装与部署](docs/install.md) | 环境要求、配置文件、launchd 常驻、nginx、运维 |
+| [飞书应用配置](docs/feishu-setup.md) | 权限清单、长连接事件、审批定义、知识库、发布检查 |
+| [amber 命令行与 skill](docs/cli-and-skill.md) | 安装、命令、三档行为、定时任务、接口 |
+| [可信身份](docs/identity.md) | 身份从哪来、网站登录、执行身份凭证与服务方验证（含 Node / Python 示例） |
+| [给 agent 的 skill](skills/amber/SKILL.md) | agent 怎么调用 Amber、怎么提交新指令 |
+
+快速开始：
 
 ```sh
 npm install
-node src/main.ts                    # 飞书长连接 + 本机接口 127.0.0.1:7341
-node src/cli.ts submit draft.json   # 提交草稿（本机）
+node src/main.ts       # 飞书长连接 + agent 接口 127.0.0.1:7341 + 网站 127.0.0.1:7342
 ```
-
-agent 用 [`client/amber`](client/amber)（只依赖 Python 3 标准库）调用 Amber：查看和执行指令、管理定时任务、提交草稿。接口按 IP 白名单放行，不需要凭证，所以接口本身从不代表任何人：凡是需要某人身份的操作都要那个人在确认卡片上点一下。给 agent 的说明（可直接作为 skill 安装）见 [skills/amber/SKILL.md](skills/amber/SKILL.md)。
-
-配置放在 `~/.config/amber/`：`lark-app.env`（应用 ID 和密钥）、`config.json`（管理员、审核人、审批、知识库、允许提交的机器 IP 等）。本仓库不包含任何凭证。
 
 ## 状态
 
