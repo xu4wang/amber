@@ -14,8 +14,7 @@ function usage(): never {
   amber cli list
   amber cli add <command.json>     # { scopeType, chatId, ownerUnionId, name, description, params, steps, sideEffect }
   amber cli retire <id>
-  amber cli submit <draft.json>    # submit a draft to the running service (prints the claim info)
-  amber cli executors              # list registered executors`);
+  amber cli submit <draft.json>    # submit a draft to the running service (prints the claim info)`);
   process.exit(2);
 }
 
@@ -35,15 +34,13 @@ if (cmd === 'list') {
   store.setStatus(rest[0], 'retired');
   store.audit(null, 'operator.retire', { id: rest[0] });
   console.log('retired', rest[0]);
-} else if (cmd === 'submit' || cmd === 'executors') {
+} else if (cmd === 'submit') {
   const { machineToken } = await import('./api.ts');
   const { join } = await import('node:path');
   const { homedir } = await import('node:os');
   const token = machineToken(process.env.AMBER_CONFIG_DIR ?? join(homedir(), '.config', 'amber'));
   const base = `http://127.0.0.1:${process.env.AMBER_API_PORT ?? 7341}`;
-  const r = cmd === 'submit'
-    ? await fetch(`${base}/v1/drafts`, { method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' }, body: readFileSync(rest[0] ?? usage(), 'utf8') })
-    : await fetch(`${base}/v1/executors`, { headers: { authorization: `Bearer ${token}` } });
+  const r = await fetch(`${base}/v1/drafts`, { method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' }, body: readFileSync(rest[0] ?? usage(), 'utf8') });
   console.log(r.status, JSON.stringify(await r.json(), null, 2));
   if (!r.ok) process.exit(1);
 } else {

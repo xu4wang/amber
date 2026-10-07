@@ -1,12 +1,11 @@
 // Local API for agents. Listens on 127.0.0.1 only and requires the machine token.
-// Per D17 this surface can only submit drafts and read the executor list — it cannot claim,
+// This surface can only submit drafts — it cannot claim,
 // review or run anything, so a leaked machine token cannot get past the human steps.
 import { createServer } from 'node:http';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { randomBytes, timingSafeEqual } from 'node:crypto';
 import type { Flow, DraftInput } from './flow.ts';
-import type { ExecutorRegistry } from './executors.ts';
 import { AmberError } from './engine.ts';
 
 export function machineToken(configDir: string): string {
@@ -20,7 +19,7 @@ function same(a: string, b: string): boolean {
   return x.length === y.length && timingSafeEqual(x, y);
 }
 
-export function startApi(port: number, token: string, flow: Flow, executors: ExecutorRegistry): void {
+export function startApi(port: number, token: string, flow: Flow): void {
   const server = createServer((req, res) => {
     const reply = (status: number, body: unknown) => {
       res.writeHead(status, { 'content-type': 'application/json; charset=utf-8' });
@@ -28,9 +27,6 @@ export function startApi(port: number, token: string, flow: Flow, executors: Exe
     };
     const auth = String(req.headers.authorization ?? '').replace(/^Bearer\s+/i, '');
     if (!same(auth, token)) return reply(401, { error: 'unauthorized' });
-    if (req.method === 'GET' && req.url === '/v1/executors') {
-      return reply(200, { executors: executors.list() });
-    }
     if (req.method === 'POST' && req.url === '/v1/drafts') {
       let body = '';
       req.on('data', c => { body += c; if (body.length > 256 * 1024) req.destroy(); });

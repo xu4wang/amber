@@ -81,18 +81,49 @@ export function person(openId: string | undefined): string {
 /** Splits ```vega-lite fences out of markdown and turns simple bar/line specs into card charts. */
 export function markdownWithCharts(md: string): unknown[] {
   const els: unknown[] = [];
-  const re = /```vega-lite\s*\n([\s\S]*?)```/g;
+  const re = /```(vega-lite|table)\s*\n([\s\S]*?)```/g;
   let last = 0;
   let m: RegExpExecArray | null;
   const pushText = (t: string) => { const x = t.trim(); if (x) els.push({ tag: 'markdown', content: sanitizeMarkdown(x) }); };
   while ((m = re.exec(md))) {
     pushText(md.slice(last, m.index));
     last = m.index + m[0].length;
-    const chart = vegaLiteToChart(m[1]);
-    if (chart) els.push(...chart); else pushText('（图表无法显示）');
+    const converted = m[1] === 'table' ? tableToCard(m[2]) : vegaLiteToChart(m[2]);
+    if (converted) els.push(...converted); else pushText(m[1] === 'table' ? '（表格格式不正确，无法显示）' : '（这个图表在飞书里无法显示，请在网站查看）');
   }
   pushText(md.slice(last));
   return els;
+}
+
+const CARD_TABLE_MAX_ROWS = 100;
+
+/** ```table {"columns":[{name,label,type}],"rows":[...],"total":N} → native card table. */
+function tableToCard(src: string): unknown[] | null {
+  let t: any;
+  try { t = JSON.parse(src); } catch { return null; }
+  if (!Array.isArray(t?.columns) || !Array.isArray(t?.rows) || t.columns.length === 0 || t.columns.length > 30) return null;
+  const cols = t.columns.filter((c: any) => typeof c?.name === 'string').map((c: any, i: number) => ({
+    key: `c${i}`, name: c.name, label: sanitizeMarkdown(String(c.label ?? c.name), 40), number: c.type === 'number',
+  }));
+  const rows = t.rows.slice(0, CARD_TABLE_MAX_ROWS).map((r: any) => {
+    const o: Record<string, unknown> = {};
+    for (const c of cols) {
+      const v = r?.[c.name];
+      o[c.key] = c.number && typeof v === 'number' ? v : sanitizeMarkdown(v === null || v === undefined ? '' : String(v), 200);
+    }
+    return o;
+  });
+  const total = Number.isFinite(t.total) ? Number(t.total) : t.rows.length;
+  const out: unknown[] = [{
+    tag: 'table',
+    page_size: 10,
+    row_height: 'low',
+    header_style: { bold: true, background_style: 'grey' },
+    columns: cols.map((c: any) => ({ name: c.key, display_name: c.label, data_type: c.number ? 'number' : 'text', ...(c.number ? { horizontal_align: 'right' } : {}) })),
+    rows,
+  }];
+  if (total > rows.length) out.push({ tag: 'markdown', content: `<font color="grey">共 ${total} 行，这里显示前 ${rows.length} 行，完整数据请在网站查看</font>` });
+  return out;
 }
 
 function vegaLiteToChart(src: string): unknown[] | null {
@@ -125,34 +156,8 @@ function vegaLiteToChart(src: string): unknown[] | null {
 
 export function renderBlocks(blocks: Block[]): unknown[] {
   const els: unknown[] = [];
-  for (const b of blocks) {
-    if (b.kind === 'markdown') {
-      if (b.text) els.push(...markdownWithCharts(b.text));
-      continue;
-    }
-    const values = b.rows
-      .map(r => ({ x: String(r[b.x] ?? ''), y: Number(r[b.y]) }))
-      .filter(v => v.x && Number.isFinite(v.y));
-    if (values.length === 0) { els.push({ tag: 'markdown', content: '（没有可画图的数据）' }); continue; }
-    if (b.title) els.push({ tag: 'markdown', content: `**${sanitizeMarkdown(b.title, 60)}**` });
-    els.push({
-      tag: 'chart',
-      aspect_ratio: '16:9',
-      chart_spec: {
-        type: 'line',
-        data: { values },
-        xField: 'x',
-        yField: 'y',
-        point: { visible: false },
-        line: { style: { curveType: 'monotone' } },
-        axes: [
-          { orient: 'left', title: { visible: !!b.yLabel, text: b.yLabel ?? '' } },
-          { orient: 'bottom', label: { autoHide: true } },
-        ],
-      },
-    });
-  }
-  return els;
+  for (const b of blocks) if (b.text) els.push(...markdownWithCharts(b.text));
+  return els.length ? els : [{ tag: 'markdown', content: '（没有输出）' }];
 }
 
 export function runningCard(name: string, whoOpenId?: string): object {

@@ -19,13 +19,8 @@ export interface ParamDef {
   max?: number;
 }
 
-export interface StepDef {
-  executor: string;
-  /** Maps executor argument name -> "{{param}}" template or a literal. */
-  input: Record<string, string>;
-  /** How to show this step's output: markdown text (default) or a line chart built from JSON rows. */
-  render?: { kind: 'markdown' } | { kind: 'line'; title?: string; x: string; y: string; yLabel?: string };
-}
+export type { Step as StepDef } from './runner.ts';
+import type { Step as StepDef } from './runner.ts';
 
 export interface CommandRow {
   id: string;

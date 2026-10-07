@@ -1,6 +1,5 @@
 import * as lark from '@larksuiteoapi/node-sdk';
 import type { Store, CommandRow } from './db.ts';
-import type { ExecutorRegistry } from './executors.ts';
 import type { Caller } from './engine.ts';
 import { visibleCommands, findVisible, runCommand, AmberError } from './engine.ts';
 import { listCard, formCard, runningCard, resultCard, errorCard, infoCard } from './cards.ts';
@@ -27,18 +26,17 @@ export class AmberBot {
   private seen = new Map<string, number>();
   private chatTypeCache = new Map<string, 'group' | 'p2p'>();
   private store: Store;
-  private executors: ExecutorRegistry;
   private cfg: AmberConfig;
   private adminUnionIds = new Set<string>();
   flow: Flow;
 
-  constructor(cfg: AmberConfig, store: Store, executors: ExecutorRegistry) {
+  constructor(cfg: AmberConfig, store: Store) {
     this.cfg = cfg;
     this.store = store;
-    this.executors = executors;
     this.client = new lark.Client({ appId: cfg.appId, appSecret: cfg.appSecret });
     this.ws = new lark.WSClient({ appId: cfg.appId, appSecret: cfg.appSecret, loggerLevel: lark.LoggerLevel.warn });
-    this.flow = new Flow(this.client, store, executors, cfg.reviewers);
+    this.flow = new Flow(this.client, store, cfg.reviewers);
+    this.flow.isAdmin = (u: string) => this.isAdmin(u);
   }
 
   async start(): Promise<void> {
@@ -216,7 +214,7 @@ export class AmberBot {
 
   private async execute(cmd: CommandRow, raw: Record<string, string | undefined>, caller: Caller): Promise<object> {
     try {
-      const r = await runCommand(this.store, this.executors, cmd, raw, caller, { city: () => this.cityOf(caller.unionId) });
+      const r = await runCommand(this.store, cmd, raw, caller, { city: () => this.cityOf(caller.unionId) });
       if (!r.ok) return errorCard(cmd.name, `执行失败：${r.error}`, cmd.id);
       return resultCard(cmd.name, caller.openId, r.blocks, r.runId, r.elapsedMs, cmd.id);
     } catch (e) {

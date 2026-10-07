@@ -6,7 +6,7 @@
 import type * as lark from '@larksuiteoapi/node-sdk';
 import type { Store, CommandRow, ParamDef, StepDef } from './db.ts';
 import { computeSpecHash } from './db.ts';
-import type { ExecutorRegistry } from './executors.ts';
+import { validateStep } from './runner.ts';
 import type { Caller, CallerFacts, Block } from './engine.ts';
 import { runCommand, AmberError } from './engine.ts';
 import { sanitizeMarkdown, person, renderBlocks } from './cards.ts';
@@ -27,6 +27,8 @@ export interface DraftInput {
   /** p2p drafts: who must claim. Email or union_id. */
   claimer?: string;
   submittedBy?: string;
+  /** Declared by the submitter; reviewers check it against the code. */
+  sideEffect?: 'read' | 'write';
 }
 
 function shell(title: string, template: string, elements: unknown[]): object {
@@ -36,14 +38,15 @@ function btn(text: string, value: Record<string, string>, type: 'primary' | 'def
   return { tag: 'button', text: { tag: 'plain_text', content: text }, type, behaviors: [{ type: 'callback', value }], ...extra };
 }
 
-function specSummary(c: CommandRow, executors: ExecutorRegistry): string {
+function stepLabel(k: string): string {
+  return k === 'privileged' ? '<font color="red">特权脚本（不在沙盒里运行，可读本机文件）</font>' : k === 'sql' ? 'SQL 查询（以执行人身份查数仓）' : '脚本（沙盒运行）';
+}
+
+function specSummary(c: CommandRow): string {
   const params = c.params.length
     ? c.params.map(p => `${p.label ?? p.name}（${p.type === 'integer' ? '整数' : '文本'}${p.defaultFrom === 'caller.city' ? '，默认办公城市' : p.default !== undefined ? `，默认 ${p.default}` : ''}${p.required ? '，必填' : ''}）`).join('、')
     : '无';
-  const steps = c.steps.map((s, i) => {
-    const d = executors.get(s.executor);
-    return `${i + 1}. 执行器 \`${s.executor}\`${d ? '' : '（**未登记**）'}${s.render?.kind === 'line' ? ' → 折线图' : ''}`;
-  }).join('\n');
+  const steps = c.steps.map((s, i) => `${i + 1}. ${stepLabel(s.kind)}${s.kind !== 'sql' && s.network ? '，需要联网' : ''}`).join('\n');
   return [
     `**名称**：${sanitizeMarkdown(c.name, 40)}`,
     `**说明**：${sanitizeMarkdown(c.description || '（无）', 200)}`,
@@ -54,10 +57,28 @@ function specSummary(c: CommandRow, executors: ExecutorRegistry): string {
   ].join('\n');
 }
 
-export function claimCard(c: CommandRow, executors: ExecutorRegistry, trial?: { by?: string; blocks?: Block[]; error?: string }, submittedBy?: string): object {
+const FENCE = '`'.repeat(3);
+
+/** Full code / SQL of every step, so reviewers see exactly what will run. */
+function codePanels(c: CommandRow): unknown[] {
+  return c.steps.map((s, i) => {
+    const body = s.kind === 'sql' ? s.sql : s.code;
+    const lang = s.kind === 'sql' ? 'sql' : 'python';
+    const shown = body.length > 12000 ? body.slice(0, 12000) + '\n# ……（超过 12000 字符，完整内容见网站）' : body;
+    return {
+      tag: 'collapsible_panel',
+      expanded: false,
+      header: { title: { tag: 'markdown', content: `第 ${i + 1} 步代码（${body.length} 字符）` } },
+      elements: [{ tag: 'markdown', content: FENCE + lang + '\n' + shown.split(FENCE).join('``\u200b`') + '\n' + FENCE }],
+    };
+  });
+}
+
+export function claimCard(c: CommandRow, trial?: { by?: string; blocks?: Block[]; error?: string }, submittedBy?: string): object {
   const els: unknown[] = [
     { tag: 'markdown', content: `${submittedBy ? `**${sanitizeMarkdown(submittedBy, 80)}**` : 'agent'} 提交了一条新指令，等待认领。认领人会成为这条指令的创建人，提交后由审核人审核。\n<font color="grey">请确认这是你让 agent 做的；不认识的草稿直接点「丢弃」。</font>` },
-    { tag: 'markdown', content: specSummary(c, executors) },
+    { tag: 'markdown', content: specSummary(c) },
+    ...codePanels(c),
   ];
   if (trial?.error) els.push({ tag: 'markdown', content: `❌ 试运行失败：${sanitizeMarkdown(trial.error, 300)}` });
   if (trial?.blocks) {
@@ -71,10 +92,12 @@ export function claimCard(c: CommandRow, executors: ExecutorRegistry, trial?: { 
   return shell(`待认领：${c.name}`, 'orange', els);
 }
 
-export function reviewCard(c: CommandRow, executors: ExecutorRegistry, creatorOpenIdForReviewer: string | undefined, state: { approved: number; total: number; mine?: string }): object {
+export function reviewCard(c: CommandRow, creatorOpenIdForReviewer: string | undefined, state: { approved: number; total: number; mine?: string }): object {
   const els: unknown[] = [
     { tag: 'markdown', content: `请审核这条指令。需要 **全部 ${state.total} 位**审核人通过才生效，目前已通过 ${state.approved} 位。` },
-    { tag: 'markdown', content: specSummary(c, executors) },
+    { tag: 'markdown', content: specSummary(c) },
+    ...codePanels(c),
+    ...(c.steps.some(s => s.kind === 'privileged') ? [{ tag: 'markdown', content: '<font color="red">⚠️ 含特权脚本：通过即允许这段代码不经沙盒在 dev-beta 上运行。只有管理员能通过。</font>' }] : []),
     { tag: 'markdown', content: `**创建人**：${person(creatorOpenIdForReviewer)}　**spec**：\`${c.specHash.slice(0, 12)}\`` },
   ];
   if (state.mine === 'approve') els.push({ tag: 'markdown', content: '✅ 你已通过' });
@@ -96,14 +119,14 @@ export function reviewCard(c: CommandRow, executors: ExecutorRegistry, creatorOp
 export class Flow {
   private client: lark.Client;
   private store: Store;
-  private executors: ExecutorRegistry;
   private reviewerEmails: string[];
   reviewers: string[] = [];
+  /** Only admins may approve commands containing privileged steps. */
+  isAdmin: (unionId: string) => boolean = () => false;
 
-  constructor(client: lark.Client, store: Store, executors: ExecutorRegistry, reviewerEmails: string[]) {
+  constructor(client: lark.Client, store: Store, reviewerEmails: string[]) {
     this.client = client;
     this.store = store;
-    this.executors = executors;
     this.reviewerEmails = reviewerEmails;
   }
 
@@ -162,9 +185,9 @@ export class Flow {
     if (!d.submittedBy || d.submittedBy.length > 80) throw new AmberError('bad_submitter', '请注明提交来源（submittedBy，例如「Beta（botmux @ dev-beta）」）');
     if (!d.name || d.name.length > 40 || /\s/.test(d.name)) throw new AmberError('bad_name', '名称不能为空、不能有空格、最多 40 个字');
     if (!Array.isArray(d.steps) || d.steps.length === 0 || d.steps.length > 8) throw new AmberError('bad_steps', '步骤数要在 1–8 之间');
-    for (const s of d.steps) if (!this.executors.get(s.executor)) throw new AmberError('unknown_executor', `执行器 ${s.executor} 未登记，请先由运维登记`);
+    try { d.steps = d.steps.map(validateStep); } catch (e) { throw new AmberError('bad_step', (e as Error).message); }
     if (this.store.nameTaken(d.chatId, d.name)) throw new AmberError('name_taken', `这里已经有一条叫「${d.name}」的指令（生效中或待审核）`);
-    const sideEffect = d.steps.some(s => this.executors.get(s.executor)?.sideEffect === 'write') ? 'write' : 'read';
+    const sideEffect = d.sideEffect === 'write' ? 'write' : 'read';
     let expectedClaimer: string | undefined;
     if (d.chatType === 'p2p') {
       if (!d.claimer) throw new AmberError('claimer_required', '私聊草稿需要指定认领人（email）');
@@ -184,8 +207,8 @@ export class Flow {
     let claimMessageId: string | undefined;
     try {
       claimMessageId = d.chatType === 'p2p'
-        ? await this.send({ unionId: expectedClaimer }, claimCard(row, this.executors, undefined, d.submittedBy))
-        : await this.send(d.originMessageId ? { replyTo: d.originMessageId, inThread: !!d.inThread } : { chatId: d.chatId }, claimCard(row, this.executors, undefined, d.submittedBy));
+        ? await this.send({ unionId: expectedClaimer }, claimCard(row, undefined, d.submittedBy))
+        : await this.send(d.originMessageId ? { replyTo: d.originMessageId, inThread: !!d.inThread } : { chatId: d.chatId }, claimCard(row, undefined, d.submittedBy));
     } catch (e: any) {
       const code = e?.response?.data?.code;
       this.store.setStatus(row.id, 'rejected');
@@ -219,12 +242,12 @@ export class Flow {
     }
     if (action === 'claim_try') {
       try {
-        const r = await runCommand(this.store, this.executors, c, {}, caller, facts, { trial: true });
-        if (!r.ok) return claimCard(c, this.executors, { error: r.error }, meta.submittedBy);
+        const r = await runCommand(this.store, c, {}, caller, facts, { trial: true });
+        if (!r.ok) return claimCard(c, { error: r.error }, meta.submittedBy);
         this.store.setMeta(c.id, { trialBy: caller.unionId });
-        return claimCard(c, this.executors, { by: caller.openId, blocks: r.blocks }, meta.submittedBy);
+        return claimCard(c, { by: caller.openId, blocks: r.blocks }, meta.submittedBy);
       } catch (e) {
-        return claimCard(c, this.executors, { error: e instanceof AmberError ? e.message : (e as Error).message }, meta.submittedBy);
+        return claimCard(c, { error: e instanceof AmberError ? e.message : (e as Error).message }, meta.submittedBy);
       }
     }
     if (action === 'claim_submit') {
@@ -236,7 +259,7 @@ export class Flow {
       this.store.audit(caller.unionId, 'draft.claim', { id: c.id, specHash: c.specHash });
       const fresh = this.store.getCommand(c.id)!;
       for (const r of this.reviewers) {
-        try { await this.send({ unionId: r }, reviewCard(fresh, this.executors, caller.openId, { approved: 0, total: this.reviewers.length })); }
+        try { await this.send({ unionId: r }, reviewCard(fresh, caller.openId, { approved: 0, total: this.reviewers.length })); }
         catch (e: any) { log('review card send failed', r.slice(0, 8), e?.response?.data?.code ?? e?.message); }
       }
       return shell(`审核中：${c.name}`, 'yellow', [
@@ -254,6 +277,7 @@ export class Flow {
       return shell(`审核：${c.name}`, 'grey', [{ tag: 'markdown', content: '这张审核卡已失效（指令已生效、被驳回，或审核期间被修改）。' }]);
     }
     if (action === 'review_no' && !reason.trim()) throw new AmberError('reason_required', '驳回请填写原因');
+    if (action === 'review_ok' && c.steps.some(s => s.kind === 'privileged') && !this.isAdmin(caller.unionId)) throw new AmberError('admin_only', '含特权脚本的指令只能由管理员通过');
     const decision = action === 'review_ok' ? 'approve' : 'reject';
     this.store.recordReview(c.id, c.specHash, caller.unionId, decision, decision === 'reject' ? reason.trim() : null);
     this.store.audit(caller.unionId, `review.${decision}`, { id: c.id, specHash: c.specHash, reason: decision === 'reject' ? reason.trim() : undefined });
@@ -273,6 +297,6 @@ export class Flow {
     } else if (meta.claimMessageId) {
       await this.patch(meta.claimMessageId, shell(`审核中：${c.name}`, 'yellow', [{ tag: 'markdown', content: `已提交审核，**${approved} / ${this.reviewers.length}** 位审核人已通过。` }]));
     }
-    return reviewCard(c, this.executors, meta.ownerOpenId, { approved, total: this.reviewers.length, mine: decision });
+    return reviewCard(c, meta.ownerOpenId, { approved, total: this.reviewers.length, mine: decision });
   }
 }

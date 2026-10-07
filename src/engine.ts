@@ -1,7 +1,6 @@
 import type { Store, CommandRow, ParamDef } from './db.ts';
 import { computeSpecHash } from './db.ts';
-import type { ExecutorRegistry } from './executors.ts';
-import { runExecutor } from './executors.ts';
+import { runStep } from './runner.ts';
 
 export interface Caller {
   unionId: string;
@@ -76,54 +75,30 @@ export async function validateArgs(params: ParamDef[], raw: Record<string, strin
   return out;
 }
 
-function render(template: string, args: Record<string, string>, caller: Caller): string {
-  return template.replace(/\{\{\s*([\w.]+)\s*\}\}/g, (_m, key: string) => {
-    if (key === 'caller.union_id') return caller.unionId;
-    if (key === 'caller.open_id') return caller.openId ?? '';
-    return args[key] ?? '';
-  });
-}
-
-export type Block = { kind: 'markdown'; text: string } | { kind: 'line'; title?: string; x: string; y: string; yLabel?: string; rows: Record<string, unknown>[] };
+export type Block = { kind: 'markdown'; text: string };
 export interface RunOutcome { runId: string; ok: boolean; blocks: Block[]; markdown: string; error?: string; elapsedMs: number; args: Record<string, string> }
 
-export async function runCommand(store: Store, executors: ExecutorRegistry, cmd: CommandRow, rawArgs: Record<string, string | undefined>, caller: Caller, facts: CallerFacts = {}, opts: { trial?: boolean } = {}): Promise<RunOutcome> {
+export async function runCommand(store: Store, cmd: CommandRow, rawArgs: Record<string, string | undefined>, caller: Caller, facts: CallerFacts = {}, opts: { trial?: boolean } = {}): Promise<RunOutcome> {
   if (cmd.status !== 'active' && !(opts.trial && cmd.status === 'draft')) throw new AmberError('not_active', '指令未生效');
   if (opts.trial && cmd.sideEffect === 'write') throw new AmberError('trial_write', '写操作指令暂不支持试运行');
   if (computeSpecHash(cmd) !== cmd.specHash) throw new AmberError('spec_mismatch', '指令定义与审核通过的版本不一致，已拒绝执行');
   if (cmd.sideEffect === 'write') throw new AmberError('write_needs_confirm', '写操作需要确认（尚未实现）');
   const args = await validateArgs(cmd.params, rawArgs, facts);
+  const city = facts.city ? await facts.city() : undefined;
   const started = Date.now();
   const runId = store.startRun({ commandId: cmd.id, specHash: cmd.specHash, channel: opts.trial ? `${caller.channel}.trial` : caller.channel, callerUnionId: caller.unionId, chatId: caller.chatId, args });
   store.audit(caller.unionId, 'run.start', { runId, commandId: cmd.id, name: cmd.name, channel: caller.channel, chatId: caller.chatId });
   const blocks: Block[] = [];
   for (const step of cmd.steps) {
-    const def = executors.get(step.executor);
-    if (!def) {
-      store.finishRun(runId, 'failed', null, `executor_missing:${step.executor}`);
-      return { runId, ok: false, blocks: [], markdown: '', error: `执行器 ${step.executor} 未登记`, elapsedMs: Date.now() - started, args };
-    }
-    const stepArgs: Record<string, string> = {};
-    for (const [k, t] of Object.entries(step.input)) {
-      const v = render(t, args, caller);
-      if (v !== '') stepArgs[k] = v;
-    }
-    const r = await runExecutor(def, stepArgs, { AMBER_CALLER_UNION_ID: caller.unionId, AMBER_CHAT_ID: caller.chatId, AMBER_RUN_ID: runId, AMBER_CHANNEL: caller.channel });
+    const r = await runStep(step, { params: args, caller: { unionId: caller.unionId, chatId: caller.chatId, channel: caller.channel, city }, runId });
     if (!r.ok) {
       store.finishRun(runId, 'failed', null, r.error ?? 'failed');
       store.audit(caller.unionId, 'run.failed', { runId, error: r.error });
       return { runId, ok: false, blocks: [], markdown: '', error: r.error, elapsedMs: Date.now() - started, args };
     }
-    const view = step.render ?? { kind: 'markdown' as const };
-    if (view.kind === 'line') {
-      let rows: Record<string, unknown>[] = [];
-      try { const j = JSON.parse(r.stdout); rows = Array.isArray(j) ? j : (j.rows ?? []); } catch { rows = []; }
-      blocks.push({ kind: 'line', title: view.title, x: view.x, y: view.y, yLabel: view.yLabel, rows: rows.slice(0, 500) });
-    } else {
-      blocks.push({ kind: 'markdown', text: r.stdout.trim() });
-    }
+    blocks.push({ kind: 'markdown', text: r.content.trim() });
   }
-  const markdown = blocks.map(b => b.kind === 'markdown' ? b.text : `[图表：${b.title ?? ''}]`).join('\n\n');
+  const markdown = blocks.map(b => b.text).join('\n\n');
   store.finishRun(runId, 'ok', markdown, null);
   store.audit(caller.unionId, 'run.ok', { runId });
   return { runId, ok: true, blocks, markdown, elapsedMs: Date.now() - started, args };

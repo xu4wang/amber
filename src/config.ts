@@ -7,8 +7,6 @@ export interface AmberConfig {
   appSecret: string;
   /** Directory for the SQLite database and logs. */
   dataDir: string;
-  /** JSON file listing executors that commands may use (maintained by operators). */
-  executorsFile: string;
   /** Reviewer emails (D19). Resolved to union_id at runtime. */
   reviewers: string[];
   /** Admins: emails (resolved to union_id at runtime) or union_ids ("on_..."). Admins change command scope by chatting with Amber. */
@@ -41,7 +39,6 @@ export function loadConfig(): AmberConfig {
     appId,
     appSecret,
     dataDir,
-    executorsFile: fileCfg.executorsFile ?? join(configDir, 'executors.json'),
     reviewers: Array.isArray(fileCfg.reviewers) ? fileCfg.reviewers : [],
     admins: Array.isArray(fileCfg.admins) ? fileCfg.admins : [],
   };
