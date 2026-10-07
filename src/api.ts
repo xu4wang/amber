@@ -1,6 +1,6 @@
 // Local API for agents. Listens on 127.0.0.1 only and requires the machine token.
 // This surface can only submit drafts — it cannot claim,
-// review or run anything, so a leaked machine token cannot get past the human steps.
+// review or run anything, so a leaked machine token cannot get past claim and review.
 import { createServer } from 'node:http';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';

@@ -11,7 +11,7 @@ export interface AmberConfig {
   reviewers: string[];
   /** Admins: emails (resolved to union_id at runtime) or union_ids ("on_..."). Admins change command scope by chatting with Amber. */
   admins: string[];
-  /** Local services steps may call with an execution identity token (D27). */
+  /** Local services scripts may call with an execution identity token (D27). */
   services: Record<string, { audience: string; tcpPort?: number; unixSocket?: string }>;
   configDir: string;
   approval?: { code: string; reviewNodeId: string; formFieldId: string };

@@ -4,9 +4,9 @@
 //   first run a successful trial with their own identity.
 // - Every configured reviewer must approve the exact spec_hash (D16); any reject rejects.
 import type * as lark from '@larksuiteoapi/node-sdk';
-import type { Store, CommandRow, ParamDef, StepDef } from './db.ts';
+import type { Store, CommandRow, ParamDef, Script } from './db.ts';
 import { computeSpecHash } from './db.ts';
-import { validateStep } from './runner.ts';
+import { validateScript } from './runner.ts';
 import type { FeishuReview } from './feishu-review.ts';
 import type { Caller, CallerFacts, Block } from './engine.ts';
 import { runCommand, AmberError } from './engine.ts';
@@ -20,7 +20,7 @@ export interface DraftInput {
   name: string;
   description?: string;
   params: ParamDef[];
-  steps: StepDef[];
+  script: Script;
   /** Message to reply under (keeps the claim card in the thread where the work happened). */
   originMessageId?: string;
   /** Whether originMessageId lives in a thread (then the claim card is posted into that thread). */
@@ -39,7 +39,7 @@ function btn(text: string, value: Record<string, string>, type: 'primary' | 'def
   return { tag: 'button', text: { tag: 'plain_text', content: text }, type, behaviors: [{ type: 'callback', value }], ...extra };
 }
 
-function stepLabel(k: string): string {
+function scriptLabel(k: string): string {
   return k === 'privileged' ? '<font color="red">特权脚本（不在沙盒里运行，可读本机文件）</font>' : '脚本（沙盒运行）';
 }
 
@@ -47,32 +47,30 @@ function specSummary(c: CommandRow): string {
   const params = c.params.length
     ? c.params.map(p => `${p.label ?? p.name}（${p.type === 'integer' ? '整数' : '文本'}${p.defaultFrom === 'caller.city' ? '，默认办公城市' : p.default !== undefined ? `，默认 ${p.default}` : ''}${p.required ? '，必填' : ''}）`).join('、')
     : '无';
-  const steps = c.steps.map((s, i) => `${i + 1}. ${stepLabel(s.kind)}${s.network ? '，可访问外网' : ''}${s.services?.length ? `，以执行人身份调用：${s.services.join('、')}（不能访问外网）` : ''}`).join('\n');
+  const s = c.script;
+  const how = `${scriptLabel(s.kind)}${s.network ? '，可访问外网' : ''}${s.services?.length ? `，以执行人身份调用：${s.services.join('、')}（不能访问外网）` : ''}`;
   return [
     `**名称**：${sanitizeMarkdown(c.name, 40)}`,
     `**说明**：${sanitizeMarkdown(c.description || '（无）', 200)}`,
     `**范围**：${c.scopeType === 'p2p' ? '私聊（只有创建人）' : '本群'}`,
     `**参数**：${sanitizeMarkdown(params, 300)}`,
     `**类型**：${c.sideEffect === 'write' ? '<font color="red">写操作</font>' : '只读'}`,
-    `**步骤**：\n${steps}`,
+    `**运行方式**：${how}`,
   ].join('\n');
 }
 
 const FENCE = '`'.repeat(3);
 
-/** Full code of every step, so reviewers see exactly what will run. */
+/** Full code, so reviewers see exactly what will run. */
 function codePanels(c: CommandRow): unknown[] {
-  return c.steps.map((s, i) => {
-    const body = s.code;
-    const lang = 'python';
-    const shown = body.length > 12000 ? body.slice(0, 12000) + '\n# ……（超过 12000 字符，完整内容见网站）' : body;
-    return {
-      tag: 'collapsible_panel',
-      expanded: false,
-      header: { title: { tag: 'markdown', content: `第 ${i + 1} 步代码（${body.length} 字符）` } },
-      elements: [{ tag: 'markdown', content: FENCE + lang + '\n' + shown.split(FENCE).join('``\u200b`') + '\n' + FENCE }],
-    };
-  });
+  const body = c.script.code;
+  const shown = body.length > 12000 ? body.slice(0, 12000) + '\n# ……（超过 12000 字符，完整内容见文档）' : body;
+  return [{
+    tag: 'collapsible_panel',
+    expanded: false,
+    header: { title: { tag: 'markdown', content: `代码（${body.length} 字符）` } },
+    elements: [{ tag: 'markdown', content: FENCE + 'python\n' + shown.split(FENCE).join('``\u200b`') + '\n' + FENCE }],
+  }];
 }
 
 export function claimCard(c: CommandRow, trial?: { by?: string; blocks?: Block[]; error?: string }, submittedBy?: string): object {
@@ -98,7 +96,7 @@ export function reviewCard(c: CommandRow, creatorOpenIdForReviewer: string | und
     { tag: 'markdown', content: `请审核这条指令。需要 **全部 ${state.total} 位**审核人通过才生效，目前已通过 ${state.approved} 位。` },
     { tag: 'markdown', content: specSummary(c) },
     ...codePanels(c),
-    ...(c.steps.some(s => s.kind === 'privileged') ? [{ tag: 'markdown', content: '<font color="red">⚠️ 含特权脚本：通过即允许这段代码不经沙盒在 Amber 所在机器上运行。只有管理员能通过。</font>' }] : []),
+    ...(c.script.kind === 'privileged' ? [{ tag: 'markdown', content: '<font color="red">⚠️ 含特权脚本：通过即允许这段代码不经沙盒在 Amber 所在机器上运行。只有管理员能通过。</font>' }] : []),
     { tag: 'markdown', content: `**创建人**：${person(creatorOpenIdForReviewer)}　**spec**：\`${c.specHash.slice(0, 12)}\`` },
   ];
   if (state.mine === 'approve') els.push({ tag: 'markdown', content: '✅ 你已通过' });
@@ -122,7 +120,7 @@ export class Flow {
   private store: Store;
   private reviewerEmails: string[];
   reviewers: string[] = [];
-  /** Only admins may approve commands containing privileged steps. */
+  /** Only admins may approve commands containing privileged scripts. */
   isAdmin: (unionId: string) => boolean = () => false;
   signer?: import('./identity.ts').Signer;
   review?: FeishuReview;
@@ -194,8 +192,8 @@ export class Flow {
     if (!/^oc_[A-Za-z0-9]+$/.test(d.chatId)) throw new AmberError('bad_chat', 'chatId 格式不对');
     if (!d.submittedBy || d.submittedBy.length > 80) throw new AmberError('bad_submitter', '请注明提交来源（submittedBy，例如「Beta（botmux @ host-1）」）');
     if (!d.name || d.name.length > 40 || /\s/.test(d.name)) throw new AmberError('bad_name', '名称不能为空、不能有空格、最多 40 个字');
-    if (!Array.isArray(d.steps) || d.steps.length === 0 || d.steps.length > 8) throw new AmberError('bad_steps', '步骤数要在 1–8 之间');
-    try { d.steps = d.steps.map(validateStep); } catch (e) { throw new AmberError('bad_step', (e as Error).message); }
+    if ((d as any).steps !== undefined) throw new AmberError('bad_script', '指令不再有「步骤」：请提交一段 script（参数 + 一段脚本）');
+    try { d.script = validateScript(d.script); } catch (e) { throw new AmberError('bad_script', (e as Error).message); }
     if (this.store.nameTaken(d.chatId, d.name)) throw new AmberError('name_taken', `这里已经有一条叫「${d.name}」的指令（生效中或待审核）`);
     const sideEffect = d.sideEffect === 'write' ? 'write' : 'read';
     let expectedClaimer: string | undefined;
@@ -209,7 +207,7 @@ export class Flow {
     }
     const row = this.store.insertCommand({
       scopeType: d.chatType, chatId: d.chatId, ownerUnionId: expectedClaimer ?? '', name: d.name, description: d.description ?? '',
-      params: d.params ?? [], steps: d.steps, sideEffect, status: 'draft',
+      params: d.params ?? [], script: d.script, sideEffect, status: 'draft',
     });
     this.store.setMeta(row.id, { expectedClaimer: expectedClaimer ?? null, originMessageId: d.originMessageId ?? null, submittedBy: d.submittedBy ?? null });
     this.store.audit(null, 'draft.submit', { id: row.id, name: row.name, chatId: row.chatId, chatType: d.chatType, submittedBy: d.submittedBy, specHash: row.specHash });
@@ -244,7 +242,7 @@ export class Flow {
     if (inst.status === 'APPROVED') {
       const approved = new Set(inst.tasks.filter(t => t.status === 'APPROVED').map(t => t.openId));
       const allReviewers = this.reviewerOpenIds.length > 0 && this.reviewerOpenIds.every(o => approved.has(o));
-      const privilegedOk = !c.steps.some(s => s.kind === 'privileged') || this.adminOpenIds.some(o => approved.has(o));
+      const privilegedOk = !c.script.kind === 'privileged' || this.adminOpenIds.some(o => approved.has(o));
       if (!allReviewers || !privilegedOk || computeSpecHash(c) !== c.specHash) {
         log('approval APPROVED but checks failed', c.id, { allReviewers, privilegedOk });
         this.store.audit(null, 'review.feishu_check_failed', { id: c.id, instanceCode, allReviewers, privilegedOk });
@@ -345,7 +343,7 @@ export class Flow {
       return shell(`审核：${c.name}`, 'grey', [{ tag: 'markdown', content: '这张审核卡已失效（指令已生效、被驳回，或审核期间被修改）。' }]);
     }
     if (action === 'review_no' && !reason.trim()) throw new AmberError('reason_required', '驳回请填写原因');
-    if (action === 'review_ok' && c.steps.some(s => s.kind === 'privileged') && !this.isAdmin(caller.unionId)) throw new AmberError('admin_only', '含特权脚本的指令只能由管理员通过');
+    if (action === 'review_ok' && c.script.kind === 'privileged' && !this.isAdmin(caller.unionId)) throw new AmberError('admin_only', '含特权脚本的指令只能由管理员通过');
     const decision = action === 'review_ok' ? 'approve' : 'reject';
     this.store.recordReview(c.id, c.specHash, caller.unionId, decision, decision === 'reject' ? reason.trim() : null);
     this.store.audit(caller.unionId, `review.${decision}`, { id: c.id, specHash: c.specHash, reason: decision === 'reject' ? reason.trim() : undefined });

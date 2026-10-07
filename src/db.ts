@@ -19,8 +19,8 @@ export interface ParamDef {
   max?: number;
 }
 
-export type { Step as StepDef } from './runner.ts';
-import type { Step as StepDef } from './runner.ts';
+export type { Script } from './runner.ts';
+import type { Script } from './runner.ts';
 
 export interface CommandRow {
   id: string;
@@ -30,7 +30,7 @@ export interface CommandRow {
   name: string;
   description: string;
   params: ParamDef[];
-  steps: StepDef[];
+  script: Script;
   sideEffect: 'read' | 'write';
   status: CommandStatus;
   specHash: string;
@@ -39,8 +39,8 @@ export interface CommandRow {
   global: boolean;
 }
 
-export function computeSpecHash(c: Pick<CommandRow, 'name' | 'params' | 'steps' | 'sideEffect'>): string {
-  const canonical = JSON.stringify({ name: c.name, params: c.params, steps: c.steps, sideEffect: c.sideEffect });
+export function computeSpecHash(c: Pick<CommandRow, 'name' | 'params' | 'script' | 'sideEffect'>): string {
+  const canonical = JSON.stringify({ name: c.name, params: c.params, script: c.script, sideEffect: c.sideEffect });
   return createHash('sha256').update(canonical).digest('hex');
 }
 
@@ -59,7 +59,7 @@ export class Store {
         name TEXT NOT NULL,
         description TEXT NOT NULL DEFAULT '',
         params_json TEXT NOT NULL,
-        steps_json TEXT NOT NULL,
+        script_json TEXT NOT NULL,
         side_effect TEXT NOT NULL,
         status TEXT NOT NULL,
         spec_hash TEXT NOT NULL,
@@ -88,7 +88,9 @@ export class Store {
         detail TEXT NOT NULL
       );
     `);
-    const cols = (this.db.prepare(`PRAGMA table_info(commands)`).all() as { name: string }[]).map(c => c.name);
+    let cols = (this.db.prepare(`PRAGMA table_info(commands)`).all() as { name: string }[]).map(c => c.name);
+    if (cols.includes('steps_json')) this.migrateStepsToScript();
+    cols = (this.db.prepare(`PRAGMA table_info(commands)`).all() as { name: string }[]).map(c => c.name);
     if (!cols.includes('global')) this.db.exec(`ALTER TABLE commands ADD COLUMN global INTEGER NOT NULL DEFAULT 0`);
     for (const [col, ddl] of [
       ['expected_claimer', 'TEXT'],      // union_id that must claim (p2p drafts), or NULL
@@ -112,6 +114,26 @@ export class Store {
     )`);
   }
 
+  /** D28: commands used to hold a list of steps. One-step commands become a single script (same code,
+   *  new representation, so the spec hash is recomputed and audited); anything else is retired. */
+  private migrateStepsToScript(): void {
+    this.db.exec('ALTER TABLE commands RENAME COLUMN steps_json TO script_json');
+    const rows = this.db.prepare('SELECT id, name, params_json, script_json, side_effect, status, spec_hash FROM commands').all() as Record<string, string>[];
+    for (const r of rows) {
+      const v = JSON.parse(r.script_json);
+      if (!Array.isArray(v)) continue;
+      const one = v.length === 1 && v[0] && typeof v[0].code === 'string' ? v[0] : null;
+      if (!one) {
+        this.db.prepare('UPDATE commands SET script_json = ?, status = ? WHERE id = ?').run(JSON.stringify({ kind: 'script', lang: 'python', code: '# 已停用：多步骤指令不再支持' }), r.status === 'retired' || r.status === 'rejected' ? r.status : 'retired', r.id);
+        continue;
+      }
+      const script = { ...one };
+      const hash = computeSpecHash({ name: r.name, params: JSON.parse(r.params_json), script, sideEffect: r.side_effect as 'read' | 'write' });
+      this.db.prepare('UPDATE commands SET script_json = ?, spec_hash = ? WHERE id = ?').run(JSON.stringify(script), hash, r.id);
+      this.db.prepare('INSERT INTO audit (at, actor_union_id, action, detail) VALUES (?,?,?,?)').run(Date.now(), null, 'migrate.single_script', JSON.stringify({ id: r.id, oldSpec: r.spec_hash, newSpec: hash }));
+    }
+  }
+
   private toRow(r: Record<string, unknown>): CommandRow {
     return {
       id: String(r.id),
@@ -121,7 +143,7 @@ export class Store {
       name: String(r.name),
       description: String(r.description ?? ''),
       params: JSON.parse(String(r.params_json)),
-      steps: JSON.parse(String(r.steps_json)),
+      script: JSON.parse(String(r.script_json)),
       sideEffect: r.side_effect as 'read' | 'write',
       status: r.status as CommandStatus,
       specHash: String(r.spec_hash),
@@ -132,9 +154,9 @@ export class Store {
 
   insertCommand(c: Omit<CommandRow, 'id' | 'specHash' | 'createdAt' | 'global'>): CommandRow {
     const row: CommandRow = { ...c, id: randomUUID().slice(0, 8), specHash: computeSpecHash(c), createdAt: Date.now(), global: false };
-    this.db.prepare(`INSERT INTO commands (id, scope_type, chat_id, owner_union_id, name, description, params_json, steps_json, side_effect, status, spec_hash, created_at)
+    this.db.prepare(`INSERT INTO commands (id, scope_type, chat_id, owner_union_id, name, description, params_json, script_json, side_effect, status, spec_hash, created_at)
       VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`).run(row.id, row.scopeType, row.chatId, row.ownerUnionId, row.name, row.description,
-      JSON.stringify(row.params), JSON.stringify(row.steps), row.sideEffect, row.status, row.specHash, row.createdAt);
+      JSON.stringify(row.params), JSON.stringify(row.script), row.sideEffect, row.status, row.specHash, row.createdAt);
     return row;
   }
 

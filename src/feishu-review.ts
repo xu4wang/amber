@@ -18,11 +18,10 @@ function docMarkdown(c: CommandRow, opts: { creator: string; submittedBy?: strin
     ? ['| 参数 | 显示名 | 类型 | 默认值 | 必填 |', '|---|---|---|---|---|',
        ...c.params.map(p => `| ${p.name} | ${p.label ?? ''} | ${p.type === 'integer' ? '整数' : '文本'} | ${p.defaultFrom === 'caller.city' ? '执行人办公城市' + (p.default ? `（兜底 ${p.default}）` : '') : (p.default ?? '')} | ${p.required ? '是' : '否'} |`)].join('\n')
     : '无参数。';
-  const steps = c.steps.map((s, i) => {
-    const how = s.kind === 'privileged' ? '**特权脚本**：不在沙盒里运行，可读本机文件' : '沙盒脚本';
-    const net = s.network ? '，可访问外网' : s.services?.length ? `，以执行人身份调用：${s.services.join('、')}（不能访问外网）` : '，不联网';
-    return `## 第 ${i + 1} 步\n\n${how}${net}；超时 ${(s.timeoutMs ?? 30000) / 1000} 秒。\n\n${FENCE}python\n${s.code.split(FENCE).join('``​`')}\n${FENCE}`;
-  }).join('\n\n');
+  const s = c.script;
+  const how = s.kind === 'privileged' ? '**特权脚本**：不在沙盒里运行，可读本机文件' : '沙盒脚本';
+  const net = s.network ? '，可访问外网' : s.services?.length ? `，以执行人身份调用：${s.services.join('、')}（不能访问外网）` : '，不联网';
+  const code = `## 代码\n\n${how}${net}；超时 ${(s.timeoutMs ?? 30000) / 1000} 秒。\n\n${FENCE}python\n${s.code.split(FENCE).join('``\u200b`')}\n${FENCE}`;
   const trial = opts.trial
     ? `## 试运行结果\n\n由认领人试运行时的输出：\n\n${FENCE}text\n${opts.trial.slice(0, 20000).split(FENCE).join('``​`')}\n${FENCE}`
     : '';
@@ -31,7 +30,7 @@ function docMarkdown(c: CommandRow, opts: { creator: string; submittedBy?: strin
     `**范围**：${c.scopeType === 'p2p' ? '私聊（只有创建人）' : '群'}　**类型**：${c.sideEffect === 'write' ? '写操作' : '只读'}　**创建人**：${opts.creator}${opts.submittedBy ? `　**提交来源**：${opts.submittedBy}` : ''}`,
     `## 说明\n\n${c.description || '（无）'}`,
     `## 参数\n\n${params}`,
-    steps,
+    code,
     trial,
     '## 审批记录\n\n审批在飞书「审批」里进行；结果由 Amber 追加到这里。',
   ].filter(Boolean).join('\n\n');
@@ -87,11 +86,11 @@ export class FeishuReview {
     const text = [
       `指令：${c.name}`,
       `范围：${c.scopeType === 'p2p' ? '私聊' : '群'}　类型：${c.sideEffect === 'write' ? '写操作' : '只读'}`,
-      `步骤：${c.steps.map(s => (s.kind === 'privileged' ? '特权脚本' : '沙盒脚本')).join('、')}`,
+      `运行方式：${c.script.kind === 'privileged' ? '特权脚本' : '沙盒脚本'}`,
       `创建人：${creatorLabel}`,
       `版本：${c.specHash.slice(0, 12)}`,
       `完整代码与试运行结果：${docUrl}`,
-      c.steps.some(s => s.kind === 'privileged') ? '⚠️ 含特权脚本，只能由管理员同意。' : '',
+      c.script.kind === 'privileged' ? '⚠️ 含特权脚本，只能由管理员同意。' : '',
     ].filter(Boolean).join('\n');
     const r = await this.req('POST', '/open-apis/approval/v4/instances', {
       approval_code: a.code,

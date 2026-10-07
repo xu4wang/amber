@@ -3,7 +3,7 @@
 import { readFileSync } from 'node:fs';
 import { loadConfig } from './config.ts';
 import { Store } from './db.ts';
-import type { ParamDef, StepDef, ScopeType } from './db.ts';
+import type { ParamDef, Script, ScopeType } from './db.ts';
 
 const [, , cmd, ...rest] = process.argv;
 const cfg = loadConfig();
@@ -12,7 +12,7 @@ const store = new Store(cfg.dataDir);
 function usage(): never {
   console.error(`usage:
   amber cli list
-  amber cli add <command.json>     # { scopeType, chatId, ownerUnionId, name, description, params, steps, sideEffect }
+  amber cli add <command.json>     # { scopeType, chatId, ownerUnionId, name, description, params, script, sideEffect }
   amber cli retire <id>
   amber cli submit <draft.json>    # submit a draft to the running service (prints the claim info)`);
   process.exit(2);
@@ -24,7 +24,7 @@ if (cmd === 'list') {
   if (!rest[0]) usage();
   const j = JSON.parse(readFileSync(rest[0], 'utf8')) as {
     scopeType: ScopeType; chatId: string; ownerUnionId: string; name: string; description?: string;
-    params: ParamDef[]; steps: StepDef[]; sideEffect: 'read' | 'write';
+    params: ParamDef[]; script: Script; sideEffect: 'read' | 'write';
   };
   const row = store.insertCommand({ ...j, description: j.description ?? '', status: 'active' });
   store.audit(null, 'operator.add_active', { id: row.id, name: row.name, chatId: row.chatId, specHash: row.specHash });
