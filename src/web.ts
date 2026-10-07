@@ -103,7 +103,7 @@ export function startWeb(port: number, store: Store, deps: WebDeps): void {
   const logo = readFileSync(join(import.meta.dirname, '..', 'web', 'logo.svg'));
   // Front-end libraries are served from this repo, never from an outside CDN.
   const vendor = new Map<string, Buffer>();
-  for (const f of ['marked.min.js', 'purify.min.js', 'vega.min.js', 'vega-lite.min.js', 'vega-embed.min.js']) {
+  for (const f of ['marked.min.js', 'purify.min.js', 'vega.min.js', 'vega-lite.min.js', 'vega-embed.min.js', 'highlight.min.js']) {
     vendor.set(`/vendor/${f}`, readFileSync(join(import.meta.dirname, '..', 'web', 'vendor', f)));
   }
 
