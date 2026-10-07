@@ -165,14 +165,15 @@ export class Store {
     return (this.db.prepare('SELECT * FROM commands ORDER BY created_at').all() as Record<string, unknown>[]).map(r => this.toRow(r));
   }
 
-  getMeta(id: string): { expectedClaimer?: string; trialBy?: string; claimMessageId?: string; originMessageId?: string; ownerOpenId?: string } {
-    const r = this.db.prepare('SELECT expected_claimer, trial_by, claim_message_id, origin_message_id, owner_open_id FROM commands WHERE id = ?').get(id) as Record<string, unknown> | undefined;
+  getMeta(id: string): { expectedClaimer?: string; trialBy?: string; claimMessageId?: string; originMessageId?: string; ownerOpenId?: string; submittedBy?: string } {
+    const r = this.db.prepare('SELECT expected_claimer, trial_by, claim_message_id, origin_message_id, owner_open_id, submitted_by FROM commands WHERE id = ?').get(id) as Record<string, unknown> | undefined;
     return {
       expectedClaimer: (r?.expected_claimer as string) || undefined,
       trialBy: (r?.trial_by as string) || undefined,
       claimMessageId: (r?.claim_message_id as string) || undefined,
       originMessageId: (r?.origin_message_id as string) || undefined,
       ownerOpenId: (r?.owner_open_id as string) || undefined,
+      submittedBy: (r?.submitted_by as string) || undefined,
     };
   }
 
@@ -182,6 +183,11 @@ export class Store {
       if (v === undefined) continue;
       this.db.prepare(`UPDATE commands SET ${map[k]} = ? WHERE id = ?`).run(v, id);
     }
+  }
+
+  recentDraftsFor(claimer: string, windowMs: number): number {
+    const r = this.db.prepare(`SELECT COUNT(*) AS n FROM commands WHERE expected_claimer = ? AND created_at > ?`).get(claimer, Date.now() - windowMs) as { n: number };
+    return Number(r.n);
   }
 
   nameTaken(chatId: string, name: string): boolean {

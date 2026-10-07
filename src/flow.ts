@@ -54,9 +54,9 @@ function specSummary(c: CommandRow, executors: ExecutorRegistry): string {
   ].join('\n');
 }
 
-export function claimCard(c: CommandRow, executors: ExecutorRegistry, trial?: { by?: string; blocks?: Block[]; error?: string }): object {
+export function claimCard(c: CommandRow, executors: ExecutorRegistry, trial?: { by?: string; blocks?: Block[]; error?: string }, submittedBy?: string): object {
   const els: unknown[] = [
-    { tag: 'markdown', content: 'agent 提交了一条新指令，等待认领。认领人会成为这条指令的创建人，提交后由审核人审核。' },
+    { tag: 'markdown', content: `${submittedBy ? `**${sanitizeMarkdown(submittedBy, 80)}**` : 'agent'} 提交了一条新指令，等待认领。认领人会成为这条指令的创建人，提交后由审核人审核。\n<font color="grey">请确认这是你让 agent 做的；不认识的草稿直接点「丢弃」。</font>` },
     { tag: 'markdown', content: specSummary(c, executors) },
   ];
   if (trial?.error) els.push({ tag: 'markdown', content: `❌ 试运行失败：${sanitizeMarkdown(trial.error, 300)}` });
@@ -159,6 +159,7 @@ export class Flow {
 
   async submitDraft(d: DraftInput): Promise<{ id: string; claimMessageId?: string }> {
     if (!/^oc_[A-Za-z0-9]+$/.test(d.chatId)) throw new AmberError('bad_chat', 'chatId 格式不对');
+    if (!d.submittedBy || d.submittedBy.length > 80) throw new AmberError('bad_submitter', '请注明提交来源（submittedBy，例如「Beta（botmux @ dev-beta）」）');
     if (!d.name || d.name.length > 40 || /\s/.test(d.name)) throw new AmberError('bad_name', '名称不能为空、不能有空格、最多 40 个字');
     if (!Array.isArray(d.steps) || d.steps.length === 0 || d.steps.length > 8) throw new AmberError('bad_steps', '步骤数要在 1–8 之间');
     for (const s of d.steps) if (!this.executors.get(s.executor)) throw new AmberError('unknown_executor', `执行器 ${s.executor} 未登记，请先由运维登记`);
@@ -170,6 +171,8 @@ export class Flow {
       const { ids } = await this.resolveEmails([d.claimer]);
       if (!ids[0]) throw new AmberError('claimer_unresolved', `找不到认领人 ${d.claimer}`);
       expectedClaimer = ids[0];
+      // Anti-spam: an agent picks the claimer for p2p drafts, so cap how many claim cards one person can receive.
+      if (this.store.recentDraftsFor(expectedClaimer, 3600_000) >= 5) throw new AmberError('rate_limited', '这位认领人一小时内已收到 5 张认领卡，请稍后再提交');
     }
     const row = this.store.insertCommand({
       scopeType: d.chatType, chatId: d.chatId, ownerUnionId: expectedClaimer ?? '', name: d.name, description: d.description ?? '',
@@ -181,8 +184,8 @@ export class Flow {
     let claimMessageId: string | undefined;
     try {
       claimMessageId = d.chatType === 'p2p'
-        ? await this.send({ unionId: expectedClaimer }, claimCard(row, this.executors))
-        : await this.send(d.originMessageId ? { replyTo: d.originMessageId, inThread: !!d.inThread } : { chatId: d.chatId }, claimCard(row, this.executors));
+        ? await this.send({ unionId: expectedClaimer }, claimCard(row, this.executors, undefined, d.submittedBy))
+        : await this.send(d.originMessageId ? { replyTo: d.originMessageId, inThread: !!d.inThread } : { chatId: d.chatId }, claimCard(row, this.executors, undefined, d.submittedBy));
     } catch (e: any) {
       const code = e?.response?.data?.code;
       this.store.setStatus(row.id, 'rejected');
@@ -217,11 +220,11 @@ export class Flow {
     if (action === 'claim_try') {
       try {
         const r = await runCommand(this.store, this.executors, c, {}, caller, facts, { trial: true });
-        if (!r.ok) return claimCard(c, this.executors, { error: r.error });
+        if (!r.ok) return claimCard(c, this.executors, { error: r.error }, meta.submittedBy);
         this.store.setMeta(c.id, { trialBy: caller.unionId });
-        return claimCard(c, this.executors, { by: caller.openId, blocks: r.blocks });
+        return claimCard(c, this.executors, { by: caller.openId, blocks: r.blocks }, meta.submittedBy);
       } catch (e) {
-        return claimCard(c, this.executors, { error: e instanceof AmberError ? e.message : (e as Error).message });
+        return claimCard(c, this.executors, { error: e instanceof AmberError ? e.message : (e as Error).message }, meta.submittedBy);
       }
     }
     if (action === 'claim_submit') {
