@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "on_替换成你的union_id": ["华东", "华南"],
+    "on_另一个人的union_id": ["华北"]
+  },
+  "sales": [
+    { "region": "华东", "month": "2026-08", "amount": 1280000 },
+    { "region": "华东", "month": "2026-09", "amount": 1410000 },
+    { "region": "华南", "month": "2026-08", "amount": 860000 },
+    { "region": "华南", "month": "2026-09", "amount": 920000 },
+    { "region": "华北", "month": "2026-08", "amount": 1050000 },
+    { "region": "华北", "month": "2026-09", "amount": 990000 }
+  ]
+}

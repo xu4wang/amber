@@ -30,6 +30,7 @@ Amber 把「和 LLM agent 一起跑通的一次操作」封存成经过审核的
 | [安装与部署](docs/install.md) | 环境要求、配置文件、launchd 常驻、nginx、运维 |
 | [飞书应用配置](docs/feishu-setup.md) | 权限清单、长连接事件、审批定义、知识库、发布检查 |
 | [amber 命令行与 skill](docs/cli-and-skill.md) | 安装、命令、三档行为、定时任务、接口 |
+| [可信身份：完整示例](docs/identity-example.md) | 用 Python 写一个信任 Amber 凭证的服务，并让固化指令以执行人身份调用它 |
 | [可信身份](docs/identity.md) | 身份从哪来、网站登录、执行身份凭证与服务方验证（含 Node / Python 示例） |
 | [给 agent 的 skill](skills/amber/SKILL.md) | agent 怎么调用 Amber、怎么提交新指令 |
 

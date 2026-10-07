@@ -1,0 +1,22 @@
+{
+  "chatId": "oc_替换成你的群或私聊",
+  "chatType": "p2p",
+  "claimer": "you@example.com",
+  "name": "我的销售额",
+  "description": "以执行人本人的身份，查询他有权限看的区域销售额（可信身份示例）",
+  "params": [],
+  "script": {
+    "kind": "script",
+    "lang": "python",
+    "network": false,
+    "services": [
+      "demo-profile"
+    ],
+    "timeoutMs": 15000,
+    "code": "# 固化指令的脚本：以执行人的身份查「我能看到的销售额」。\n# 它在 Amber 的沙盒里运行：只能用 Python 标准库，不能上外网，只能连声明过的服务。\nimport json, sys, urllib.request\n\ninp = json.load(sys.stdin)\nsvc = inp[\"services\"][\"demo-profile\"]          # Amber 为本次执行签发的凭证和服务地址\nreq = urllib.request.Request(\n    f\"http://127.0.0.1:{svc['tcpPort']}/sales\",\n    headers={\"Authorization\": \"Amber \" + svc[\"token\"]},\n)\nopener = urllib.request.build_opener(urllib.request.ProxyHandler({}))  # 本机服务，不走代理\ntry:\n    with opener.open(req, timeout=10) as r:\n        data = json.load(r)\nexcept urllib.error.HTTPError as e:\n    # 写到标准错误并以非 0 退出：Amber 把它当作执行失败，并把这句话显示给执行人\n    sys.exit(\"服务拒绝了请求：\" + json.loads(e.read().decode(\"utf-8\")).get(\"error\", str(e.code)))\n\nrows = data[\"rows\"]\nif not rows:\n    print(\"你没有任何区域的数据权限。\")\n    sys.exit(0)\n\nprint(f\"**你能看到的区域**：{'、'.join(data['regions'])}\\n\")\nprint(\"```table\")\nprint(json.dumps({\n    \"columns\": [\n        {\"name\": \"region\", \"label\": \"区域\", \"type\": \"text\"},\n        {\"name\": \"month\", \"label\": \"月份\", \"type\": \"text\"},\n        {\"name\": \"amount\", \"label\": \"销售额\", \"type\": \"number\"},\n    ],\n    \"rows\": rows,\n}, ensure_ascii=False))\nprint(\"```\")\n"
+  },
+  "options": {
+    "confirm": false,
+    "schedulable": true
+  }
+}

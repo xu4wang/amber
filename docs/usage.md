@@ -90,5 +90,6 @@ agent 没法向 Amber 证明它是在替谁做事。所以凡是要用你的身�
 |---|---|
 | [amber 命令行与 skill](cli-and-skill.md) | 给 agent 配置 Amber 的人 |
 | [可信身份](identity.md) | 后端服务方：怎么验证 Amber 签发的执行身份凭证 |
+| [可信身份：完整示例](identity-example.md) | 想让指令以执行人身份查数据的人：Python 服务 + 指令的完整流程 |
 | [安装与部署](install.md) | 部署 Amber 的人 |
 | [飞书应用配置](feishu-setup.md) | 配置飞书应用的管理员 |
