@@ -98,7 +98,7 @@ export function reviewCard(c: CommandRow, creatorOpenIdForReviewer: string | und
     { tag: 'markdown', content: `请审核这条指令。需要 **全部 ${state.total} 位**审核人通过才生效，目前已通过 ${state.approved} 位。` },
     { tag: 'markdown', content: specSummary(c) },
     ...codePanels(c),
-    ...(c.steps.some(s => s.kind === 'privileged') ? [{ tag: 'markdown', content: '<font color="red">⚠️ 含特权脚本：通过即允许这段代码不经沙盒在 dev-beta 上运行。只有管理员能通过。</font>' }] : []),
+    ...(c.steps.some(s => s.kind === 'privileged') ? [{ tag: 'markdown', content: '<font color="red">⚠️ 含特权脚本：通过即允许这段代码不经沙盒在 Amber 所在机器上运行。只有管理员能通过。</font>' }] : []),
     { tag: 'markdown', content: `**创建人**：${person(creatorOpenIdForReviewer)}　**spec**：\`${c.specHash.slice(0, 12)}\`` },
   ];
   if (state.mine === 'approve') els.push({ tag: 'markdown', content: '✅ 你已通过' });
@@ -192,7 +192,7 @@ export class Flow {
 
   async submitDraft(d: DraftInput): Promise<{ id: string; claimMessageId?: string }> {
     if (!/^oc_[A-Za-z0-9]+$/.test(d.chatId)) throw new AmberError('bad_chat', 'chatId 格式不对');
-    if (!d.submittedBy || d.submittedBy.length > 80) throw new AmberError('bad_submitter', '请注明提交来源（submittedBy，例如「Beta（botmux @ dev-beta）」）');
+    if (!d.submittedBy || d.submittedBy.length > 80) throw new AmberError('bad_submitter', '请注明提交来源（submittedBy，例如「Beta（botmux @ host-1）」）');
     if (!d.name || d.name.length > 40 || /\s/.test(d.name)) throw new AmberError('bad_name', '名称不能为空、不能有空格、最多 40 个字');
     if (!Array.isArray(d.steps) || d.steps.length === 0 || d.steps.length > 8) throw new AmberError('bad_steps', '步骤数要在 1–8 之间');
     try { d.steps = d.steps.map(validateStep); } catch (e) { throw new AmberError('bad_step', (e as Error).message); }
