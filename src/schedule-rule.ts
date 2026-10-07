@@ -5,7 +5,8 @@ import { AmberError } from './engine.ts';
 export type Rule =
   | { kind: 'daily' | 'weekdays'; time: string; tz: string }
   | { kind: 'weekly'; weekday: number; time: string; tz: string }   // weekday 1 = Monday … 7 = Sunday
-  | { kind: 'hourly'; every: number; minute: number; tz: string };
+  | { kind: 'hourly'; every: number; minute: number; tz: string }
+  | { kind: 'minutely'; every: number; tz: string };                  // every 5/10/15/20/30 minutes, on the clock
 
 const WEEKDAYS = '一二三四五六日';
 const TZ_LABEL: Record<string, string> = { 'Asia/Shanghai': '北京时间', 'Asia/Bangkok': '曼谷时间', 'Asia/Ho_Chi_Minh': '胡志明时间', 'Asia/Singapore': '新加坡时间' };
@@ -22,7 +23,7 @@ function time(h: string, m: string): string {
   return `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}`;
 }
 
-/** "每天 9:00" / "工作日 18:30" / "每周一 9:00" / "每小时" / "每 2 小时" / "每 2 小时 15 分"; English: "daily 9:00", "weekdays 9:00", "weekly mon 9:00", "every 2h". */
+/** "每天 9:00" / "工作日 18:30" / "每周一 9:00" / "每小时" / "每 2 小时" / "每 2 小时 15 分" / "每 15 分钟"; English: "daily 9:00", "weekdays 9:00", "weekly mon 9:00", "every 2h", "every 15m". */
 export function parseRule(text: string, tz = DEFAULT_TZ): Rule {
   checkTz(tz);
   const s = text.trim().replace(/：/g, ':').replace(/\s+/g, ' ');
@@ -36,6 +37,12 @@ export function parseRule(text: string, tz = DEFAULT_TZ): Rule {
   if ((m = new RegExp(`^weekly (mon|tue|wed|thu|fri|sat|sun) ?${T}$`, 'i').exec(s))) {
     return { kind: 'weekly', weekday: ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'].indexOf(m[1].toLowerCase()) + 1, time: time(m[2], m[3]), tz };
   }
+  if ((m = /^(?:每 ?(\d{1,2}) ?分钟|every ?(\d{1,2}) ?m(?:in(?:utes?)?)?)$/i.exec(s))) {
+    const every = Number(m[1] ?? m[2]);
+    // At least 5 minutes: every run starts a sandboxed process and may call services (D37).
+    if (![5, 10, 15, 20, 30].includes(every)) throw new AmberError('bad_rule', '每 N 分钟：N 只能是 5、10、15、20、30（最短 5 分钟）');
+    return { kind: 'minutely', every, tz };
+  }
   if ((m = /^(?:每 ?(\d{1,2})? ?个?小时(?: ?(?:的?第)? ?(\d{1,2}) ?分)?|every ?(\d{1,2})? ?h(?:ours?)?(?: at :?(\d{1,2}))?)$/i.exec(s))) {
     const every = Number(m[1] ?? m[3] ?? 1);
     const minute = Number(m[2] ?? m[4] ?? 0);
@@ -43,7 +50,7 @@ export function parseRule(text: string, tz = DEFAULT_TZ): Rule {
     if (minute > 59) throw new AmberError('bad_rule', '分钟应为 0–59');
     return { kind: 'hourly', every, minute, tz };
   }
-  throw new AmberError('bad_rule', '看不懂这个时间。可用写法：每天 09:00、工作日 09:00、每周一 09:00、每小时、每 2 小时');
+  throw new AmberError('bad_rule', '看不懂这个时间。可用写法：每天 09:00、工作日 09:00、每周一 09:00、每小时、每 2 小时、每 5 分钟');
 }
 
 export function validateRule(r: unknown): Rule {
@@ -58,12 +65,14 @@ function describeRuleRaw(r: Rule): string {
   if (r.kind === 'weekdays') return `工作日 ${r.time}`;
   if (r.kind === 'weekly') return `每周${WEEKDAYS[r.weekday - 1] ?? '?'} ${r.time}`;
   if (r.kind === 'hourly') return `每 ${r.every} 小时 ${r.minute} 分`;
+  if (r.kind === 'minutely') return `每 ${r.every} 分钟`;
   return '?';
 }
 
 export function describeRule(r: Rule): string {
   const tz = TZ_LABEL[r.tz] ?? r.tz;
   if (r.kind === 'hourly') return `${r.every === 1 ? '每小时' : `每 ${r.every} 小时`}的第 ${r.minute} 分（${tz}）`;
+  if (r.kind === 'minutely') return `每 ${r.every} 分钟（${tz}）`;
   return `${describeRuleRaw(r)}（${tz}）`;
 }
 
@@ -92,6 +101,11 @@ function toUtc(y: number, mo: number, d: number, h: number, mi: number, tz: stri
 
 /** First run strictly after `after` (ms). */
 export function nextRun(r: Rule, after: number): number {
+  if (r.kind === 'minutely') {
+    let t = Math.floor(after / 60000) * 60000 + 60000;
+    for (let i = 0; i < 61; i++, t += 60000) if (local(t, r.tz).mi % r.every === 0) return t;
+    throw new Error('no next run');
+  }
   if (r.kind === 'hourly') {
     let t = Math.floor(after / 60000) * 60000 + 60000;
     for (let i = 0; i < 49 * 60; i++, t += 60000) {

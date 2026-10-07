@@ -335,7 +335,7 @@ function cmdPane(key, { c, scope }) {
         <div class="actions"><button class="btn ${c.options.confirm ? 'danger' : 'primary'}" data-do="run">${c.options.confirm ? '确认执行' : '执行'}</button>
           <span class="note">以你本人的身份执行</span></div></form>
       ${c.options.schedulable ? `<form data-form="sch" style="display:none">${paramInputs(c)}
-        <div class="field"><label>时间</label><input name="__at" placeholder="每天 09:00 / 工作日 09:00 / 每周一 09:00 / 每 2 小时"></div>
+        <div class="field"><label>时间</label><input name="__at" placeholder="每天 09:00 / 工作日 09:00 / 每周一 09:00 / 每 2 小时 / 每 15 分钟"></div>
         <div class="field"><label>时区</label><select name="__tz"><option value="Asia/Shanghai">北京时间</option><option value="Asia/Bangkok">曼谷时间</option></select></div>
         <p class="note">每次都以你的身份自动执行；结果发到${scope.startsWith('group:') ? '这个群' : '你和 Amber 的私聊'}，没有输出时不发。</p>
         <div class="actions"><button class="btn primary" data-do="sch">${c.options.confirm ? '确认并创建定时任务' : '创建定时任务'}</button></div>
