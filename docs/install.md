@@ -159,12 +159,20 @@ server {
         proxy_set_header Host $host;
         proxy_read_timeout 150s;
     }
+
+    # 前端库可以由 nginx 直接提供（Amber 自己也能提供，这里只是少走一层）
+    location ~ ^/vendor/([a-z.-]+\.js)$ {
+        alias /Users/you/amber/web/vendor/$1;
+        types { text/javascript js; }
+        add_header Cache-Control "max-age=86400" always;
+    }
 }
 ```
 
 注意：
 
 - nginx 的 `allow` 列表和 `config.json` 的 `machines` 要保持一致。Amber 只认 `X-Amber-Client-IP`，对不上的 IP 一律返回 403。
+- **确认 nginx 的 `proxy_temp` 目录可写。** 不可写时，响应稍大、客户端又慢的情况下会被截断，日志里出现 `proxy_temp … Permission denied`。表现是网页上图表报 `Cannot read properties of undefined (reading 'isString')`，原因是 vega.min.js 只下载了一部分。修复办法：修正那个目录的属主，或者在上面两个 `location` 里加 `proxy_max_temp_file_size 0;`。
 - `/v1/keys`（公钥）不需要放行给外部，服务方在本机读取即可。
 - 网站登录用的是 cookie。如果站点要开放到内网以外，**必须先上 HTTPS**。
 
