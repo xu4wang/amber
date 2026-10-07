@@ -395,6 +395,12 @@ export class Store {
     };
   }
 
+  /** Recent runs started with this person's identity (any channel). */
+  runsByCaller(unionId: string, limit: number): (RunRow & { commandName: string; scheduleId: string | null })[] {
+    return (this.db.prepare(`SELECT r.*, c.name AS command_name FROM runs r LEFT JOIN commands c ON c.id = r.command_id WHERE r.caller_union_id = ? ORDER BY r.started_at DESC LIMIT ?`).all(unionId, limit) as Record<string, unknown>[])
+      .map(r => ({ ...this.getRun(String(r.id))!, commandName: String(r.command_name ?? r.command_id), scheduleId: (r.schedule_id as string) ?? null }));
+  }
+
   setRunSchedule(runId: string, scheduleId: string): void {
     this.db.prepare('UPDATE runs SET schedule_id = ? WHERE id = ?').run(scheduleId, runId);
   }

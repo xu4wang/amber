@@ -5,6 +5,11 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Amber</title>
 <link rel="icon" href="/logo.svg">
+<script src="https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/dompurify@3.1.6/dist/purify.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/vega@5.30.0/build/vega.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/vega-lite@5.21.0/build/vega-lite.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/vega-embed@6.26.0/build/vega-embed.min.js"></script>
 <style>
 :root {
   --bg: #f7f5f1; --panel: #ffffff; --ink: #1d1a16; --muted: #6b645b; --line: #e6e0d6;
@@ -49,6 +54,26 @@ section h2 .count { color: var(--muted); font-weight: 400; font-size: 13px; }
 .empty { color: var(--muted); font-size: 14px; padding: 4px 0 8px; }
 .banner { background: var(--accent-soft); border-radius: 10px; padding: 10px 14px; font-size: 14px; margin-bottom: 8px; }
 .sch-state.paused { color: var(--warn); }
+.run-form { margin-top: 10px; border-top: 1px dashed var(--line); padding-top: 10px; display: none; }
+.run-form.open { display: block; }
+.field { display: flex; gap: 10px; align-items: center; margin-bottom: 8px; flex-wrap: wrap; }
+.field label { min-width: 88px; color: var(--muted); font-size: 14px; }
+.field input, .field select { flex: 1; min-width: 160px; font: inherit; padding: 6px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); color: var(--ink); }
+.actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; align-items: center; }
+.btn.danger { background: var(--warn); border-color: var(--warn); color: #fff; }
+.btn.small { padding: 2px 10px; font-size: 13px; }
+button:disabled { opacity: .55; cursor: default; }
+.output { margin-top: 12px; border: 1px solid var(--line); border-radius: 10px; padding: 10px 14px; background: var(--bg); overflow-x: auto; }
+.output.err { border-color: var(--warn); color: var(--warn); }
+.output table { border-collapse: collapse; font-size: 14px; margin: 8px 0; }
+.output th, .output td { border: 1px solid var(--line); padding: 4px 10px; text-align: left; }
+.output td.num { text-align: right; font-variant-numeric: tabular-nums; }
+.output .meta { color: var(--muted); font-size: 12px; margin-top: 6px; }
+.output .chart { width: 100%; }
+.runs { font-size: 14px; }
+.runs .row { display: flex; gap: 10px; padding: 6px 0; border-bottom: 1px solid var(--line); align-items: center; flex-wrap: wrap; }
+.runs .row .when { color: var(--muted); min-width: 110px; }
+.status-ok { color: var(--ok); } .status-failed { color: var(--warn); }
 code { font-family: ui-monospace, Menlo, monospace; font-size: 13px; }
 @media (max-width: 520px) { header .who span.name { display: none; } }
 </style>
@@ -83,45 +108,218 @@ function loginView() {
     </div>`;
 }
 
-function params(c) {
-  if (!c.params.length) return '';
-  return `<div class="params">参数：${c.params.map(p => `${esc(p.label)}${p.required ? '（必填）' : ''}${p.fromCity ? '（默认你的办公城市）' : p.default ? `（默认 ${esc(p.default)}）` : ''}`).join('，')}</div>`;
+const fmtTime = t => { const d = new Date(t); return `${d.getMonth() + 1}-${d.getDate()} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`; };
+const CH = { bot: '飞书', web: '网站', agent: 'agent', schedule: '定时', 'bot.trial': '试运行', 'web.trial': '试运行' };
+
+async function post(path, body) {
+  const r = await fetch(path, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+  const j = await r.json().catch(() => ({ ok: false, message: '服务器返回异常' }));
+  if (r.status === 401) { loginView(); throw new Error('请重新登录'); }
+  return j;
 }
 
-function cmdCard(c) {
-  return `<div class="card"><div class="title">${esc(c.name)}
+// ---- output rendering: Markdown + ```table + ```vega-lite (the same content the Feishu card shows)
+function tableHtml(src) {
+  let t; try { t = JSON.parse(src); } catch { return '<p class="note">（表格格式不正确）</p>'; }
+  if (!Array.isArray(t.columns) || !Array.isArray(t.rows)) return '<p class="note">（表格格式不正确）</p>';
+  const head = t.columns.map(c => `<th>${esc(c.label ?? c.name)}</th>`).join('');
+  const body = t.rows.map(r => '<tr>' + t.columns.map(c => `<td class="${c.type === 'number' ? 'num' : ''}">${esc(r[c.name] ?? '')}</td>`).join('') + '</tr>').join('');
+  const more = Number.isFinite(t.total) && t.total > t.rows.length ? `<p class="note">共 ${t.total} 行，这里显示 ${t.rows.length} 行</p>` : '';
+  return `<table><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>${more}`;
+}
+
+function renderOutput(el, md) {
+  const charts = [];
+  const parts = [];
+  let last = 0;
+  const re = /```(vega-lite|table)\s*\n([\s\S]*?)```/g;
+  let m;
+  while ((m = re.exec(md))) {
+    parts.push({ md: md.slice(last, m.index) });
+    parts.push({ kind: m[1], src: m[2] });
+    last = m.index + m[0].length;
+  }
+  parts.push({ md: md.slice(last) });
+  let html = '';
+  for (const p of parts) {
+    if (p.md !== undefined) { if (p.md.trim()) html += DOMPurify.sanitize(marked.parse(p.md)); }
+    else if (p.kind === 'table') html += tableHtml(p.src);
+    else { html += `<div class="chart" data-chart="${charts.length}"></div>`; charts.push(p.src); }
+  }
+  el.innerHTML = html || '<p class="note">（没有输出）</p>';
+  el.querySelectorAll('[data-chart]').forEach(div => {
+    let spec;
+    try { spec = JSON.parse(charts[Number(div.dataset.chart)]); } catch { div.innerHTML = '<p class="note">（图表格式不正确）</p>'; return; }
+    // Only inline data: never let output make the browser fetch other URLs.
+    const strip = o => { if (o && typeof o === 'object') { if (o.data && o.data.url) delete o.data.url; Object.values(o).forEach(strip); } };
+    strip(spec);
+    spec.width = spec.width ?? 'container';
+    vegaEmbed(div, spec, { actions: false, renderer: 'svg' }).catch(() => { div.innerHTML = '<p class="note">（图表无法显示）</p>'; });
+  });
+}
+
+function showResult(el, r) {
+  el.style.display = 'block';
+  el.className = 'output' + (r.ok ? '' : ' err');
+  if (!r.ok) { el.textContent = '❌ ' + (r.message || r.error || '执行失败'); return; }
+  const body = document.createElement('div');
+  renderOutput(body, r.markdown || '');
+  el.innerHTML = '';
+  el.appendChild(body);
+  el.insertAdjacentHTML('beforeend', `<div class="meta">以你的身份执行 · ${(r.elapsedMs / 1000).toFixed(1)} 秒 · run ${esc(r.runId)}</div>`);
+}
+
+// ---- command cards
+const CMDS = new Map();
+function params(c) {
+  if (!c.params.length) return '';
+  return `<div class="params">参数：${c.params.map(p => `${esc(p.label)}${p.required ? '（必填）' : ''}`).join('，')}</div>`;
+}
+
+function cmdCard(c, scope) {
+  const key = scope + '|' + c.id;
+  CMDS.set(key, { c, scope });
+  const inputs = c.params.map(p => `<div class="field"><label>${esc(p.label)}${p.required ? ' *' : ''}</label>
+    <input name="${esc(p.name)}" ${p.type === 'integer' ? 'inputmode="numeric"' : ''} value="${p.default && !p.fromCity ? esc(p.default) : ''}"
+      placeholder="${p.fromCity ? '不填则用你的办公城市' : p.required ? '必填' : '可不填'}"></div>`).join('');
+  return `<div class="card" data-key="${esc(key)}"><div class="title">${esc(c.name)}
     ${c.global ? '<span class="chip accent">全局</span>' : ''}
     ${c.options.confirm ? '<span class="chip warn">需确认</span>' : ''}
     ${c.options.schedulable ? '<span class="chip">可定时</span>' : ''}</div>
-    ${c.description ? `<div class="desc">${esc(c.description)}</div>` : ''}${params(c)}</div>`;
+    ${c.description ? `<div class="desc">${esc(c.description)}</div>` : ''}${params(c)}
+    <div class="actions"><button class="btn small" data-open="run">执行…</button>${c.options.schedulable ? '<button class="btn small" data-open="sch">定时…</button>' : ''}</div>
+    <form class="run-form" data-form="run">${inputs}
+      ${c.options.confirm ? '<p class="note" style="color:var(--warn)">⚠️ 这条指令要求执行前确认：请核对参数，点两次按钮才会执行。</p>' : ''}
+      <div class="actions"><button class="btn ${c.options.confirm ? 'danger' : 'primary'}" data-do="run">${c.options.confirm ? '确认执行' : '执行'}</button></div>
+      <div class="output" style="display:none"></div></form>
+    ${c.options.schedulable ? `<form class="run-form" data-form="sch">${inputs}
+      <div class="field"><label>时间</label><input name="__at" placeholder="每天 09:00 / 工作日 09:00 / 每周一 09:00 / 每 2 小时"></div>
+      <div class="field"><label>时区</label><select name="__tz"><option value="Asia/Shanghai">北京时间</option><option value="Asia/Bangkok">曼谷时间</option></select></div>
+      <p class="note">每次都以你的身份自动执行；结果发到${scope.startsWith('group:') ? '这个群' : '你和 Amber 的私聊'}，没有输出时不发。</p>
+      <div class="actions"><button class="btn primary" data-do="sch">${c.options.confirm ? '确认并创建定时任务' : '创建定时任务'}</button></div>
+      <div class="output" style="display:none"></div></form>` : ''}
+  </div>`;
 }
+
+function formArgs(form) {
+  const args = {};
+  form.querySelectorAll('input[name]').forEach(i => { if (!i.name.startsWith('__') && i.value.trim()) args[i.name] = i.value.trim(); });
+  return args;
+}
+
+app.addEventListener('click', async ev => {
+  const open = ev.target.closest('[data-open]');
+  if (open) {
+    const card = open.closest('.card');
+    card.querySelectorAll('.run-form').forEach(f => f.classList.toggle('open', f.dataset.form === open.dataset.open && !f.classList.contains('open')));
+    return;
+  }
+  const doBtn = ev.target.closest('[data-do]');
+  if (doBtn) {
+    ev.preventDefault();
+    const card = doBtn.closest('.card');
+    const { c, scope } = CMDS.get(card.dataset.key);
+    const form = doBtn.closest('form');
+    const out = form.querySelector('.output');
+    // Two-step button for commands that require confirmation.
+    if (c.options.confirm && !doBtn.dataset.armed) {
+      doBtn.dataset.armed = '1';
+      const text = doBtn.textContent;
+      doBtn.textContent = '再点一次确认';
+      setTimeout(() => { delete doBtn.dataset.armed; doBtn.textContent = text; }, 5000);
+      return;
+    }
+    delete doBtn.dataset.armed;
+    const text = doBtn.textContent;
+    doBtn.disabled = true;
+    doBtn.textContent = doBtn.dataset.do === 'run' ? '执行中……' : '创建中……';
+    try {
+      if (doBtn.dataset.do === 'run') {
+        const r = await post('/web/api/run', { scope, commandId: c.id, args: formArgs(form), confirm: c.options.confirm });
+        showResult(out, r);
+        loadRuns();
+      } else {
+        const r = await post('/web/api/schedules', { scope, commandId: c.id, args: formArgs(form), at: form.querySelector('[name=__at]').value, tz: form.querySelector('[name=__tz]').value, confirm: c.options.confirm });
+        out.style.display = 'block';
+        out.className = 'output' + (r.ok ? '' : ' err');
+        out.textContent = r.ok ? `✅ 已创建定时任务 ${r.scheduleId}：${r.rule}，首次运行 ${r.next}` : '❌ ' + (r.message || r.error);
+        if (r.ok) setTimeout(main, 1500);
+      }
+    } catch (e) { out.style.display = 'block'; out.className = 'output err'; out.textContent = '❌ ' + e.message; }
+    doBtn.disabled = false;
+    doBtn.textContent = text;
+    return;
+  }
+  const sch = ev.target.closest('[data-sch]');
+  if (sch) {
+    const [id, op] = sch.dataset.sch.split(':');
+    if (op === 'delete' && !confirm('删除这个定时任务？')) return;
+    sch.disabled = true;
+    const r = await post(`/web/api/schedules/${id}/${op}`, {});
+    if (!r.ok) alert(r.message || r.error);
+    else if (op === 'run') alert(r.lastStatus === 'failed' ? '运行失败，详情见「我的最近运行」' : '已运行，结果已发到原来的位置');
+    main();
+    return;
+  }
+  const run = ev.target.closest('[data-run]');
+  if (run) {
+    const box = document.getElementById('run-view');
+    const r = await fetch('/web/api/runs/' + run.dataset.run).then(x => x.json());
+    box.style.display = 'block';
+    if (!r.ok) { box.className = 'output err'; box.textContent = r.message || '读取失败'; return; }
+    box.className = 'output';
+    if (r.status !== 'ok') { box.classList.add('err'); box.textContent = '❌ ' + (r.error || r.status); return; }
+    box.innerHTML = '';
+    const body = document.createElement('div');
+    renderOutput(body, r.markdown);
+    box.appendChild(body);
+    box.insertAdjacentHTML('beforeend', `<div class="meta">run ${esc(r.id)} · ${fmtTime(r.startedAt)}</div>`);
+  }
+});
 
 function schCard(s) {
   const args = Object.entries(s.args || {}).map(([k, v]) => `${esc(k)}=${esc(v)}`).join(' ');
+  const btns = s.mine ? `<div class="actions">
+      ${s.status === 'active' ? `<button class="btn small" data-sch="${esc(s.id)}:pause">暂停</button>` : `<button class="btn small primary" data-sch="${esc(s.id)}:resume">恢复</button>`}
+      <button class="btn small" data-sch="${esc(s.id)}:run">立即运行</button>
+      <button class="btn small" data-sch="${esc(s.id)}:delete">删除</button></div>` : '';
   return `<div class="card"><div class="title">⏰ ${esc(s.command)} <span class="chip">${esc(s.rule)}</span></div>
     <div class="desc"><span class="sch-state ${s.status}">${s.status === 'active' ? `下次 ${esc(s.next)}` : `已暂停${s.pauseReason ? '：' + esc(s.pauseReason) : ''}`}</span>
-    ${s.last ? ` · 上次 ${esc(s.last)}` : ''}${args ? ` · <code>${args}</code>` : ''}</div></div>`;
+    ${s.last ? ` · 上次 ${esc(s.last)}` : ''}${args ? ` · <code>${args}</code>` : ''}</div>${btns}</div>`;
 }
 
-function block(title, cmds, schs, emptyText) {
+function block(title, scope, cmds, schs, emptyText) {
   const n = cmds.length + schs.length;
   return `<section><h2>${esc(title)}<span class="count">${cmds.length} 条指令${schs.length ? ` · ${schs.length} 个定时任务` : ''}</span></h2>
-    ${n ? cmds.map(cmdCard).join('') + schs.map(schCard).join('') : `<div class="empty">${emptyText}</div>`}</section>`;
+    ${n ? cmds.map(c => cmdCard(c, scope)).join('') + schs.map(schCard).join('') : `<div class="empty">${emptyText}</div>`}</section>`;
+}
+
+async function loadRuns() {
+  const el = document.getElementById('runs');
+  if (!el) return;
+  const r = await fetch('/web/api/runs').then(x => x.json()).catch(() => null);
+  if (!r || !r.ok) return;
+  el.innerHTML = r.runs.length ? r.runs.map(x => `<div class="row"><span class="when">${fmtTime(x.startedAt)}</span><b>${esc(x.command)}</b>
+      <span class="chip">${esc(CH[x.channel] || x.channel)}</span><span class="status-${esc(x.status)}">${x.status === 'ok' ? '成功' : x.status === 'failed' ? '失败' : '运行中'}</span>
+      <button class="btn small" data-run="${esc(x.id)}">查看</button></div>`).join('') : '<div class="empty">还没有运行记录。</div>';
 }
 
 async function main() {
   const me = await fetch('/web/api/me').then(r => r.json()).catch(() => null);
   if (!me || !me.ok) return loginView();
   whoEl.innerHTML = `<span class="name">${esc(me.name)}</span><button id="logout">退出</button>`;
-  document.getElementById('logout').onclick = async () => { await fetch('/web/api/logout', { method: 'POST' }); loginView(); };
+  document.getElementById('logout').onclick = async () => { await post('/web/api/logout', {}).catch(() => {}); loginView(); };
   const o = await fetch('/web/api/overview').then(r => r.json());
   if (!o.ok) return loginView();
-  let html = '<p class="note">这里列出你能使用的指令和定时任务。执行和管理目前请跟你的 agent 说，或在飞书里 @Amber；网页执行即将开放。</p>';
+  CMDS.clear();
+  let html = '<p class="note">点「执行…」填参数，以你本人的身份执行；结果和在飞书里看到的是同一份内容。</p>';
   if (o.membershipUnknown) html += '<div class="banner">Amber 暂时无法读取群成员，群里的指令先不显示（需要在飞书后台给 Amber 开通「获取群成员」权限）。</div>';
-  html += block('我的私聊', o.p2p.commands, o.p2p.schedules, '你在私聊里还没有指令。');
-  for (const g of o.groups) html += block(`群：${g.name}`, g.commands, g.schedules, '这个群还没有指令。');
-  html += block('全局指令', o.global, [], '还没有全局指令。');
+  html += block('我的私聊', 'p2p', o.p2p.commands, o.p2p.schedules, '你在私聊里还没有指令。');
+  for (const g of o.groups) html += block(`群：${g.name}`, 'group:' + g.chatId, g.commands, g.schedules, '这个群还没有指令。');
+  html += block('全局指令', 'global', o.global, [], '还没有全局指令。');
+  html += '<section><h2>我的最近运行</h2><div class="runs" id="runs"></div><div class="output" id="run-view" style="display:none"></div></section>';
   app.innerHTML = html;
+  loadRuns();
 }
 main();
 </script>

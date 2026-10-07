@@ -17,5 +17,9 @@ startWeb(Number(process.env.AMBER_WEB_PORT ?? 7342), store, {
   nameOf: u => bot.nameOf(u),
   onLoginUsed: (m, at) => bot.onLoginUsed(m, at),
   feishuChatLink: `https://applink.feishu.cn/client/bot/open?appId=${cfg.appId}`,
+  cityOf: u => bot.cityOf(u),
+  signer: bot.signer,
+  scheduler: bot.scheduler,
+  origin: new URL(cfg.webBaseUrl).origin,
 });
 console.log(new Date().toISOString(), 'amber started; data dir', cfg.dataDir);

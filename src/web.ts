@@ -9,6 +9,10 @@ import { createHash, randomBytes } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Store, CommandRow, ScheduleRow } from './db.ts';
+import type { Caller } from './engine.ts';
+import { runCommand, AmberError } from './engine.ts';
+import type { Signer } from './identity.ts';
+import type { Scheduler } from './scheduler.ts';
 import { describeRule, formatAt } from './schedule-rule.ts';
 
 export const LOGIN_TTL_MS = 5 * 60_000;
@@ -30,6 +34,53 @@ export interface WebDeps {
   /** The login card in the person's private chat changes to "logged in". */
   onLoginUsed(messageId: string, at: number): Promise<void>;
   feishuChatLink: string;
+  cityOf(unionId: string): Promise<string | undefined>;
+  signer: Signer;
+  scheduler: Scheduler;
+  /** Origin of the site, e.g. http://amber.dev-beta.ksherpay.com — POSTs from anywhere else are refused. */
+  origin: string;
+}
+
+function readJson(req: IncomingMessage): Promise<any> {
+  return new Promise((resolve, reject) => {
+    let body = '';
+    req.on('data', c => { body += c; if (body.length > 64 * 1024) { reject(new AmberError('too_large', '请求太大')); req.destroy(); } });
+    req.on('end', () => { try { resolve(body ? JSON.parse(body) : {}); } catch { reject(new AmberError('bad_json', '请求格式不对')); } });
+    req.on('error', reject);
+  });
+}
+
+/**
+ * Where a command is being used from the website, and whether this person may use it there.
+ * scope: "p2p" (their private-chat commands), "global", or "group:<chat id>" (they must be a member).
+ */
+async function target(store: Store, deps: WebDeps, unionId: string, scope: string, commandId: string): Promise<{ cmd: CommandRow; chatId: string; chatType: 'group' | 'p2p' }> {
+  const cmd = store.getCommand(String(commandId));
+  const nf = new AmberError('not_found', '没有找到这条指令');
+  if (!cmd || cmd.status !== 'active') throw nf;
+  if (scope === 'p2p') {
+    if (cmd.scopeType !== 'p2p' || cmd.ownerUnionId !== unionId) throw nf;
+    return { cmd, chatId: cmd.chatId, chatType: 'p2p' };
+  }
+  if (scope === 'global') {
+    if (!cmd.global) throw nf;
+    // Results of global commands used from the website go to the person's private chat with Amber.
+    return { cmd, chatId: `web:${unionId}`, chatType: 'p2p' };
+  }
+  const m = /^group:(oc_[A-Za-z0-9]+)$/.exec(scope);
+  if (!m || cmd.scopeType !== 'group' || cmd.chatId !== m[1]) throw nf;
+  const member = await deps.isMember(m[1], unionId);
+  if (member !== true) throw new AmberError('forbidden', member === undefined ? 'Amber 暂时无法确认你是否在这个群里（缺少「获取群成员」权限）' : '你不在这个群里');
+  return { cmd, chatId: m[1], chatType: 'group' };
+}
+
+const runTimes = new Map<string, number[]>();
+function rateLimit(unionId: string): void {
+  const now = Date.now();
+  const list = (runTimes.get(unionId) ?? []).filter(t => now - t < 60_000);
+  if (list.length >= 20) throw new AmberError('rate_limited', '一分钟内执行太多次了，请稍后再试');
+  list.push(now);
+  runTimes.set(unionId, list);
 }
 
 function cookieOf(req: IncomingMessage): string | undefined {
@@ -92,10 +143,64 @@ export function startWeb(port: number, store: Store, deps: WebDeps): void {
           return json(res, 200, { ok: true, name: (await deps.nameOf(who.unionId)) ?? '', unionId: who.unionId });
         }
         if (req.method === 'GET' && url.pathname === '/web/api/overview') return json(res, 200, { ok: true, ...(await overview(store, deps, who.unionId)) });
+        if (req.method === 'GET' && url.pathname === '/web/api/runs') {
+          return json(res, 200, { ok: true, runs: store.runsByCaller(who.unionId, 30).map(r => ({
+            id: r.id, command: r.commandName, channel: r.channel, status: r.status, startedAt: r.startedAt, elapsedMs: r.finishedAt ? r.finishedAt - r.startedAt : null, args: r.args, scheduleId: r.scheduleId,
+          })) });
+        }
+        let m: RegExpExecArray | null;
+        if (req.method === 'GET' && (m = /^\/web\/api\/runs\/([A-Za-z0-9-]{1,40})$/.exec(url.pathname))) {
+          const r = store.getRun(m[1]);
+          // Only your own runs.
+          if (!r || r.callerUnionId !== who.unionId) return json(res, 404, { ok: false, error: 'not_found', message: '没有这条运行记录' });
+          return json(res, 200, { ok: true, id: r.id, status: r.status, markdown: r.result ?? '', error: r.error, startedAt: r.startedAt });
+        }
+        if (req.method !== 'POST') return json(res, 404, { ok: false, error: 'not_found' });
+        // Cross-site request protection: JSON only (forces a CORS preflight, which is never granted) and same origin.
+        const origin = req.headers.origin;
+        if ((origin && origin !== deps.origin) || !String(req.headers['content-type'] ?? '').startsWith('application/json')) {
+          return json(res, 403, { ok: false, error: 'forbidden', message: '请求来源不对' });
+        }
+        const body = await readJson(req);
+        const person: Caller = { unionId: who.unionId, openId: who.openId ?? undefined, chatId: '', chatType: 'p2p', channel: 'web' };
+        if (url.pathname === '/web/api/run') {
+          rateLimit(who.unionId);
+          const t = await target(store, deps, who.unionId, String(body.scope ?? ''), String(body.commandId ?? ''));
+          if (t.cmd.options.confirm && body.confirm !== true) throw new AmberError('needs_confirm', '这条指令需要确认后执行');
+          const args: Record<string, string> = {};
+          for (const [k, v] of Object.entries(body.args ?? {})) if (v !== null && v !== undefined) args[k] = String(v).slice(0, 2000);
+          const r = await runCommand(store, t.cmd, args, { ...person, chatId: t.chatId, chatType: t.chatType },
+            { city: () => deps.cityOf(who.unionId), signer: deps.signer }, { viaForm: true });
+          return json(res, 200, { ok: r.ok, runId: r.runId, markdown: r.markdown, error: r.error, elapsedMs: r.elapsedMs });
+        }
+        if (url.pathname === '/web/api/schedules') {
+          const t = await target(store, deps, who.unionId, String(body.scope ?? ''), String(body.commandId ?? ''));
+          if (t.cmd.options.confirm && body.confirm !== true) throw new AmberError('needs_confirm', '这条指令需要确认后才能定时');
+          const args: Record<string, string> = {};
+          for (const [k, v] of Object.entries(body.args ?? {})) if (v !== null && v !== undefined && String(v) !== '') args[k] = String(v).slice(0, 2000);
+          const { parseRule } = await import('./schedule-rule.ts');
+          const sch = await deps.scheduler.create({ cmd: t.cmd, chatId: t.chatId, chatType: t.chatType, replyTo: null, inThread: false, creator: { ...person, chatId: t.chatId, chatType: t.chatType },
+            args, rule: parseRule(String(body.at ?? ''), String(body.tz || 'Asia/Shanghai')), requestedBy: 'web', via: { via: 'web' } });
+          return json(res, 200, { ok: true, scheduleId: sch.id, rule: describeRule(sch.rule), next: formatAt(sch.nextRunAt, sch.rule.tz) });
+        }
+        if ((m = /^\/web\/api\/schedules\/([A-Za-z0-9-]{1,40})\/(pause|resume|delete|run)$/.exec(url.pathname))) {
+          const sch = store.getSchedule(m[1]);
+          if (!sch || !deps.scheduler.canManage(sch, who.unionId)) return json(res, 404, { ok: false, error: 'not_found', message: '没有这个定时任务，或你不是它的创建人' });
+          if (m[2] === 'pause') deps.scheduler.pauseBy(sch, who.unionId, '在网站上暂停');
+          else if (m[2] === 'resume') deps.scheduler.resume(sch, who.unionId);
+          else if (m[2] === 'delete') deps.scheduler.remove(sch, who.unionId);
+          else {
+            await deps.scheduler.runOnce(sch, true);
+            const after = store.getSchedule(sch.id);
+            return json(res, 200, { ok: true, runId: after?.lastRunId, lastStatus: after?.lastStatus });
+          }
+          return json(res, 200, { ok: true });
+        }
         return json(res, 404, { ok: false, error: 'not_found' });
       }
       return send(res, 404, 'text/plain; charset=utf-8', 'not found');
     } catch (e) {
+      if (e instanceof AmberError) return json(res, e.code === 'not_found' ? 404 : e.code === 'forbidden' ? 403 : 400, { ok: false, error: e.code, message: e.message });
       console.log(new Date().toISOString(), 'web error', url.pathname, (e as Error).message);
       return json(res, 500, { ok: false, error: 'internal' });
     }
@@ -110,10 +215,13 @@ function cmdView(c: CommandRow) {
   };
 }
 
-function schView(store: Store, s: ScheduleRow) {
+const LAST: Record<string, string> = { ok: '成功', ok_silent: '成功（无输出）', failed: '失败', missed: '错过', skipped_overlap: '跳过', delivery_failed: '结果发送失败' };
+
+function schView(store: Store, s: ScheduleRow, viewer?: string) {
   return {
+    mine: viewer ? s.creatorUnionId === viewer : false,
     id: s.id, command: store.getCommand(s.commandId)?.name ?? s.commandId, rule: describeRule(s.rule), status: s.status, pauseReason: s.pauseReason,
-    next: s.status === 'active' ? formatAt(s.nextRunAt, s.rule.tz) : null, last: s.lastRunAt ? `${formatAt(s.lastRunAt, s.rule.tz)} ${s.lastStatus ?? ''}` : null,
+    next: s.status === 'active' ? formatAt(s.nextRunAt, s.rule.tz) : null, last: s.lastRunAt ? `${formatAt(s.lastRunAt, s.rule.tz)} ${LAST[s.lastStatus ?? ''] ?? ''}` : null,
     args: s.args,
   };
 }
@@ -129,13 +237,13 @@ async function overview(store: Store, deps: WebDeps, unionId: string) {
     groups.push({
       chatId, name: (await deps.chatName(chatId)) ?? chatId,
       commands: store.listActiveByChat(chatId).filter(c => c.scopeType === 'group').map(cmdView),
-      schedules: store.schedulesInChat(chatId).map(s => schView(store, s)),
+      schedules: store.schedulesInChat(chatId).map(s => schView(store, s, unionId)),
     });
   }
   return {
     p2p: {
       commands: store.listActiveP2pByOwner(unionId).map(cmdView),
-      schedules: store.schedulesByCreator(unionId).filter(s => s.chatType === 'p2p').map(s => schView(store, s)),
+      schedules: store.schedulesByCreator(unionId).filter(s => s.chatType === 'p2p').map(s => schView(store, s, unionId)),
     },
     groups,
     global: store.listActiveGlobal().map(cmdView),

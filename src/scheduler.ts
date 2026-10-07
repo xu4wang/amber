@@ -1,7 +1,8 @@
 // Schedules (D32). A schedule is created only by a person's click on a confirmation card, and runs
 // as that person. It is bound to the exact reviewed version (spec hash): if the command is retired
 // or changes, the schedule pauses instead of running something nobody approved for it.
-import type { Store, ScheduleRow, RequestRow } from './db.ts';
+import type { Store, ScheduleRow, RequestRow, CommandRow } from './db.ts';
+import { computeSpecHash } from './db.ts';
 import type { Caller } from './engine.ts';
 import { findVisible, runCommand, validateArgs, AmberError } from './engine.ts';
 import { validateRule, nextRun, describeRule, formatAt } from './schedule-rule.ts';
@@ -139,18 +140,25 @@ export class Scheduler {
   async createFromRequest(req: RequestRow, clicker: Caller): Promise<ScheduleRow> {
     const cmd = this.store.getCommand(req.commandId ?? '');
     if (!cmd || cmd.status !== 'active' || cmd.specHash !== req.specHash) throw new AmberError('changed', '指令在请求之后已变更或下线，请让 agent 重新发起');
+    return this.create({ cmd, chatId: req.chatId, chatType: req.chatType, replyTo: req.replyTo, inThread: req.inThread, creator: clicker,
+      args: req.args, rule: req.rule, requestedBy: req.requestedBy, via: { requestId: req.id } });
+  }
+
+  /** Creates a schedule for `creator` (a person identified by Feishu: a card click or a website session). */
+  async create(o: { cmd: CommandRow; chatId: string; chatType: 'group' | 'p2p'; replyTo: string | null; inThread: boolean; creator: Caller; args: Record<string, string>; rule: unknown; requestedBy: string; via: Record<string, unknown> }): Promise<ScheduleRow> {
+    const { cmd, creator } = o;
+    if (cmd.status !== 'active' || computeSpecHash(cmd) !== cmd.specHash) throw new AmberError('changed', '指令未生效或与审核版本不一致');
     if (!cmd.options.schedulable) throw new AmberError('not_schedulable', '这条指令审核时没有允许定时执行');
-    const caller: Caller = { ...clicker, chatId: req.chatId, chatType: req.chatType };
-    findVisible(this.store, caller, cmd.id);
-    if (this.store.schedulesInChat(req.chatId).length >= MAX_PER_CHAT) throw new AmberError('too_many', `这里已有 ${MAX_PER_CHAT} 个定时任务，请先删除一些`);
-    const rule = validateRule(req.rule);
+    findVisible(this.store, { ...creator, chatId: o.chatId, chatType: o.chatType }, cmd.id);
+    if (this.store.schedulesInChat(o.chatId).length >= MAX_PER_CHAT) throw new AmberError('too_many', `这里已有 ${MAX_PER_CHAT} 个定时任务，请先删除一些`);
+    const rule = validateRule(o.rule);
     // Validate now with the creator's facts; the stored args are what every run will use.
-    await validateArgs(cmd.params, req.args, { city: () => this.deps.cityOf(clicker.unionId) });
+    await validateArgs(cmd.params, o.args, { city: () => this.deps.cityOf(creator.unionId) });
     const s = this.store.insertSchedule({
-      commandId: cmd.id, specHash: cmd.specHash, chatId: req.chatId, chatType: req.chatType, replyTo: req.replyTo, inThread: req.inThread,
-      creatorUnionId: clicker.unionId, creatorOpenId: clicker.openId ?? null, args: req.args, rule, nextRunAt: nextRun(rule, Date.now()), requestedBy: req.requestedBy,
+      commandId: cmd.id, specHash: cmd.specHash, chatId: o.chatId, chatType: o.chatType, replyTo: o.replyTo, inThread: o.inThread,
+      creatorUnionId: creator.unionId, creatorOpenId: creator.openId ?? null, args: o.args, rule, nextRunAt: nextRun(rule, Date.now()), requestedBy: o.requestedBy,
     });
-    this.store.audit(clicker.unionId, 'schedule.create', { id: s.id, commandId: cmd.id, specHash: cmd.specHash, rule, args: req.args, requestId: req.id });
+    this.store.audit(creator.unionId, 'schedule.create', { id: s.id, commandId: cmd.id, specHash: cmd.specHash, rule, args: o.args, ...o.via });
     log('schedule created', s.id, cmd.name, describeRule(rule));
     return s;
   }
