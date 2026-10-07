@@ -29,6 +29,8 @@ export interface DraftInput {
   /** p2p drafts: who must claim. Email or union_id. */
   claimer?: string;
   submittedBy?: string;
+  /** Machine the draft came from (set by the API from the client address; audit only). */
+  machine?: string;
   /** Proposed by the submitter; approved together with the code (D30). */
   options?: Partial<CommandOptions>;
 }
@@ -228,7 +230,7 @@ export class Flow {
       params: d.params ?? [], script: d.script, options, status: 'draft',
     });
     this.store.setMeta(row.id, { expectedClaimer: expectedClaimer ?? null, originMessageId: d.originMessageId ?? null, submittedBy: d.submittedBy ?? null });
-    this.store.audit(null, 'draft.submit', { id: row.id, name: row.name, chatId: row.chatId, chatType: d.chatType, submittedBy: d.submittedBy, specHash: row.specHash });
+    this.store.audit(null, 'draft.submit', { id: row.id, name: row.name, chatId: row.chatId, chatType: d.chatType, submittedBy: d.submittedBy, machine: d.machine ?? null, specHash: row.specHash });
     // Group: claim card in the group (only members can click). p2p: Amber can't enter the agent's DM, so the claim card goes to the claimer's DM with Amber.
     let claimMessageId: string | undefined;
     try {

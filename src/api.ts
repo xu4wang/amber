@@ -46,9 +46,10 @@ export function startApi(port: number, machines: Record<string, string>, flow: F
       const body = await readBody(req);
       if (path === '/v1/drafts') {
         const input = body as DraftInput;
-        // The machine is known from the address; the agent may only add a label after it.
-        const label = typeof input.submittedBy === 'string' && input.submittedBy.trim() ? `${input.submittedBy.trim().slice(0, 40)} @ ${machine}` : machine;
-        return reply(200, { ok: true, ...(await flow.submitDraft({ ...input, submittedBy: label })) });
+        // People see the agent's name (they only know they asked their agent); the machine, taken
+        // from the address, is kept for the audit log.
+        const label = typeof input.submittedBy === 'string' && input.submittedBy.trim() ? input.submittedBy.trim().slice(0, 40) : '你的 agent';
+        return reply(200, { ok: true, ...(await flow.submitDraft({ ...input, submittedBy: label, machine })) });
       }
       const ctx = await agent.context(body as AgentContext, machine);
       if (path === '/v1/commands/list') return reply(200, { ok: true, commands: agent.list(ctx) });

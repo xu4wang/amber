@@ -26,7 +26,7 @@ Amber 的接口**分不清你背后是谁**（只按机器 IP 放行）。所以
 在 botmux 会话里，`amber` 会自动读取 `$BOTMUX_CHAT_ID`、`$BOTMUX_CHAT_TYPE` 和 `$BOTMUX_ROOT_MESSAGE_ID`（话题里的卡片会发进同一个话题）。另外：
 
 - **总是带上 `--user <当前说话人的邮箱>`**（取自消息的 sender email）。这样只有他能点卡片；私聊里必须带。
-- 设置 `AMBER_LABEL=<你的 bot 名>`，或每次加 `--label`，卡片上会显示是谁发起的。
+- **总是带上 `--label <你的 bot 名>`**（或设置 `AMBER_LABEL`），用用户认识的名字。卡片上只显示这个名字，不显示机器，用户只需要知道是哪个 agent 帮他提交或发起的。
 
 ## 常用命令
 

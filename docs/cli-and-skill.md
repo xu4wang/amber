@@ -48,7 +48,7 @@ amber submit draft.json                      提交新指令草稿
 | `--chat-type group\|p2p` | `$BOTMUX_CHAT_TYPE` | 会话类型 |
 | `--user 邮箱` | 无 | agent 正在为谁工作。**只有这个人能点确认卡片**；私聊里必须填 |
 | `--reply-to om_…` | 话题里取 `$BOTMUX_ROOT_MESSAGE_ID` | 确认卡片发进这个话题 |
-| `--label 名字` | `$AMBER_LABEL` | 卡片上显示的发起方名字，前面会自动加上机器名 |
+| `--label 名字` | `$AMBER_LABEL` | agent 的名字（用户认识的那个，比如 bot 名），显示在认领卡和确认卡上；不填显示「你的 agent」。机器名只记审计，不显示 |
 | `--json` | 关 | 输出原始 JSON |
 
 退出码：`0` 完成，`1` 出错，`2` 用法错误，`3` 还在等人点卡片。

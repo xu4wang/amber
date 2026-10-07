@@ -77,7 +77,7 @@ export class AgentGate {
     if (raw.chatType === 'p2p' && !user) throw new AmberError('user_required', '私聊里需要用 --user 指明是谁（email）');
     const replyTo = raw.replyTo && /^om_[A-Za-z0-9]+$/.test(raw.replyTo) ? raw.replyTo : undefined;
     const label = typeof raw.label === 'string' && raw.label.trim() ? raw.label.trim().slice(0, 40) : '';
-    return { chatId: raw.chatId, chatType: raw.chatType, user, replyTo, inThread: !!(replyTo && raw.inThread), machine, requestedBy: label ? `${label} @ ${machine}` : machine };
+    return { chatId: raw.chatId, chatType: raw.chatType, user, replyTo, inThread: !!(replyTo && raw.inThread), machine, requestedBy: label || '你的 agent' };
   }
 
   private viewer(ctx: Ctx): Caller {
@@ -110,7 +110,7 @@ export class AgentGate {
       const caller: Caller = { unionId: `agent:${ctx.machine}`, chatId: ctx.chatId, chatType: ctx.chatType, channel: 'agent' };
       // The claimed user only fills "default to the caller's city"; it grants nothing.
       const r = await runCommand(this.store, cmd, cleanArgs, caller, { city: ctx.user ? () => this.deps.cityOf(ctx.user!.unionId) : undefined, signer: this.deps.signer });
-      this.store.audit(null, 'agent.run', { runId: r.runId, command: cmd.id, requestedBy: ctx.requestedBy, claimedUser: ctx.user?.email ?? null });
+      this.store.audit(null, 'agent.run', { runId: r.runId, command: cmd.id, requestedBy: ctx.requestedBy, machine: ctx.machine, claimedUser: ctx.user?.email ?? null });
       return { mode: 'direct', runId: r.runId, status: r.ok ? 'ok' : 'failed', markdown: r.markdown, error: r.error, elapsedMs: r.elapsedMs };
     }
     // Check the arguments now, so the person is not asked to confirm something that cannot run.
@@ -190,7 +190,7 @@ export class AgentGate {
       throw new AmberError('card_failed', code === 230002 || code === 232011 ? 'Amber 机器人不在这个群里，请先把 Amber 拉进群' : `确认卡片发送失败：${code ?? e?.message}`);
     }
     if (messageId) this.store.setRequestMessage(req.id, messageId);
-    this.store.audit(null, 'request.create', { id: req.id, kind, command: cmd.id, chatId: ctx.chatId, requestedBy: ctx.requestedBy, target });
+    this.store.audit(null, 'request.create', { id: req.id, kind, command: cmd.id, chatId: ctx.chatId, requestedBy: ctx.requestedBy, machine: ctx.machine, target });
     log('request', req.id, kind, cmd.name, ctx.chatId, ctx.requestedBy);
     return { ...req, messageId: messageId ?? null };
   }

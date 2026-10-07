@@ -28,7 +28,7 @@ function docMarkdown(c: CommandRow, opts: { creator: string; submittedBy?: strin
   return [
     `# ${c.name}`,
     `**版本**：${c.specHash}`,
-    `**范围**：${c.scopeType === 'p2p' ? '私聊（只有创建人）' : '群'}　**选项**：${c.options.confirm ? '执行前需要确认' : '直接执行'}，${c.options.schedulable ? '允许定时执行' : '不允许定时执行'}　**创建人**：${opts.creator}${opts.submittedBy ? `　**提交来源**：${opts.submittedBy}` : ''}`,
+    `**范围**：${c.scopeType === 'p2p' ? '私聊（只有创建人）' : '群'}　**选项**：${c.options.confirm ? '执行前需要确认' : '直接执行'}，${c.options.schedulable ? '允许定时执行' : '不允许定时执行'}　**创建人**：${opts.creator}${opts.submittedBy ? `　**提交方**：${opts.submittedBy}` : ''}`,
     `## 说明\n\n${c.description || '（无）'}`,
     `## 参数\n\n${params}`,
     code,
