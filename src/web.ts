@@ -101,6 +101,18 @@ const SECURITY_HEADERS = {
 export function startWeb(port: number, store: Store, deps: WebDeps): void {
   const page = readFileSync(join(import.meta.dirname, '..', 'web', 'index.html'), 'utf8').replace('__FEISHU_CHAT_LINK__', deps.feishuChatLink);
   const logo = readFileSync(join(import.meta.dirname, '..', 'web', 'logo.svg'));
+  // Documentation (docs/*.md), readable without logging in. Rendered in the browser.
+  const DOCS: [string, string][] = [['usage', '使用指南'], ['cli-and-skill', 'amber 命令行与 skill'], ['identity', '可信身份'], ['install', '安装与部署'], ['feishu-setup', '飞书应用配置']];
+  const docTemplate = readFileSync(join(import.meta.dirname, '..', 'web', 'docs.html'), 'utf8');
+  const docPages = new Map<string, string>();
+  for (const [name, title] of DOCS) {
+    const md = readFileSync(join(import.meta.dirname, '..', 'docs', `${name}.md`), 'utf8');
+    const nav = DOCS.map(([n, t]) => ({ name: n, title: t, current: n === name }));
+    // JSON inside <script>: escape "<" so the document can never close the script tag.
+    const data = JSON.stringify({ md, nav }).replace(/</g, '\\u003c');
+    docPages.set(name, docTemplate.replace('__TITLE__', `${title} · Amber`).replace('__DOC_DATA__', data));
+  }
+
   // Front-end libraries are served from this repo, never from an outside CDN.
   const vendor = new Map<string, Buffer>();
   for (const f of ['marked.min.js', 'purify.min.js', 'vega.min.js', 'vega-lite.min.js', 'vega-embed.min.js', 'highlight.min.js']) {
@@ -118,6 +130,9 @@ export function startWeb(port: number, store: Store, deps: WebDeps): void {
     const url = new URL(req.url ?? '/', 'http://amber');
     try {
       if (req.method === 'GET' && (url.pathname === '/' || url.pathname === '/index.html')) return send(res, 200, 'text/html; charset=utf-8', page);
+      if (req.method === 'GET' && (url.pathname === '/docs' || url.pathname === '/docs/')) return send(res, 200, 'text/html; charset=utf-8', docPages.get('usage')!);
+      const dm = /^\/docs\/([a-z-]+)$/.exec(url.pathname);
+      if (req.method === 'GET' && dm && docPages.has(dm[1])) return send(res, 200, 'text/html; charset=utf-8', docPages.get(dm[1])!);
       if (req.method === 'GET' && vendor.has(url.pathname)) return send(res, 200, 'text/javascript; charset=utf-8', vendor.get(url.pathname)!, { 'cache-control': 'max-age=86400' });
       if (req.method === 'GET' && url.pathname === '/logo.svg') return send(res, 200, 'image/svg+xml', logo, { 'cache-control': 'max-age=86400' });
 

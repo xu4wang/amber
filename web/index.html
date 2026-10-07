@@ -35,7 +35,10 @@ body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.6 "Ping
 header { display: flex; align-items: center; gap: 12px; padding: 10px 16px; border-bottom: 1px solid var(--line); background: var(--panel); flex: none; }
 header img { width: 28px; height: 28px; border-radius: 7px; }
 header .brand { font-weight: 700; font-size: 17px; }
-header .who { margin-left: auto; color: var(--muted); font-size: 14px; display: flex; gap: 10px; align-items: center; }
+header .who { margin-left: auto; color: var(--muted); font-size: 14px; display: flex; gap: 14px; align-items: center; }
+header .who-inner { display: flex; gap: 10px; align-items: center; }
+header .doclink { color: var(--muted); text-decoration: none; }
+header .doclink:hover { color: var(--accent); }
 button, .btn { font: inherit; border: 1px solid var(--line); background: var(--panel); color: var(--ink); border-radius: 8px; padding: 6px 14px; cursor: pointer; text-decoration: none; display: inline-block; }
 .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
 .btn.danger { background: var(--warn); border-color: var(--warn); color: #fff; }
@@ -146,7 +149,7 @@ details.node details.node > summary { font-weight: 500; color: var(--muted); }
 <header>
   <img src="/logo.svg" alt="">
   <span class="brand">Amber</span>
-  <span class="who" id="who"></span>
+  <span class="who"><a class="doclink" href="/docs" target="_blank" rel="noopener">文档</a><span id="who" class="who-inner"></span></span>
 </header>
 <main id="app"><p class="note" style="padding:16px">加载中……</p></main>
 <script>
