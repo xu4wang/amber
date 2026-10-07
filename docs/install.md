@@ -71,7 +71,7 @@ AMBER_LARK_APP_SECRET=xxxxxxxxxxxxxxxx
 | `approval` | 飞书审批配置，取值方法见 [feishu-setup.md](feishu-setup.md#4-审批定义)。不配就退回到用卡片按钮审核 |
 | `wiki` | 放审核文档的知识库位置。要和 `approval` 一起配置 |
 | `services` | 脚本可以调用的本机服务，Amber 会为它们签发执行身份凭证，见 [identity.md](identity.md) |
-| `webBaseUrl` | 网站的外部地址，用来生成登录链接，也用来做跨站请求检查 |
+| `webBaseUrl` | **必填**。网站的外部地址，用来生成登录链接、做跨站请求检查，并通过 `/v1/info` 告诉 agent（不填只会是 localhost，登录链接在别的电脑上打不开） |
 | `dataDir` | 可选，数据目录，默认是 `~/.config/amber/data` |
 
 ### 3.3 签名密钥
@@ -178,7 +178,7 @@ server {
 
 ## 6. 让 agent 用起来
 
-在每台跑 agent 的机器上安装 `amber` 命令行和 skill，见 [cli-and-skill.md](cli-and-skill.md#安装)。
+在每台跑 agent 的机器上安装 `amber` 命令行和 skill，见 [cli-and-skill.md](cli-and-skill.md#安装)。装好后在每台机器上运行一次 `amber config set-url http://<你们的 Amber 地址>`，再用 `amber info` 检查。
 
 ## 7. 运维
 
