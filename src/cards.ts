@@ -33,7 +33,7 @@ export function listCard(cmds: CommandRow[], scopeLabel: string): object {
       tag: 'column_set',
       flex_mode: 'none',
       columns: [
-        { tag: 'column', width: 'weighted', weight: 4, vertical_align: 'center', elements: [{ tag: 'markdown', content: `**${sanitizeMarkdown(c.name, 40)}**${c.global ? '　<font color="blue">全局</font>' : ''}${c.sideEffect === 'write' ? '　<font color="red">写操作</font>' : ''}\n<font color="grey">${sanitizeMarkdown(c.description || '（无说明）', 120)}</font>` }] },
+        { tag: 'column', width: 'weighted', weight: 4, vertical_align: 'center', elements: [{ tag: 'markdown', content: `**${sanitizeMarkdown(c.name, 40)}**${c.global ? '　<font color="blue">全局</font>' : ''}${c.options.confirm ? '　<font color="red">需确认</font>' : ''}\n<font color="grey">${sanitizeMarkdown(c.description || '（无说明）', 120)}</font>` }] },
         { tag: 'column', width: 'auto', vertical_align: 'center', elements: [btn('选择', { a: 'pick', c: c.id }, 'primary')] },
       ],
     });
@@ -42,10 +42,10 @@ export function listCard(cmds: CommandRow[], scopeLabel: string): object {
 }
 
 export function formCard(c: CommandRow, prefill: Record<string, string> = {}): object {
-  const isWrite = c.sideEffect === 'write';
-  const runText = isWrite ? '确认执行（写操作）' : '执行';
+  const isWrite = c.options.confirm;
+  const runText = isWrite ? '确认执行' : '执行';
   const runType = isWrite ? 'danger' : 'primary';
-  const warn = isWrite ? [{ tag: 'markdown', content: '<font color="red">⚠️ 写操作：执行后会真实修改数据。请核对参数再点「确认执行」。</font>' }] : [];
+  const warn = isWrite ? [{ tag: 'markdown', content: '<font color="red">⚠️ 这条指令要求执行前确认，请核对参数后再点「确认执行」。</font>' }] : [];
   if (c.params.length === 0) {
     return shell(`Amber · ${c.name}`, isWrite ? 'red' : 'orange', [
       { tag: 'markdown', content: sanitizeMarkdown(c.description || '') || '这条指令没有参数。' },

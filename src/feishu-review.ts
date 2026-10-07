@@ -27,7 +27,7 @@ function docMarkdown(c: CommandRow, opts: { creator: string; submittedBy?: strin
     : '';
   return [
     `**版本**：${c.specHash}`,
-    `**范围**：${c.scopeType === 'p2p' ? '私聊（只有创建人）' : '群'}　**类型**：${c.sideEffect === 'write' ? '写操作' : '只读'}　**创建人**：${opts.creator}${opts.submittedBy ? `　**提交来源**：${opts.submittedBy}` : ''}`,
+    `**范围**：${c.scopeType === 'p2p' ? '私聊（只有创建人）' : '群'}　**选项**：${c.options.confirm ? '执行前需要确认' : '直接执行'}，${c.options.schedulable ? '允许定时执行' : '不允许定时执行'}　**创建人**：${opts.creator}${opts.submittedBy ? `　**提交来源**：${opts.submittedBy}` : ''}`,
     `## 说明\n\n${c.description || '（无）'}`,
     `## 参数\n\n${params}`,
     code,
@@ -85,7 +85,7 @@ export class FeishuReview {
     const a = this.cfg.approval!;
     const text = [
       `指令：${c.name}`,
-      `范围：${c.scopeType === 'p2p' ? '私聊' : '群'}　类型：${c.sideEffect === 'write' ? '写操作' : '只读'}`,
+      `范围：${c.scopeType === 'p2p' ? '私聊' : '群'}　选项：${c.options.confirm ? '执行前需要确认' : '直接执行'}，${c.options.schedulable ? '允许定时执行' : '不允许定时执行'}`,
       `运行方式：${c.script.kind === 'privileged' ? '特权脚本' : '沙盒脚本'}`,
       `创建人：${creatorLabel}`,
       `版本：${c.specHash.slice(0, 12)}`,

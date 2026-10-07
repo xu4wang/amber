@@ -223,8 +223,8 @@ export class AmberBot {
     const positional = parts.slice(1);
     const raw: Record<string, string> = {};
     cmd.params.forEach((p, i) => { if (positional[i] !== undefined) raw[p.name] = positional[i]; });
-    // Write commands never run from a one-line shortcut: show the confirmation form, prefilled.
-    if (cmd.sideEffect === 'write' || (positional.length === 0 && cmd.params.some(p => p.required && p.default === undefined))) {
+    // confirm = true: never run from a one-line shortcut; show the confirmation form, prefilled.
+    if (cmd.options.confirm || (positional.length === 0 && cmd.params.some(p => p.required && p.default === undefined))) {
       await this.replyCard(msg.message_id, inThread, formCard(cmd, raw));
       return;
     }
@@ -303,7 +303,7 @@ export class AmberBot {
         this.flow.checkClaimer(String(value.c), caller);
         setTimeout(async () => {
           let card: object;
-          try { card = await this.flow.onClaimAction('claim_try', String(value.c), caller, { city: () => this.cityOf(caller.unionId), signer: this.signer }); }
+          try { card = await this.flow.onClaimAction('claim_try', String(value.c), caller, { city: () => this.cityOf(caller.unionId), signer: this.signer }, d.action?.form_value ?? {}); }
           catch (e) { card = errorCard('Amber', e instanceof AmberError ? e.message : '试运行出错'); }
           if (messageId) await this.patch(messageId, card);
         }, 300);

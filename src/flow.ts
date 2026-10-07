@@ -4,7 +4,8 @@
 //   first run a successful trial with their own identity.
 // - Every configured reviewer must approve the exact spec_hash (D16); any reject rejects.
 import type * as lark from '@larksuiteoapi/node-sdk';
-import type { Store, CommandRow, ParamDef, Script } from './db.ts';
+import type { Store, CommandRow, ParamDef, Script, CommandOptions } from './db.ts';
+import { normalizeOptions } from './db.ts';
 import { computeSpecHash } from './db.ts';
 import { validateScript } from './runner.ts';
 import type { FeishuReview } from './feishu-review.ts';
@@ -28,8 +29,8 @@ export interface DraftInput {
   /** p2p drafts: who must claim. Email or union_id. */
   claimer?: string;
   submittedBy?: string;
-  /** Declared by the submitter; reviewers check it against the code. */
-  sideEffect?: 'read' | 'write';
+  /** Proposed by the submitter; approved together with the code (D30). */
+  options?: Partial<CommandOptions>;
 }
 
 function shell(title: string, template: string, elements: unknown[]): object {
@@ -54,7 +55,7 @@ function specSummary(c: CommandRow): string {
     `**说明**：${sanitizeMarkdown(c.description || '（无）', 200)}`,
     `**范围**：${c.scopeType === 'p2p' ? '私聊（只有创建人）' : '本群'}`,
     `**参数**：${sanitizeMarkdown(params, 300)}`,
-    `**类型**：${c.sideEffect === 'write' ? '<font color="red">写操作</font>' : '只读'}`,
+    `**选项**：${c.options.confirm ? '<font color="red">执行前需要确认</font>' : '直接执行'}；${c.options.schedulable ? '允许定时执行' : '不允许定时执行'}`,
     `**运行方式**：${how}`,
   ].join('\n');
 }
@@ -84,10 +85,24 @@ export function claimCard(c: CommandRow, trial?: { by?: string; blocks?: Block[]
     els.push({ tag: 'markdown', content: `**试运行结果**（由 ${person(trial.by)} 执行）` });
     els.push(...renderBlocks(trial.blocks));
   }
-  const isWrite = c.sideEffect === 'write';
-  if (isWrite) els.push({ tag: 'markdown', content: '<font color="red">这是写操作指令：不试运行（会真实修改数据）。请确认代码后直接提交，审核人会逐行审查。</font>' });
-  const buttons: unknown[] = isWrite ? [] : [btn('试运行', { a: 'claim_try', c: c.id }, trial?.blocks ? 'default' : 'primary')];
-  if (trial?.blocks || isWrite) buttons.push(btn('提交审核', { a: 'claim_submit', c: c.id }, 'primary'));
+  els.push({ tag: 'markdown', content: '<font color="grey">试运行就是以你的身份真实执行一次。</font>' });
+  const buttons: unknown[] = [];
+  if (c.params.length) {
+    // Commands with parameters: the trial run takes its inputs from a small form.
+    els.push({
+      tag: 'form', name: 'trial', elements: [
+        ...c.params.map(p => ({
+          tag: 'input', name: p.name, label: { tag: 'plain_text', content: p.label ?? p.name }, label_position: 'left',
+          placeholder: { tag: 'plain_text', content: p.defaultFrom === 'caller.city' ? '不填则用你的办公城市' : p.default !== undefined ? `默认：${p.default}` : (p.required ? '必填' : '可不填') },
+          ...(p.default !== undefined && !p.defaultFrom ? { default_value: p.default } : {}),
+        })),
+        btn('试运行', { a: 'claim_try', c: c.id }, trial?.blocks ? 'default' : 'primary', { form_action_type: 'submit', name: 'try' }),
+      ],
+    });
+  } else {
+    buttons.push(btn('试运行', { a: 'claim_try', c: c.id }, trial?.blocks ? 'default' : 'primary'));
+  }
+  if (trial?.blocks) buttons.push(btn('提交审核', { a: 'claim_submit', c: c.id }, 'primary'));
   buttons.push(btn('丢弃', { a: 'claim_drop', c: c.id }, 'danger'));
   els.push({ tag: 'column_set', flex_mode: 'flow', columns: buttons.map(b => ({ tag: 'column', width: 'auto', elements: [b] })) });
   return shell(`待认领：${c.name}`, 'orange', els);
@@ -197,7 +212,8 @@ export class Flow {
     if ((d as any).steps !== undefined) throw new AmberError('bad_script', '指令不再有「步骤」：请提交一段 script（参数 + 一段脚本）');
     try { d.script = validateScript(d.script); } catch (e) { throw new AmberError('bad_script', (e as Error).message); }
     if (this.store.nameTaken(d.chatId, d.name)) throw new AmberError('name_taken', `这里已经有一条叫「${d.name}」的指令（生效中或待审核）`);
-    const sideEffect = d.sideEffect === 'write' ? 'write' : 'read';
+    if ((d as any).sideEffect !== undefined) throw new AmberError('bad_options', '已不区分读写：请用 options.confirm（执行前确认）/ options.schedulable（允许定时）');
+    const options = normalizeOptions(d.options);
     let expectedClaimer: string | undefined;
     if (d.chatType === 'p2p') {
       if (!d.claimer) throw new AmberError('claimer_required', '私聊草稿需要指定认领人（email）');
@@ -209,7 +225,7 @@ export class Flow {
     }
     const row = this.store.insertCommand({
       scopeType: d.chatType, chatId: d.chatId, ownerUnionId: expectedClaimer ?? '', name: d.name, description: d.description ?? '',
-      params: d.params ?? [], script: d.script, sideEffect, status: 'draft',
+      params: d.params ?? [], script: d.script, options, status: 'draft',
     });
     this.store.setMeta(row.id, { expectedClaimer: expectedClaimer ?? null, originMessageId: d.originMessageId ?? null, submittedBy: d.submittedBy ?? null });
     this.store.audit(null, 'draft.submit', { id: row.id, name: row.name, chatId: row.chatId, chatType: d.chatType, submittedBy: d.submittedBy, specHash: row.specHash });
@@ -277,7 +293,7 @@ export class Flow {
   }
 
   /** Claim-card actions. `caller.chatId` is the chat where the card was clicked. */
-  async onClaimAction(action: string, cmdId: string, caller: Caller, facts: CallerFacts): Promise<object> {
+  async onClaimAction(action: string, cmdId: string, caller: Caller, facts: CallerFacts, form: Record<string, string> = {}): Promise<object> {
     const c = this.store.getCommand(cmdId);
     if (!c || c.status !== 'draft') return shell('Amber', 'grey', [{ tag: 'markdown', content: '这张认领卡已失效（草稿已提交、丢弃或不存在）。' }]);
     const meta = this.store.getMeta(c.id);
@@ -290,7 +306,7 @@ export class Flow {
     }
     if (action === 'claim_try') {
       try {
-        const r = await runCommand(this.store, c, {}, caller, facts, { trial: true });
+        const r = await runCommand(this.store, c, form, caller, facts, { trial: true });
         if (!r.ok) return claimCard(c, { error: r.error }, meta.submittedBy);
         this.store.setMeta(c.id, { trialBy: caller.unionId });
         return claimCard(c, { by: caller.openId, blocks: r.blocks }, meta.submittedBy);
@@ -299,7 +315,7 @@ export class Flow {
       }
     }
     if (action === 'claim_submit') {
-      if (c.sideEffect !== 'write' && meta.trialBy !== caller.unionId) throw new AmberError('trial_first', '请先由你本人试运行成功，再提交审核');
+      if (meta.trialBy !== caller.unionId) throw new AmberError('trial_first', '请先由你本人试运行成功，再提交审核');
       if (computeSpecHash(c) !== c.specHash) throw new AmberError('spec_mismatch', '定义已变化，请重新提交');
       if (this.reviewers.length === 0) throw new AmberError('no_reviewers', '审核人名单未配置或无法解析，暂时不能提交审核');
       this.store.setMeta(c.id, { ownerUnionId: caller.unionId, ownerOpenId: caller.openId ?? null });

@@ -22,6 +22,18 @@ export interface ParamDef {
 export type { Script } from './runner.ts';
 import type { Script } from './runner.ts';
 
+export interface CommandOptions {
+  /** Only runnable from the form card with a red confirm button; the one-line shortcut opens the form. */
+  confirm: boolean;
+  /** May be run by a schedule (no person clicks anything). */
+  schedulable: boolean;
+}
+
+export function normalizeOptions(o: unknown): CommandOptions {
+  const x = (o ?? {}) as Record<string, unknown>;
+  return { confirm: x.confirm === true, schedulable: x.schedulable === true };
+}
+
 export interface CommandRow {
   id: string;
   scopeType: ScopeType;
@@ -31,7 +43,8 @@ export interface CommandRow {
   description: string;
   params: ParamDef[];
   script: Script;
-  sideEffect: 'read' | 'write';
+  /** Set by the submitter, approved together with the code (D30). */
+  options: CommandOptions;
   status: CommandStatus;
   specHash: string;
   createdAt: number;
@@ -39,8 +52,8 @@ export interface CommandRow {
   global: boolean;
 }
 
-export function computeSpecHash(c: Pick<CommandRow, 'name' | 'params' | 'script' | 'sideEffect'>): string {
-  const canonical = JSON.stringify({ name: c.name, params: c.params, script: c.script, sideEffect: c.sideEffect });
+export function computeSpecHash(c: Pick<CommandRow, 'name' | 'params' | 'script' | 'options'>): string {
+  const canonical = JSON.stringify({ name: c.name, params: c.params, script: c.script, options: c.options });
   return createHash('sha256').update(canonical).digest('hex');
 }
 
@@ -91,6 +104,7 @@ export class Store {
     let cols = (this.db.prepare(`PRAGMA table_info(commands)`).all() as { name: string }[]).map(c => c.name);
     if (cols.includes('steps_json')) this.migrateStepsToScript();
     cols = (this.db.prepare(`PRAGMA table_info(commands)`).all() as { name: string }[]).map(c => c.name);
+    if (!cols.includes('options_json')) this.migrateSideEffectToOptions();
     if (!cols.includes('global')) this.db.exec(`ALTER TABLE commands ADD COLUMN global INTEGER NOT NULL DEFAULT 0`);
     for (const [col, ddl] of [
       ['expected_claimer', 'TEXT'],      // union_id that must claim (p2p drafts), or NULL
@@ -128,9 +142,25 @@ export class Store {
         continue;
       }
       const script = { ...one };
-      const hash = computeSpecHash({ name: r.name, params: JSON.parse(r.params_json), script, sideEffect: r.side_effect as 'read' | 'write' });
+      const hash = computeSpecHash({ name: r.name, params: JSON.parse(r.params_json), script, options: { confirm: r.side_effect === 'write', schedulable: false } });
       this.db.prepare('UPDATE commands SET script_json = ?, spec_hash = ? WHERE id = ?').run(JSON.stringify(script), hash, r.id);
       this.db.prepare('INSERT INTO audit (at, actor_union_id, action, detail) VALUES (?,?,?,?)').run(Date.now(), null, 'migrate.single_script', JSON.stringify({ id: r.id, oldSpec: r.spec_hash, newSpec: hash }));
+    }
+  }
+
+  /** D30: the read/write declaration becomes two plain options. A former "write" command keeps the
+   *  extra confirmation (confirm = true); nothing is schedulable until reviewed again. */
+  private migrateSideEffectToOptions(): void {
+    this.db.exec('ALTER TABLE commands ADD COLUMN options_json TEXT');
+    const rows = this.db.prepare('SELECT id, name, params_json, script_json, side_effect, spec_hash FROM commands').all() as Record<string, string>[];
+    for (const r of rows) {
+      const options = { confirm: r.side_effect === 'write', schedulable: false };
+      let hash = r.spec_hash;
+      try {
+        hash = computeSpecHash({ name: r.name, params: JSON.parse(r.params_json), script: JSON.parse(r.script_json), options });
+      } catch { /* unreadable legacy row: keep as is */ }
+      this.db.prepare('UPDATE commands SET options_json = ?, spec_hash = ? WHERE id = ?').run(JSON.stringify(options), hash, r.id);
+      this.db.prepare('INSERT INTO audit (at, actor_union_id, action, detail) VALUES (?,?,?,?)').run(Date.now(), null, 'migrate.options', JSON.stringify({ id: r.id, oldSpec: r.spec_hash, newSpec: hash, options }));
     }
   }
 
@@ -144,7 +174,7 @@ export class Store {
       description: String(r.description ?? ''),
       params: JSON.parse(String(r.params_json)),
       script: JSON.parse(String(r.script_json)),
-      sideEffect: r.side_effect as 'read' | 'write',
+      options: normalizeOptions(r.options_json ? JSON.parse(String(r.options_json)) : { confirm: r.side_effect === 'write' }),
       status: r.status as CommandStatus,
       specHash: String(r.spec_hash),
       createdAt: Number(r.created_at),
@@ -153,10 +183,12 @@ export class Store {
   }
 
   insertCommand(c: Omit<CommandRow, 'id' | 'specHash' | 'createdAt' | 'global'>): CommandRow {
+    c = { ...c, options: normalizeOptions(c.options) };
     const row: CommandRow = { ...c, id: randomUUID().slice(0, 8), specHash: computeSpecHash(c), createdAt: Date.now(), global: false };
     this.db.prepare(`INSERT INTO commands (id, scope_type, chat_id, owner_union_id, name, description, params_json, script_json, side_effect, status, spec_hash, created_at)
       VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`).run(row.id, row.scopeType, row.chatId, row.ownerUnionId, row.name, row.description,
-      JSON.stringify(row.params), JSON.stringify(row.script), row.sideEffect, row.status, row.specHash, row.createdAt);
+      JSON.stringify(row.params), JSON.stringify(row.script), 'n/a', row.status, row.specHash, row.createdAt);
+    this.db.prepare('UPDATE commands SET options_json = ? WHERE id = ?').run(JSON.stringify(row.options), row.id);
     return row;
   }
 
