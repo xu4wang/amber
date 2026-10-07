@@ -56,6 +56,11 @@ await check('登录链接无效时拒绝', async () => {
 
 if (smoke.testChat) {
   const client = new lark.Client({ appId: cfg.appId, appSecret: cfg.appSecret, loggerLevel: lark.LoggerLevel.error });
+  // Recall what we sent; a failure here would leave test cards in the group, so it fails the check.
+  const recall = async (id: string) => {
+    const d = await client.im.v1.message.delete({ path: { message_id: id } }) as any;
+    must((d?.code ?? 0) === 0, `撤回失败：${d?.msg ?? ''}`);
+  };
   const sample: CommandRow = {
     id: 'smoke000', scopeType: 'group', chatId: smoke.testChat, ownerUnionId: '', name: '冒烟测试', description: '冒烟测试用的示例指令',
     params: [{ name: 'days', label: '天数', type: 'integer', default: '7' }], script: { kind: 'script', lang: 'python', code: 'print("hello")\n' },
@@ -82,9 +87,25 @@ if (smoke.testChat) {
       const r = await client.im.v1.message.create({ params: { receive_id_type: 'chat_id' }, data: { receive_id: smoke.testChat, msg_type: 'interactive', content: JSON.stringify(card) } }) as any;
       const id = r?.data?.message_id;
       must(id, JSON.stringify(r?.msg ?? r));
-      await client.im.v1.message.delete({ path: { message_id: id } }).catch(() => {});
+      await recall(id);
     });
   }
+  await check('读取测试群成员（群指令权限、退群暂停依赖它）', async () => {
+    const r = await client.request({ method: 'GET', url: `/open-apis/im/v1/chats/${smoke.testChat}/members`, params: { member_id_type: 'union_id', page_size: 50 } }) as any;
+    const n = r?.data?.items?.length ?? 0;
+    must(n > 0, '读不到成员');
+    return `${n} 位成员`;
+  });
+  await check('在话题里回复（结果回到原话题）', async () => {
+    const root = await client.im.v1.message.create({ params: { receive_id_type: 'chat_id' }, data: { receive_id: smoke.testChat, msg_type: 'interactive', content: JSON.stringify(cards.infoCard('冒烟测试', '话题根消息，会立即撤回。')) } }) as any;
+    const rootId = root?.data?.message_id;
+    must(rootId, '根消息发送失败');
+    const reply = await client.im.v1.message.reply({ path: { message_id: rootId }, data: { msg_type: 'interactive', content: JSON.stringify(cards.infoCard('冒烟测试', '话题内回复，会立即撤回。')), reply_in_thread: true } }) as any;
+    const replyId = reply?.data?.message_id;
+    const threadId = reply?.data?.thread_id;
+    for (const id of [replyId, rootId]) if (id) await recall(id);
+    must(replyId && threadId, '没有进入话题');
+  });
 } else {
   console.log('- 跳过卡片检查：没有配置 testChat（~/.config/amber/smoke.json）');
 }
