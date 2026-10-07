@@ -26,6 +26,7 @@ function docMarkdown(c: CommandRow, opts: { creator: string; submittedBy?: strin
     ? `## 试运行结果\n\n由认领人试运行时的输出：\n\n${FENCE}text\n${opts.trial.slice(0, 20000).split(FENCE).join('``​`')}\n${FENCE}`
     : '';
   return [
+    `# ${c.name}`,
     `**版本**：${c.specHash}`,
     `**范围**：${c.scopeType === 'p2p' ? '私聊（只有创建人）' : '群'}　**选项**：${c.options.confirm ? '执行前需要确认' : '直接执行'}，${c.options.schedulable ? '允许定时执行' : '不允许定时执行'}　**创建人**：${opts.creator}${opts.submittedBy ? `　**提交来源**：${opts.submittedBy}` : ''}`,
     `## 说明\n\n${c.description || '（无）'}`,
@@ -73,7 +74,7 @@ export class FeishuReview {
   async createDoc(c: CommandRow, opts: { creator: string; submittedBy?: string; trial?: string }): Promise<{ url: string; docId: string }> {
     const w = this.cfg.wiki!;
     const r = await this.req('POST', `/open-apis/wiki/v2/spaces/${w.spaceId}/nodes`, {
-      obj_type: 'docx', node_type: 'origin', parent_node_token: w.parentNodeToken, title: `${c.name} · ${c.specHash.slice(0, 8)}`,
+      obj_type: 'docx', node_type: 'origin', parent_node_token: w.parentNodeToken, title: `Amber 指令：${c.name}（${c.specHash.slice(0, 8)}）`,
     });
     const node = r.data?.node;
     await this.appendMarkdown(node.obj_token, docMarkdown(c, opts));
@@ -94,6 +95,9 @@ export class FeishuReview {
     ].filter(Boolean).join('\n');
     const r = await this.req('POST', '/open-apis/approval/v4/instances', {
       approval_code: a.code,
+      // Show the command name in the approval list instead of only the definition name.
+      title: `Amber 指令：${c.name}`,
+      title_display_method: 1,
       open_id: initiatorOpenId,
       form: JSON.stringify([{ id: a.formFieldId, type: 'textarea', value: text }]),
       node_approver_open_id_list: [{ key: a.reviewNodeId, value: reviewerOpenIds }],
