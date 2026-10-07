@@ -188,3 +188,90 @@ export function errorCard(name: string, message: string, cmdId?: string): object
 export function infoCard(title: string, markdown: string): object {
   return shell(`Amber · ${title}`, 'blue', [{ tag: 'markdown', content: sanitizeMarkdown(markdown) }]);
 }
+
+// ---------- agent requests (D33) and schedules (D32)
+
+function argLines(c: CommandRow, args: Record<string, string>): string {
+  const lines = c.params.map(p => `- ${sanitizeMarkdown(p.label ?? p.name, 40)}：${args[p.name] !== undefined && args[p.name] !== '' ? sanitizeMarkdown(args[p.name], 200) : '<font color="grey">（不填，按默认）</font>'}`);
+  return lines.length ? lines.join('\n') : '（无参数）';
+}
+
+/** Agent asked to run a command / create a schedule on someone's behalf; the click decides who. */
+export function requestCard(o: {
+  kind: 'run' | 'schedule' | 'schedule_resume' | 'schedule_delete'; reqId: string; cmd: CommandRow; args: Record<string, string>;
+  requestedBy: string; targetOpenId?: string; ruleText?: string; nextText?: string; scheduleId?: string;
+}): object {
+  const danger = o.cmd.options.confirm || o.kind === 'schedule_delete';
+  const who = o.targetOpenId ? person(o.targetOpenId) : '你';
+  const by = sanitizeMarkdown(o.requestedBy, 80);
+  const name = sanitizeMarkdown(o.cmd.name, 40);
+  const els: unknown[] = [];
+  let title: string, ok: string;
+  if (o.kind === 'run') {
+    title = `请确认执行：${o.cmd.name}`;
+    ok = danger ? '确认执行' : '执行';
+    els.push({ tag: 'markdown', content: `**${by}** 请求以 ${who} 的身份执行「**${name}**」。` });
+  } else if (o.kind === 'schedule') {
+    title = `请确认定时任务：${o.cmd.name}`;
+    ok = danger ? '确认并创建定时任务' : '创建定时任务';
+    els.push({ tag: 'markdown', content: `**${by}** 请求为 ${who} 创建定时任务：**${sanitizeMarkdown(o.ruleText ?? '', 80)}** 自动执行「**${name}**」。\n首次运行：${sanitizeMarkdown(o.nextText ?? '', 40)}` });
+  } else if (o.kind === 'schedule_resume') {
+    title = `请确认恢复定时任务：${o.cmd.name}`;
+    ok = '恢复';
+    els.push({ tag: 'markdown', content: `**${by}** 请求恢复定时任务 ${o.scheduleId}：**${sanitizeMarkdown(o.ruleText ?? '', 80)}** 执行「**${name}**」。` });
+  } else {
+    title = `请确认删除定时任务：${o.cmd.name}`;
+    ok = '删除';
+    els.push({ tag: 'markdown', content: `**${by}** 请求删除定时任务 ${o.scheduleId}（${sanitizeMarkdown(o.ruleText ?? '', 80)} 执行「${name}」）。` });
+  }
+  if (o.kind === 'run' || o.kind === 'schedule') {
+    if (o.cmd.description) els.push({ tag: 'markdown', content: `<font color="grey">${sanitizeMarkdown(o.cmd.description, 200)}</font>` });
+    els.push({ tag: 'markdown', content: `**参数**\n${argLines(o.cmd, o.args)}` });
+    els.push({ tag: 'markdown', content: o.kind === 'run'
+      ? '<font color="grey">点「执行」即以你本人的身份执行一次；结果显示在这张卡片上，同时返回给发起请求的 agent。</font>'
+      : '<font color="grey">创建后，每次都以你本人的身份自动执行，结果发到这里（没有输出时不发）。运行失败会私聊通知你，连续失败 3 次自动暂停。</font>' });
+    if (o.cmd.options.confirm) els.push({ tag: 'markdown', content: '<font color="red">⚠️ 这条指令要求执行前确认，请核对参数。</font>' });
+  }
+  els.push({
+    tag: 'column_set', flex_mode: 'none', columns: [
+      { tag: 'column', width: 'auto', elements: [btn(ok, { a: 'req_ok', r: o.reqId }, danger ? 'danger' : 'primary')] },
+      { tag: 'column', width: 'auto', elements: [btn('取消', { a: 'req_no', r: o.reqId })] },
+    ],
+  });
+  els.push({ tag: 'markdown', content: `<font color="grey">请求 ${o.reqId}${o.targetOpenId ? ' · 只有被请求人可以点' : ''} · 24 小时内有效</font>`, text_size: 'notation' });
+  return shell(`Amber · ${title}`, danger ? 'red' : 'orange', els);
+}
+
+export function closedCard(title: string, template: string, md: string): object {
+  return shell(`Amber · ${title}`, template, [{ tag: 'markdown', content: md }]);
+}
+
+export interface ScheduleView {
+  id: string; name: string; ruleText: string; nextText: string; status: string; pauseReason: string | null;
+  creatorOpenId: string | null; lastText: string; canManage: boolean;
+}
+
+export function scheduleListCard(items: ScheduleView[], scopeLabel: string): object {
+  if (!items.length) return shell('Amber · 定时任务', 'blue', [{ tag: 'markdown', content: `${scopeLabel}还没有定时任务。跟你的 agent 说「每天 9 点跑一下 xxx」，它会发来一张确认卡片。` }]);
+  const els: unknown[] = [{ tag: 'markdown', content: `${scopeLabel}的定时任务：` }];
+  for (const s of items) {
+    const state = s.status === 'active' ? `下次 ${s.nextText}` : `<font color="red">已暂停${s.pauseReason ? `：${sanitizeMarkdown(s.pauseReason, 80)}` : ''}</font>`;
+    const buttons: unknown[] = [];
+    if (s.canManage) {
+      buttons.push(s.status === 'active' ? btn('暂停', { a: 'sch_pause', s: s.id }) : btn('恢复', { a: 'sch_resume', s: s.id }, 'primary'));
+      buttons.push(btn('立即运行', { a: 'sch_run', s: s.id }));
+      buttons.push(btn('删除', { a: 'sch_del', s: s.id }, 'danger'));
+    }
+    els.push({ tag: 'hr' });
+    els.push({ tag: 'markdown', content: `**${sanitizeMarkdown(s.name, 40)}** · ${sanitizeMarkdown(s.ruleText, 60)}\n${state}\n<font color="grey">创建人 ${person(s.creatorOpenId ?? undefined)} · ${sanitizeMarkdown(s.lastText, 80)} · ${s.id}</font>` });
+    if (buttons.length) els.push({ tag: 'column_set', flex_mode: 'none', columns: buttons.map(b => ({ tag: 'column', width: 'auto', elements: [b] })) });
+  }
+  return shell('Amber · 定时任务', 'blue', els);
+}
+
+export function scheduleResultCard(name: string, creatorOpenId: string | undefined, blocks: Block[], runId: string, elapsedMs: number, scheduleId: string, ruleText: string): object {
+  return shell(`⏰ 定时：${name}`, 'green', [
+    ...renderBlocks(blocks),
+    { tag: 'markdown', content: `${sanitizeMarkdown(ruleText, 60)} · 以 ${person(creatorOpenId)} 的身份执行 · ${(elapsedMs / 1000).toFixed(1)} 秒 · run ${runId} · 任务 ${scheduleId}`, text_size: 'notation' },
+  ]);
+}

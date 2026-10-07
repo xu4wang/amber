@@ -1,0 +1,215 @@
+#!/usr/bin/env python3
+"""amber — command line for agents to use Amber (Python 3 standard library only).
+
+Commands that need no one's identity run directly. Anything else (the command calls a service as a
+person, needs confirmation, or creates a schedule) makes Amber post a confirmation card in the chat;
+the person who clicks it is who it runs as. Then use `amber wait <request>` for the result.
+
+usage:
+  amber list                                   commands usable in this chat
+  amber show <command>                         parameters and how `run` behaves
+  amber run <command> [name=value ...]         run (or ask for confirmation)
+  amber wait <request> [--timeout SECONDS]     wait for a confirmation request (default 600 s)
+  amber result <run>                           output of a run
+  amber schedule add <command> --at "每天 09:00" [--tz Asia/Bangkok] [name=value ...]
+  amber schedule list
+  amber schedule pause <id>                    stops it at once
+  amber schedule resume <id> | delete <id>     the creator confirms on a card
+  amber submit draft.json                      submit a new command for review
+
+context options (defaults come from botmux environment variables):
+  --chat oc_...        chat id                ($BOTMUX_CHAT_ID)
+  --chat-type TYPE     group | p2p            ($BOTMUX_CHAT_TYPE)
+  --user EMAIL         the person you are working for; only they can click the card.
+                       Required in private chats.
+  --reply-to om_...    post cards in this topic ($BOTMUX_ROOT_MESSAGE_ID when it is a message)
+  --label NAME         your agent name        ($AMBER_LABEL)
+  --json               print raw JSON
+
+exit codes: 0 done, 1 error, 2 usage, 3 still waiting for a person
+environment: AMBER_URL (default http://amber.dev-beta.ksherpay.com)
+"""
+import json, os, sys, time, urllib.request, urllib.error
+
+BASE = os.environ.get("AMBER_URL", "http://amber.dev-beta.ksherpay.com").rstrip("/")
+if BASE.endswith("/v1/drafts"):  # old amber-submit style
+    BASE = BASE[: -len("/v1/drafts")]
+
+
+class Usage(Exception):
+    pass
+
+
+def call(method, path, body=None, timeout=150):
+    data = json.dumps(body, ensure_ascii=False).encode("utf-8") if body is not None else None
+    req = urllib.request.Request(BASE + path, data=data, method=method, headers={"content-type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            return json.loads(r.read().decode("utf-8"))
+    except urllib.error.HTTPError as e:
+        raw = e.read().decode("utf-8", "replace")
+        try:
+            return json.loads(raw)
+        except ValueError:
+            return {"ok": False, "error": "http_%d" % e.code, "message": raw[:500]}
+    except urllib.error.URLError as e:
+        return {"ok": False, "error": "unreachable", "message": "连不上 Amber（%s）：%s" % (BASE, e.reason)}
+
+
+def parse(argv):
+    opts, pos, args = {}, [], {}
+    flags = {"--chat", "--chat-type", "--user", "--reply-to", "--label", "--at", "--tz", "--timeout"}
+    i = 0
+    while i < len(argv):
+        a = argv[i]
+        if a == "--json":
+            opts["json"] = True
+        elif a in ("-h", "--help"):
+            raise Usage()
+        elif a in flags:
+            if i + 1 >= len(argv):
+                raise Usage()
+            opts[a[2:]] = argv[i + 1]
+            i += 1
+        elif a.startswith("--"):
+            raise Usage()
+        elif "=" in a and pos:
+            k, v = a.split("=", 1)
+            args[k] = v
+        else:
+            pos.append(a)
+        i += 1
+    return opts, pos, args
+
+
+def context(opts):
+    root = os.environ.get("BOTMUX_ROOT_MESSAGE_ID", "")
+    reply_to = opts.get("reply-to") or (root if root.startswith("om_") else None)
+    ctx = {
+        "chatId": opts.get("chat") or os.environ.get("BOTMUX_CHAT_ID"),
+        "chatType": opts.get("chat-type") or os.environ.get("BOTMUX_CHAT_TYPE") or "group",
+        "label": opts.get("label") or os.environ.get("AMBER_LABEL"),
+    }
+    if opts.get("user"):
+        ctx["user"] = opts["user"]
+    if reply_to:
+        ctx["replyTo"], ctx["inThread"] = reply_to, True
+    if not ctx["chatId"]:
+        raise SystemExit("amber: 不知道是哪个会话：用 --chat 指定，或在 botmux 会话里运行（$BOTMUX_CHAT_ID）")
+    return ctx
+
+
+def out(r, opts, text=None):
+    if opts.get("json") or not r.get("ok"):
+        print(json.dumps(r, ensure_ascii=False, indent=2))
+    elif text is not None:
+        print(text)
+    if not r.get("ok"):
+        return 1
+    return 3 if r.get("status") == "awaiting" else 0
+
+
+def fmt_params(c):
+    lines = []
+    for p in c.get("params", []):
+        extra = []
+        if p.get("required"):
+            extra.append("必填")
+        if p.get("default") is not None:
+            extra.append("默认 %s" % p["default"])
+        if p.get("defaultFrom") == "caller.city":
+            extra.append("不填用执行人的办公城市")
+        lines.append("  %s=<%s>  %s %s" % (p["name"], p.get("type"), p.get("label") or "", "（%s）" % "，".join(extra) if extra else ""))
+    return "\n".join(lines) or "  （无参数）"
+
+
+def main(argv):
+    opts, pos, args = parse(argv)
+    if not pos:
+        raise Usage()
+    cmd = pos[0]
+    if cmd == "submit":
+        if len(pos) < 2:
+            raise Usage()
+        draft = json.load(open(pos[1], encoding="utf-8"))
+        label = opts.get("label") or os.environ.get("AMBER_LABEL")
+        if label:
+            draft["submittedBy"] = label
+        r = call("POST", "/v1/drafts", draft)
+        return out(r, opts, "已提交草稿 %s，Amber 已发出认领卡。" % r.get("id"))
+    if cmd == "wait":
+        if len(pos) < 2:
+            raise Usage()
+        deadline = time.time() + float(opts.get("timeout") or 600)
+        while True:
+            r = call("GET", "/v1/requests/%s?wait=%d" % (pos[1], max(1, min(50, int(deadline - time.time())))), timeout=70)
+            if not r.get("ok") or r.get("status") not in ("awaiting", "running") or time.time() >= deadline:
+                break
+        if not r.get("ok"):
+            return out(r, opts)
+        st = r.get("status")
+        if st in ("awaiting", "running"):
+            return out(r, opts, "还在等（%s）。稍后再运行 amber wait %s。" % ("等人点确认" if st == "awaiting" else "执行中", pos[1]))
+        if st == "done" and r.get("kind") == "run":
+            return out(r, opts, r.get("markdown") or "（没有输出）")
+        if st == "done":
+            return out(r, opts, "已完成（%s）%s" % (r.get("kind"), "，定时任务 %s" % r["scheduleId"] if r.get("scheduleId") else ""))
+        msg = {"canceled": "对方取消了。", "expired": "请求已过期（24 小时没人点）。"}.get(st, "失败：%s" % (r.get("runError") or r.get("error")))
+        print(json.dumps(r, ensure_ascii=False, indent=2) if opts.get("json") else msg)
+        return 1
+    if cmd == "result":
+        if len(pos) < 2:
+            raise Usage()
+        r = call("GET", "/v1/runs/%s" % pos[1])
+        return out(r, opts, r.get("markdown") or "（没有输出）" if r.get("status") == "ok" else "状态 %s：%s" % (r.get("status"), r.get("error")))
+    ctx = context(opts)
+    if cmd == "list":
+        r = call("POST", "/v1/commands/list", ctx)
+        lines = ["%s%s  %s%s" % (c["name"], "（需确认卡片）" if c["run"] == "confirm_card" else "", c.get("description") or "",
+                                  "  [可定时]" if c["options"].get("schedulable") else "") for c in r.get("commands", [])]
+        return out(r, opts, "\n".join(lines) or "这里还没有可用的指令。")
+    if cmd == "show":
+        if len(pos) < 2:
+            raise Usage()
+        r = call("POST", "/v1/commands/show", dict(ctx, command=pos[1]))
+        c = r.get("command") or {}
+        how = "直接执行，结果返回给你" if c.get("run") == "direct" else "需要人在飞书确认卡片上点一下（以点击人的身份执行）"
+        return out(r, opts, "%s（%s）\n%s\n参数：\n%s\n执行方式：%s\n允许定时：%s" % (
+            c.get("name"), c.get("id"), c.get("description") or "", fmt_params(c), how, "是" if c.get("options", {}).get("schedulable") else "否"))
+    if cmd == "run":
+        if len(pos) < 2:
+            raise Usage()
+        r = call("POST", "/v1/runs", dict(ctx, command=pos[1], args=args))
+        if r.get("mode") == "direct":
+            if r.get("status") != "ok":
+                r["ok"] = False
+            return out(r, opts, r.get("markdown") or "（没有输出）")
+        return out(r, opts, "%s\nrequest: %s" % (r.get("message"), r.get("requestId")))
+    if cmd == "schedule":
+        if len(pos) < 2:
+            raise Usage()
+        sub = pos[1]
+        if sub == "add":
+            if len(pos) < 3 or not opts.get("at"):
+                raise Usage()
+            r = call("POST", "/v1/schedules", dict(ctx, command=pos[2], args=args, at=opts["at"], tz=opts.get("tz")))
+            return out(r, opts, "%s\n规则：%s；首次运行：%s\nrequest: %s" % (r.get("message"), r.get("rule"), r.get("firstRun"), r.get("requestId")))
+        if sub == "list":
+            r = call("POST", "/v1/schedules/list", ctx)
+            lines = ["%s  %s  %s  %s  %s" % (s["id"], s["command"], s["rule"], "下次 %s" % s["nextRun"] if s["status"] == "active" else "已暂停：%s" % (s.get("pauseReason") or ""), s["last"])
+                     for s in r.get("schedules", [])]
+            return out(r, opts, "\n".join(lines) or "这里没有定时任务。")
+        if sub in ("pause", "resume", "delete"):
+            if len(pos) < 3:
+                raise Usage()
+            r = call("POST", "/v1/schedules/%s/%s" % (pos[2], sub), ctx)
+            return out(r, opts, "已暂停。" if sub == "pause" else "%s\nrequest: %s" % (r.get("message"), r.get("requestId")))
+    raise Usage()
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main(sys.argv[1:]))
+    except Usage:
+        print(__doc__.strip())
+        sys.exit(2)

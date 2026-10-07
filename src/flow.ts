@@ -187,7 +187,7 @@ export class Flow {
     log('reviewers resolved', ids.length, 'open_ids', this.reviewerOpenIds.length);
   }
 
-  private async send(receive: { chatId?: string; unionId?: string; replyTo?: string; inThread?: boolean }, card: object): Promise<string | undefined> {
+  async send(receive: { chatId?: string; unionId?: string; replyTo?: string; inThread?: boolean }, card: object): Promise<string | undefined> {
     const content = JSON.stringify(card);
     if (receive.replyTo) {
       const r = await this.client.im.v1.message.reply({ path: { message_id: receive.replyTo }, data: { msg_type: 'interactive', content, reply_in_thread: !!receive.inThread } }) as any;
@@ -260,7 +260,7 @@ export class Flow {
     if (inst.status === 'APPROVED') {
       const approved = new Set(inst.tasks.filter(t => t.status === 'APPROVED').map(t => t.openId));
       const allReviewers = this.reviewerOpenIds.length > 0 && this.reviewerOpenIds.every(o => approved.has(o));
-      const privilegedOk = !c.script.kind === 'privileged' || this.adminOpenIds.some(o => approved.has(o));
+      const privilegedOk = c.script.kind !== 'privileged' || this.adminOpenIds.some(o => approved.has(o));
       if (!allReviewers || !privilegedOk || computeSpecHash(c) !== c.specHash) {
         log('approval APPROVED but checks failed', c.id, { allReviewers, privilegedOk });
         this.store.audit(null, 'review.feishu_check_failed', { id: c.id, instanceCode, allReviewers, privilegedOk });

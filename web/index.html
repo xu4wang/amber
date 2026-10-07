@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Amber</title>
+<link rel="icon" href="/logo.svg">
+<style>
+:root {
+  --bg: #f7f5f1; --panel: #ffffff; --ink: #1d1a16; --muted: #6b645b; --line: #e6e0d6;
+  --accent: #b8620e; --accent-soft: #fbefe0; --ok: #2f7d4f; --warn: #b3261e; --chip: #f1ece4;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #14110e; --panel: #1d1915; --ink: #ece6dd; --muted: #a39a8e; --line: #322b24;
+    --accent: #f2a23a; --accent-soft: #2e2214; --ok: #6cc28f; --warn: #f08a80; --chip: #29231d;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #14110e; --panel: #1d1915; --ink: #ece6dd; --muted: #a39a8e; --line: #322b24;
+  --accent: #f2a23a; --accent-soft: #2e2214; --ok: #6cc28f; --warn: #f08a80; --chip: #29231d;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.65 "PingFang SC", "Noto Sans SC", system-ui, sans-serif; }
+header { display: flex; align-items: center; gap: 12px; padding: 14px 16px; border-bottom: 1px solid var(--line); background: var(--panel); }
+header img { width: 32px; height: 32px; border-radius: 8px; }
+header .brand { font-weight: 700; font-size: 18px; }
+header .who { margin-left: auto; color: var(--muted); font-size: 14px; display: flex; gap: 10px; align-items: center; }
+main { max-width: 860px; margin: 0 auto; padding: 24px 16px 64px; }
+button, .btn { font: inherit; border: 1px solid var(--line); background: var(--panel); color: var(--ink); border-radius: 8px; padding: 6px 14px; cursor: pointer; text-decoration: none; display: inline-block; }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.login { text-align: center; padding: 48px 0; }
+.login img { width: 96px; height: 96px; border-radius: 22px; }
+.login h1 { margin: 16px 0 4px; font-size: 28px; }
+.login .slogan { color: var(--muted); margin: 0 0 28px; }
+.steps { text-align: left; max-width: 420px; margin: 0 auto 28px; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 16px 20px; }
+.steps ol { margin: 0; padding-left: 20px; }
+.note { color: var(--muted); font-size: 13px; }
+section { margin-top: 28px; }
+section h2 { font-size: 17px; margin: 0 0 10px; display: flex; gap: 8px; align-items: baseline; }
+section h2 .count { color: var(--muted); font-weight: 400; font-size: 13px; }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 12px 16px; margin-bottom: 10px; }
+.card .title { font-weight: 600; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.card .desc { color: var(--muted); font-size: 14px; margin-top: 2px; }
+.chip { font-size: 12px; background: var(--chip); color: var(--muted); border-radius: 999px; padding: 1px 8px; font-weight: 400; }
+.chip.accent { background: var(--accent-soft); color: var(--accent); }
+.chip.warn { color: var(--warn); }
+.params { font-size: 13px; color: var(--muted); margin-top: 6px; }
+.empty { color: var(--muted); font-size: 14px; padding: 4px 0 8px; }
+.banner { background: var(--accent-soft); border-radius: 10px; padding: 10px 14px; font-size: 14px; margin-bottom: 8px; }
+.sch-state.paused { color: var(--warn); }
+code { font-family: ui-monospace, Menlo, monospace; font-size: 13px; }
+@media (max-width: 520px) { header .who span.name { display: none; } }
+</style>
+</head>
+<body>
+<header>
+  <img src="/logo.svg" alt="">
+  <span class="brand">Amber</span>
+  <span class="who" id="who"></span>
+</header>
+<main id="app"><p class="note">加载中……</p></main>
+<script>
+const FEISHU = '__FEISHU_CHAT_LINK__';
+const app = document.getElementById('app');
+const whoEl = document.getElementById('who');
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+function loginView() {
+  whoEl.innerHTML = '';
+  app.innerHTML = `
+    <div class="login">
+      <img src="/logo.svg" alt="Amber">
+      <h1>Amber</h1>
+      <p class="slogan">跑通一次，随时再用。</p>
+      <div class="steps"><ol>
+        <li>在飞书里打开与 <b>Amber</b> 的私聊</li>
+        <li>发送「<b>登录</b>」</li>
+        <li>点卡片上的「打开 Amber 网站」</li>
+      </ol></div>
+      <a class="btn primary" href="${esc(FEISHU)}">打开 Amber 私聊</a>
+      <p class="note" style="margin-top:20px">登录链接 5 分钟内有效、只能用一次，请不要转发给别人。</p>
+    </div>`;
+}
+
+function params(c) {
+  if (!c.params.length) return '';
+  return `<div class="params">参数：${c.params.map(p => `${esc(p.label)}${p.required ? '（必填）' : ''}${p.fromCity ? '（默认你的办公城市）' : p.default ? `（默认 ${esc(p.default)}）` : ''}`).join('，')}</div>`;
+}
+
+function cmdCard(c) {
+  return `<div class="card"><div class="title">${esc(c.name)}
+    ${c.global ? '<span class="chip accent">全局</span>' : ''}
+    ${c.options.confirm ? '<span class="chip warn">需确认</span>' : ''}
+    ${c.options.schedulable ? '<span class="chip">可定时</span>' : ''}</div>
+    ${c.description ? `<div class="desc">${esc(c.description)}</div>` : ''}${params(c)}</div>`;
+}
+
+function schCard(s) {
+  const args = Object.entries(s.args || {}).map(([k, v]) => `${esc(k)}=${esc(v)}`).join(' ');
+  return `<div class="card"><div class="title">⏰ ${esc(s.command)} <span class="chip">${esc(s.rule)}</span></div>
+    <div class="desc"><span class="sch-state ${s.status}">${s.status === 'active' ? `下次 ${esc(s.next)}` : `已暂停${s.pauseReason ? '：' + esc(s.pauseReason) : ''}`}</span>
+    ${s.last ? ` · 上次 ${esc(s.last)}` : ''}${args ? ` · <code>${args}</code>` : ''}</div></div>`;
+}
+
+function block(title, cmds, schs, emptyText) {
+  const n = cmds.length + schs.length;
+  return `<section><h2>${esc(title)}<span class="count">${cmds.length} 条指令${schs.length ? ` · ${schs.length} 个定时任务` : ''}</span></h2>
+    ${n ? cmds.map(cmdCard).join('') + schs.map(schCard).join('') : `<div class="empty">${emptyText}</div>`}</section>`;
+}
+
+async function main() {
+  const me = await fetch('/web/api/me').then(r => r.json()).catch(() => null);
+  if (!me || !me.ok) return loginView();
+  whoEl.innerHTML = `<span class="name">${esc(me.name)}</span><button id="logout">退出</button>`;
+  document.getElementById('logout').onclick = async () => { await fetch('/web/api/logout', { method: 'POST' }); loginView(); };
+  const o = await fetch('/web/api/overview').then(r => r.json());
+  if (!o.ok) return loginView();
+  let html = '<p class="note">这里列出你能使用的指令和定时任务。执行和管理目前请跟你的 agent 说，或在飞书里 @Amber；网页执行即将开放。</p>';
+  if (o.membershipUnknown) html += '<div class="banner">Amber 暂时无法读取群成员，群里的指令先不显示（需要在飞书后台给 Amber 开通「获取群成员」权限）。</div>';
+  html += block('我的私聊', o.p2p.commands, o.p2p.schedules, '你在私聊里还没有指令。');
+  for (const g of o.groups) html += block(`群：${g.name}`, g.commands, g.schedules, '这个群还没有指令。');
+  html += block('全局指令', o.global, [], '还没有全局指令。');
+  app.innerHTML = html;
+}
+main();
+</script>
+</body>
+</html>

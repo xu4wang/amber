@@ -18,6 +18,8 @@ export interface AmberConfig {
   machines: Record<string, string>;
   approval?: { code: string; reviewNodeId: string; formFieldId: string };
   wiki?: { spaceId: string; parentNodeToken: string; baseUrl: string };
+  /** Public address of the website (D34), used in login links. */
+  webBaseUrl: string;
 }
 
 function parseEnvFile(path: string): Record<string, string> {
@@ -53,5 +55,6 @@ export function loadConfig(): AmberConfig {
     machines: fileCfg.machines && typeof fileCfg.machines === 'object' ? fileCfg.machines : { '127.0.0.1': 'local' },
     approval: fileCfg.approval,
     wiki: fileCfg.wiki,
+    webBaseUrl: String(fileCfg.webBaseUrl ?? 'http://amber.dev-beta.ksherpay.com').replace(/\/$/, ''),
   };
 }

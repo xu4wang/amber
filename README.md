@@ -9,7 +9,8 @@ Amber 把「和 LLM agent 一起跑通的一次操作」封存成经过审核的
 1. **提交**：agent 提交一份草稿，包含参数和一段 Python 脚本。草稿里的任何内容都不被信任。
 2. **认领**：Amber 在指令所属的群或私聊里发出认领卡。认领人以**自己的身份**（来自飞书事件，而不是 agent）试运行一次，确认后提交审核。
 3. **审核**：Amber 把完整代码写进飞书知识库文档，并发起飞书审批；**所有审核人都同意**才生效。通过的版本按哈希锁定，代码一改就要重新审核。
-4. **执行**：在群里（或创建人与 Amber 的私聊里）`@Amber`，列出可用指令，用卡片表单填参数，结果原地更新在卡片上。
+4. **执行**：人跟自己的 agent 说话，agent 用 `amber` 命令行调用。不需要身份的指令直接执行、结果交给 agent；需要身份的，Amber 在会话里发一张确认卡片，**谁点就以谁的身份执行**。也可以直接在群里（或私聊里）`@Amber` 用卡片表单执行。
+5. **定时**：审核时允许定时的指令，可以由 agent 发起、人在卡片上确认后定时执行，以确认人的身份运行；脚本没有输出时不发消息，适合做监控。
 
 ## 设计原则
 
@@ -31,10 +32,12 @@ node src/main.ts                    # 飞书长连接 + 本机接口 127.0.0.1:7
 node src/cli.ts submit draft.json   # 提交草稿（本机）
 ```
 
-其他机器上的 agent 用 `client/amber-submit draft.json` 提交（按 IP 白名单放行，不需要凭证；提交来源由 Amber 按 IP 自动识别）。给 agent 的写法说明见 [docs/agent-guide.md](docs/agent-guide.md)。
+agent 用 [`client/amber`](client/amber)（只依赖 Python 3 标准库）调用 Amber：查看和执行指令、管理定时任务、提交草稿。接口按 IP 白名单放行，不需要凭证，所以接口本身从不代表任何人：凡是需要某人身份的操作都要那个人在确认卡片上点一下。给 agent 的说明（可直接作为 skill 安装）见 [skills/amber/SKILL.md](skills/amber/SKILL.md)。
 
 配置放在 `~/.config/amber/`：`lark-app.env`（应用 ID 和密钥）、`config.json`（管理员、审核人、审批、知识库、允许提交的机器 IP 等）。本仓库不包含任何凭证。
 
 ## 状态
 
-早期开发中。尚未完成：定时任务、网站。
+早期开发中。网站（`http://amber.dev-beta.ksherpay.com`）目前可以登录并查看自己能用的指令和定时任务；登录方式是在飞书私聊 Amber 发「登录」，点一次性链接（5 分钟有效、只能用一次），不需要配置 OAuth 回调地址。网页执行尚未完成。
+
+在 dev-beta 上以 launchd 常驻（`~/Library/LaunchAgents/com.ksher.amber.plist`），日志在 `~/.config/amber/data/amber.log`。

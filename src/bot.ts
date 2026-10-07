@@ -7,6 +7,10 @@ import type { AmberConfig } from './config.ts';
 import { Flow } from './flow.ts';
 import { Signer } from './identity.ts';
 import { FeishuReview } from './feishu-review.ts';
+import { AgentGate } from './agent.ts';
+import type { Deps } from './agent.ts';
+import { Scheduler } from './scheduler.ts';
+import { newToken, hashToken, LOGIN_TTL_MS } from './web.ts';
 
 function log(...a: unknown[]): void {
   console.log(new Date().toISOString(), ...a);
@@ -32,6 +36,8 @@ export class AmberBot {
   private adminUnionIds = new Set<string>();
   flow: Flow;
   signer: Signer;
+  agent: AgentGate;
+  scheduler: Scheduler;
 
   constructor(cfg: AmberConfig, store: Store) {
     this.cfg = cfg;
@@ -44,6 +50,57 @@ export class AmberBot {
     this.flow.review = new FeishuReview(this.client, { approval: cfg.approval, wiki: cfg.wiki });
     this.flow.nameOf = (u: string) => this.nameOf(u);
     this.flow.isAdmin = (u: string) => this.isAdmin(u);
+    const deps: Deps = {
+      send: (to, card) => this.flow.send(to, card),
+      patch: (id, card) => this.patch(id, card),
+      resolveUser: email => this.resolveUser(email),
+      cityOf: u => this.cityOf(u),
+      isAdmin: u => this.isAdmin(u),
+      isMember: (chatId, u) => this.isMember(chatId, u),
+      signer: this.signer,
+    };
+    this.agent = new AgentGate(store, deps);
+    this.scheduler = new Scheduler(store, deps);
+    this.agent.scheduler = this.scheduler;
+  }
+
+  /** Email → ids as seen by Amber's app. */
+  async resolveUser(email: string): Promise<{ unionId: string; openId?: string } | undefined> {
+    const get = async (type: 'union_id' | 'open_id') => {
+      const r = await this.client.contact.v3.user.batchGetId({ params: { user_id_type: type }, data: { emails: [email] } }) as any;
+      return (r?.data?.user_list ?? []).find((u: any) => u.email === email && u.user_id)?.user_id as string | undefined;
+    };
+    try {
+      const unionId = await get('union_id');
+      if (!unionId) return undefined;
+      return { unionId, openId: await get('open_id').catch(() => undefined) };
+    } catch (e: any) {
+      log('user lookup failed', e?.response?.data?.code ?? e?.message);
+      return undefined;
+    }
+  }
+
+  private memberCache = new Map<string, { ids: Set<string>; at: number }>();
+
+  /** Whether a person is in a group. undefined when Amber cannot tell (needs im:chat.members:read). */
+  async isMember(chatId: string, unionId: string): Promise<boolean | undefined> {
+    const hit = this.memberCache.get(chatId);
+    if (hit && Date.now() - hit.at < 10 * 60_000) return hit.ids.has(unionId);
+    const ids = new Set<string>();
+    let pageToken: string | undefined;
+    try {
+      for (let i = 0; i < 50; i++) {
+        const r = await this.client.request({ method: 'GET', url: `/open-apis/im/v1/chats/${chatId}/members`, params: { member_id_type: 'union_id', page_size: 100, ...(pageToken ? { page_token: pageToken } : {}) } }) as any;
+        for (const m of r?.data?.items ?? []) if (m.member_id) ids.add(m.member_id);
+        if (!r?.data?.has_more) break;
+        pageToken = r.data.page_token;
+      }
+    } catch (e: any) {
+      log('member check unavailable', chatId, e?.response?.data?.code ?? e?.message);
+      return undefined;
+    }
+    this.memberCache.set(chatId, { ids, at: Date.now() });
+    return ids.has(unionId);
   }
 
   async start(): Promise<void> {
@@ -72,6 +129,7 @@ export class AmberBot {
     };
     await poll();
     setInterval(() => { poll().catch(() => {}); }, 60_000);
+    this.scheduler.start();
   }
 
   /** Emails are resolved through Amber's own app (needs contact:user.id:readonly); union_ids are taken as-is. */
@@ -209,6 +267,14 @@ export class AmberBot {
 
     const parts = splitArgs(text);
     if (parts.length > 0 && await this.adminCommand(parts, caller, msg.message_id, inThread)) return;
+    if (parts.length === 1 && ['登录', '登录网站', 'login', '退出网站', 'logout'].includes(parts[0].toLowerCase())) {
+      await this.webLogin(parts[0].toLowerCase(), caller, msg.message_id, inThread);
+      return;
+    }
+    if (parts.length === 1 && ['定时任务', '定时', 'schedules'].includes(parts[0].toLowerCase())) {
+      await this.replyCard(msg.message_id, inThread, this.scheduleList(caller));
+      return;
+    }
     if (parts.length === 0 || ['帮助', 'help', '列表', 'list', '指令'].includes(parts[0].toLowerCase())) {
       await this.replyCard(msg.message_id, inThread, listCard(visibleCommands(this.store, caller), this.scopeLabel(caller)));
       return;
@@ -236,6 +302,71 @@ export class AmberBot {
     const cardMessageId: string | undefined = sent?.data?.message_id;
     const final = await this.execute(cmd, raw, caller);
     if (cardMessageId) await this.patch(cardMessageId, final);
+  }
+
+  /** D34: website login by chatting with Amber. Only in the person's own private chat. */
+  private async webLogin(verb: string, caller: Caller, messageId: string, inThread: boolean): Promise<void> {
+    if (caller.chatType !== 'p2p') {
+      await this.replyCard(messageId, inThread, infoCard('网站登录', '为了安全，登录链接只在私聊里发。请私聊 Amber 发送「登录」。'));
+      return;
+    }
+    if (verb === '退出网站' || verb === 'logout') {
+      const n = this.store.revokeWebSessionsOf(caller.unionId);
+      this.store.audit(caller.unionId, 'web.logout_all', { sessions: n });
+      await this.replyCard(messageId, inThread, infoCard('已退出网站', n ? `已让你在所有浏览器里的 ${n} 个登录失效。` : '你当前没有登录中的浏览器。'));
+      return;
+    }
+    if (this.store.recentWebLogins(caller.unionId, 3600_000) >= 10) {
+      await this.replyCard(messageId, inThread, errorCard('网站登录', '一小时内申请登录太多次了，请稍后再试'));
+      return;
+    }
+    const token = newToken();
+    const h = hashToken(token);
+    this.store.insertWebLogin(h, caller.unionId, caller.openId ?? null);
+    const url = `${this.cfg.webBaseUrl}/login?t=${token}`;
+    const card = {
+      schema: '2.0', config: { update_multi: true },
+      header: { title: { tag: 'plain_text', content: 'Amber · 登录网站' }, template: 'orange' },
+      body: { elements: [
+        { tag: 'markdown', content: '点下面的按钮，在浏览器里登录 Amber 网站。\n<font color="grey">链接 5 分钟内有效、只能用一次。**不要转发给别人**——拿到链接的人就能以你的身份登录。</font>' },
+        { tag: 'button', text: { tag: 'plain_text', content: '打开 Amber 网站' }, type: 'primary', behaviors: [{ type: 'open_url', default_url: url }] },
+      ] },
+    };
+    const sent = await this.client.im.v1.message.reply({ path: { message_id: messageId }, data: { msg_type: 'interactive', content: JSON.stringify(card), reply_in_thread: inThread } }) as any;
+    if (sent?.data?.message_id) this.store.setWebLoginMessage(h, sent.data.message_id);
+    this.store.audit(caller.unionId, 'web.login_link', {});
+    // Expire the card visibly once the link can no longer be used.
+    setTimeout(() => {
+      if (sent?.data?.message_id && this.store.consumeWebLogin(h, LOGIN_TTL_MS + 60_000)) {
+        this.patch(sent.data.message_id, infoCard('登录链接已过期', '这个登录链接没有使用，已失效。需要时请重新发送「登录」。')).catch(() => {});
+      }
+    }, LOGIN_TTL_MS + 5_000);
+  }
+
+  /** Card in the private chat after the link was used. */
+  async onLoginUsed(messageId: string, at: number): Promise<void> {
+    const t = new Date(at + 8 * 3600_000).toISOString().slice(11, 16);
+    await this.patch(messageId, infoCard('已登录网站', `这个链接已于北京时间 ${t} 使用，不能再次使用。\n如果不是你本人操作，请立即发送「退出网站」。`));
+  }
+
+  private chatNameCache = new Map<string, string>();
+
+  async chatName(chatId: string): Promise<string | undefined> {
+    if (this.chatNameCache.has(chatId)) return this.chatNameCache.get(chatId);
+    try {
+      const r = await this.client.im.v1.chat.get({ path: { chat_id: chatId } }) as any;
+      const n = r?.data?.name;
+      if (n) this.chatNameCache.set(chatId, n);
+      return n;
+    } catch { return undefined; }
+  }
+
+  private scheduleList(caller: Caller): object {
+    // Group: this group's schedules. Private chat with Amber: the person's own private-chat schedules.
+    const rows = caller.chatType === 'p2p'
+      ? this.store.schedulesByCreator(caller.unionId).filter(s => s.chatType === 'p2p')
+      : this.store.schedulesInChat(caller.chatId);
+    return this.scheduler.listCard(rows, caller.unionId, caller.chatType === 'p2p' ? '你的私聊' : '本群');
   }
 
   private async execute(cmd: CommandRow, raw: Record<string, string | undefined>, caller: Caller, viaForm = false): Promise<object> {
@@ -315,6 +446,23 @@ export class AmberBot {
       if (value.a === 'review_ok' || value.a === 'review_no') {
         const reason = String(d.action?.form_value?.reason ?? '');
         return raw(await this.flow.onReviewAction(value.a, String(value.c), String(value.h), reason, caller));
+      }
+      if (value.a === 'req_ok' || value.a === 'req_no') {
+        return raw(await this.agent.onClick(value.a === 'req_ok', String(value.r), caller, chatId, messageId));
+      }
+      if (typeof value.a === 'string' && value.a.startsWith('sch_')) {
+        const s = this.store.getSchedule(String(value.s));
+        if (!s) throw new AmberError('not_found', '定时任务已不存在');
+        if (!this.scheduler.canManage(s, caller.unionId)) throw new AmberError('forbidden', '只有创建人或管理员可以操作');
+        if (s.chatType === 'group' && s.chatId !== chatId) throw new AmberError('forbidden', '请在原来的群里操作');
+        if (value.a === 'sch_pause') this.scheduler.pauseBy(s, caller.unionId, '手动暂停');
+        else if (value.a === 'sch_resume') this.scheduler.resume(s, caller.unionId);
+        else if (value.a === 'sch_del') this.scheduler.remove(s, caller.unionId);
+        else if (value.a === 'sch_run') {
+          void this.scheduler.runOnce(s, true).catch(e => log('manual schedule run failed', (e as Error).message));
+          return { toast: { type: 'info', content: '已开始运行，结果会发到原来的位置' } };
+        }
+        return raw(this.scheduleList(caller));
       }
       if (value.a === 'list') return raw(listCard(visibleCommands(this.store, caller), this.scopeLabel(caller)));
       if (value.a === 'pick') return raw(formCard(findVisible(this.store, caller, String(value.c))));

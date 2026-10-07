@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#2B1A0A"/>
+      <stop offset="1" stop-color="#140C05"/>
+    </linearGradient>
+    <radialGradient id="resin" cx="0.38" cy="0.32" r="0.85">
+      <stop offset="0" stop-color="#FFD27A"/>
+      <stop offset="0.45" stop-color="#F2A23A"/>
+      <stop offset="1" stop-color="#B8620E"/>
+    </radialGradient>
+    <linearGradient id="rim" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#FFE6B0" stop-opacity=".9"/>
+      <stop offset="1" stop-color="#8A4708" stop-opacity=".9"/>
+    </linearGradient>
+  </defs>
+  <!-- background -->
+  <rect width="1024" height="1024" fill="url(#bg)"/>
+  <!-- amber drop -->
+  <path d="M512 150 C 512 150 260 440 260 610 C 260 760 372 872 512 872 C 652 872 764 760 764 610 C 764 440 512 150 512 150 Z"
+        fill="url(#resin)" stroke="url(#rim)" stroke-width="10"/>
+  <!-- soft inner glow around the slash -->
+  <path d="M566 470 L 470 760" stroke="#FFE2A0" stroke-width="96" stroke-linecap="round" opacity=".18"/>
+  <!-- the frozen command: a slash, preserved inside the resin -->
+  <path d="M566 470 L 470 760" stroke="#4A2400" stroke-width="58" stroke-linecap="round" opacity=".92"/>
+  <!-- glossy highlight -->
+  <path d="M392 470 C 400 410 440 350 480 300 C 470 360 452 420 440 470 C 430 505 395 505 392 470 Z" fill="#FFFFFF" opacity=".55"/>
+  <circle cx="420" cy="540" r="16" fill="#FFFFFF" opacity=".45"/>
+</svg>
