@@ -7,6 +7,7 @@ import type * as lark from '@larksuiteoapi/node-sdk';
 import type { Store, CommandRow, ParamDef, StepDef } from './db.ts';
 import { computeSpecHash } from './db.ts';
 import { validateStep } from './runner.ts';
+import type { FeishuReview } from './feishu-review.ts';
 import type { Caller, CallerFacts, Block } from './engine.ts';
 import { runCommand, AmberError } from './engine.ts';
 import { sanitizeMarkdown, person, renderBlocks } from './cards.ts';
@@ -124,6 +125,10 @@ export class Flow {
   /** Only admins may approve commands containing privileged steps. */
   isAdmin: (unionId: string) => boolean = () => false;
   signer?: import('./identity.ts').Signer;
+  review?: FeishuReview;
+  reviewerOpenIds: string[] = [];
+  adminOpenIds: string[] = [];
+  nameOf: (unionId: string) => Promise<string | undefined> = async () => undefined;
 
   constructor(client: lark.Client, store: Store, reviewerEmails: string[]) {
     this.client = client;
@@ -160,7 +165,11 @@ export class Flow {
       return;
     }
     this.reviewers = ids;
-    log('reviewers resolved', ids.length);
+    try {
+      const r = await (this.client as any).contact.v3.user.batchGetId({ params: { user_id_type: 'open_id' }, data: { emails: this.reviewerEmails.filter(e => !e.startsWith('on_')) } });
+      this.reviewerOpenIds = (r?.data?.user_list ?? []).map((u: any) => u.user_id).filter(Boolean);
+    } catch { this.reviewerOpenIds = []; }
+    log('reviewers resolved', ids.length, 'open_ids', this.reviewerOpenIds.length);
   }
 
   private async send(receive: { chatId?: string; unionId?: string; replyTo?: string; inThread?: boolean }, card: object): Promise<string | undefined> {
@@ -220,6 +229,44 @@ export class Flow {
     return { id: row.id, claimMessageId };
   }
 
+  /** Feishu approval status changed. Re-reads the instance from the API; never trusts the event body. */
+  async onApprovalEvent(instanceCode: string): Promise<void> {
+    if (!this.review?.enabled) return;
+    const id = this.store.commandByApprovalInstance(instanceCode);
+    if (!id) return;
+    const c = this.store.getCommand(id);
+    if (!c || c.status !== 'pending') return;
+    const inst = await this.review.getInstance(instanceCode);
+    if (inst.approvalCode !== this.review.cfg.approval!.code) { log('approval code mismatch', instanceCode); return; }
+    const meta = this.store.getMeta(c.id);
+    const rv = this.store.getReview(c.id);
+    const note = async (md: string) => { if (rv.docId) await this.review!.appendMarkdown(rv.docId, md).catch(e => log('doc append failed', (e as Error).message)); };
+    if (inst.status === 'APPROVED') {
+      const approved = new Set(inst.tasks.filter(t => t.status === 'APPROVED').map(t => t.openId));
+      const allReviewers = this.reviewerOpenIds.length > 0 && this.reviewerOpenIds.every(o => approved.has(o));
+      const privilegedOk = !c.steps.some(s => s.kind === 'privileged') || this.adminOpenIds.some(o => approved.has(o));
+      if (!allReviewers || !privilegedOk || computeSpecHash(c) !== c.specHash) {
+        log('approval APPROVED but checks failed', c.id, { allReviewers, privilegedOk });
+        this.store.audit(null, 'review.feishu_check_failed', { id: c.id, instanceCode, allReviewers, privilegedOk });
+        return;
+      }
+      for (const o of approved) this.store.recordReview(c.id, c.specHash, o, 'approve', null);
+      this.store.setStatus(c.id, 'active');
+      this.store.audit(null, 'command.active', { id: c.id, specHash: c.specHash, via: 'feishu_approval', instanceCode });
+      const where = c.scopeType === 'p2p' ? '在你和 Amber 的私聊里' : '在本群 @Amber';
+      if (meta.claimMessageId) await this.patch(meta.claimMessageId, shell(`已生效：${c.name}`, 'green', [
+        { tag: 'markdown', content: `✅ 飞书审批已通过（${approved.size} 位审核人全部同意），指令「${sanitizeMarkdown(c.name, 40)}」现已生效。${where}发「${sanitizeMarkdown(c.name, 40)}」即可使用。${rv.docUrl ? `\n\n[查看代码文档](${rv.docUrl})` : ''}` },
+      ]));
+      await note(`**${new Date().toISOString().slice(0, 16).replace('T', ' ')} UTC：飞书审批通过，指令已生效。**`);
+    } else if (inst.status === 'REJECTED' || inst.status === 'CANCELED' || inst.status === 'DELETED') {
+      this.store.setStatus(c.id, 'rejected');
+      const why = inst.status === 'REJECTED' ? `审核人驳回${inst.comments.length ? `：${inst.comments.join('；')}` : ''}` : '审批已撤回';
+      this.store.audit(null, 'review.feishu_closed', { id: c.id, instanceCode, status: inst.status });
+      if (meta.claimMessageId) await this.patch(meta.claimMessageId, shell(`未通过：${c.name}`, 'red', [{ tag: 'markdown', content: sanitizeMarkdown(why, 500) }]));
+      await note(`**${new Date().toISOString().slice(0, 16).replace('T', ' ')} UTC：${why}。**`);
+    }
+  }
+
   /** Fast pre-check used before answering a card callback. */
   checkClaimer(cmdId: string, caller: Caller): void {
     const c = this.store.getCommand(cmdId);
@@ -259,6 +306,26 @@ export class Flow {
       this.store.setStatus(c.id, 'pending');
       this.store.audit(caller.unionId, 'draft.claim', { id: c.id, specHash: c.specHash });
       const fresh = this.store.getCommand(c.id)!;
+      if (this.review?.enabled) {
+        if (!caller.openId) throw new AmberError('no_open_id', '无法识别认领人');
+        if (this.reviewerOpenIds.length !== this.reviewers.length) throw new AmberError('no_reviewers', '审核人名单无法解析成飞书账号，暂时不能提交审核');
+        const creator = (await this.nameOf(caller.unionId)) ?? '认领人';
+        try {
+          const doc = await this.review.createDoc(fresh, { creator, submittedBy: meta.submittedBy, trial: this.store.lastTrialResult(c.id) });
+          const instance = await this.review.startApproval(fresh, caller.openId, this.reviewerOpenIds, doc.url, creator);
+          this.store.setReview(c.id, { instance, docUrl: doc.url, docId: doc.docId });
+          this.store.audit(caller.unionId, 'review.feishu_started', { id: c.id, instance, doc: doc.url });
+          log('feishu review started', c.id, instance);
+          return shell(`审核中：${c.name}`, 'yellow', [
+            { tag: 'markdown', content: `${person(caller.openId)} 已认领并提交审核。\n已发起飞书审批「Amber命令申请」，需要 ${this.reviewers.length} 位审核人全部同意后生效。\n\n**完整代码与试运行结果**：[查看文档](${doc.url})` },
+          ]);
+        } catch (e) {
+          // Roll back to draft so the claimer can retry.
+          this.store.setStatus(c.id, 'draft');
+          log('feishu review failed', (e as Error).message);
+          throw new AmberError('feishu_review_failed', `发起飞书审批失败：${(e as Error).message.slice(0, 200)}`);
+        }
+      }
       for (const r of this.reviewers) {
         try { await this.send({ unionId: r }, reviewCard(fresh, caller.openId, { approved: 0, total: this.reviewers.length })); }
         catch (e: any) { log('review card send failed', r.slice(0, 8), e?.response?.data?.code ?? e?.message); }

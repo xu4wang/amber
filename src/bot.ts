@@ -6,6 +6,7 @@ import { listCard, formCard, runningCard, resultCard, errorCard, infoCard } from
 import type { AmberConfig } from './config.ts';
 import { Flow } from './flow.ts';
 import { Signer } from './identity.ts';
+import { FeishuReview } from './feishu-review.ts';
 
 function log(...a: unknown[]): void {
   console.log(new Date().toISOString(), ...a);
@@ -40,6 +41,8 @@ export class AmberBot {
     this.signer = new Signer(cfg.configDir);
     this.flow = new Flow(this.client, store, cfg.reviewers);
     this.flow.signer = this.signer;
+    this.flow.review = new FeishuReview(this.client, { approval: cfg.approval, wiki: cfg.wiki });
+    this.flow.nameOf = (u: string) => this.nameOf(u);
     this.flow.isAdmin = (u: string) => this.isAdmin(u);
   }
 
@@ -51,6 +54,11 @@ export class AmberBot {
     const dispatcher = new lark.EventDispatcher({}).register({
       'im.message.receive_v1': async (d: any) => { this.onMessage(d).catch(e => log('onMessage error', e?.message ?? e)); },
       'card.action.trigger': async (d: any) => this.onCardAction(d),
+      'approval_instance': async (d: any) => {
+        const code = d?.instance_code ?? d?.event?.instance_code;
+        log('approval event', code, d?.status ?? d?.event?.status);
+        if (code) this.flow.onApprovalEvent(String(code)).catch(e => log('approval handling failed', (e as Error).message));
+      },
     } as any);
     this.ws.start({ eventDispatcher: dispatcher });
     log('long connection started');
@@ -76,6 +84,11 @@ export class AmberBot {
       }
     }
     this.adminUnionIds = ids;
+    try {
+      const emails = this.cfg.admins.filter(a => !a.startsWith('on_'));
+      const r = emails.length ? await this.client.contact.v3.user.batchGetId({ params: { user_id_type: 'open_id' }, data: { emails } }) as any : null;
+      this.flow.adminOpenIds = (r?.data?.user_list ?? []).map((u: any) => u.user_id).filter(Boolean);
+    } catch { this.flow.adminOpenIds = []; }
     log('admins resolved', ids.size, 'of', this.cfg.admins.length, 'entries');
   }
 
@@ -224,6 +237,18 @@ export class AmberBot {
     } catch (e) {
       return errorCard(cmd.name, e instanceof AmberError ? e.message : `出错了：${(e as Error).message}`, cmd.id);
     }
+  }
+
+  private nameCache = new Map<string, string>();
+
+  async nameOf(unionId: string): Promise<string | undefined> {
+    if (this.nameCache.has(unionId)) return this.nameCache.get(unionId);
+    try {
+      const r = await this.client.contact.v3.user.get({ path: { user_id: unionId }, params: { user_id_type: 'union_id' } }) as any;
+      const n = r?.data?.user?.name;
+      if (n) this.nameCache.set(unionId, n);
+      return n;
+    } catch { return undefined; }
   }
 
   private cityCache = new Map<string, { city?: string; at: number }>();

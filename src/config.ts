@@ -14,6 +14,8 @@ export interface AmberConfig {
   /** Local services steps may call with an execution identity token (D27). */
   services: Record<string, { audience: string; tcpPort?: number; unixSocket?: string }>;
   configDir: string;
+  approval?: { code: string; reviewNodeId: string; formFieldId: string };
+  wiki?: { spaceId: string; parentNodeToken: string; baseUrl: string };
 }
 
 function parseEnvFile(path: string): Record<string, string> {
@@ -46,5 +48,7 @@ export function loadConfig(): AmberConfig {
     admins: Array.isArray(fileCfg.admins) ? fileCfg.admins : [],
     services: fileCfg.services && typeof fileCfg.services === 'object' ? fileCfg.services : {},
     configDir,
+    approval: fileCfg.approval,
+    wiki: fileCfg.wiki,
   };
 }

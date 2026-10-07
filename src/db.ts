@@ -97,6 +97,9 @@ export class Store {
       ['origin_message_id', 'TEXT'],     // message the draft should reply to (thread placement)
       ['submitted_by', 'TEXT'],          // machine / submitter label
       ['owner_open_id', 'TEXT'],         // creator's open_id in the Amber app (for display only)
+      ['approval_instance', 'TEXT'],     // Feishu approval instance code for the pending revision
+      ['review_doc_url', 'TEXT'],        // wiki doc with the full code of the pending revision
+      ['review_doc_id', 'TEXT'],
     ] as const) if (!cols.includes(col)) this.db.exec(`ALTER TABLE commands ADD COLUMN ${col} ${ddl}`);
     this.db.exec(`CREATE TABLE IF NOT EXISTS reviews (
       command_id TEXT NOT NULL,
@@ -178,6 +181,27 @@ export class Store {
       if (v === undefined) continue;
       this.db.prepare(`UPDATE commands SET ${map[k]} = ? WHERE id = ?`).run(v, id);
     }
+  }
+
+  setReview(id: string, r: { instance?: string | null; docUrl?: string | null; docId?: string | null }): void {
+    if (r.instance !== undefined) this.db.prepare('UPDATE commands SET approval_instance = ? WHERE id = ?').run(r.instance, id);
+    if (r.docUrl !== undefined) this.db.prepare('UPDATE commands SET review_doc_url = ? WHERE id = ?').run(r.docUrl, id);
+    if (r.docId !== undefined) this.db.prepare('UPDATE commands SET review_doc_id = ? WHERE id = ?').run(r.docId, id);
+  }
+
+  getReview(id: string): { instance?: string; docUrl?: string; docId?: string } {
+    const r = this.db.prepare('SELECT approval_instance, review_doc_url, review_doc_id FROM commands WHERE id = ?').get(id) as Record<string, unknown> | undefined;
+    return { instance: (r?.approval_instance as string) || undefined, docUrl: (r?.review_doc_url as string) || undefined, docId: (r?.review_doc_id as string) || undefined };
+  }
+
+  commandByApprovalInstance(instance: string): string | undefined {
+    const r = this.db.prepare('SELECT id FROM commands WHERE approval_instance = ?').get(instance) as { id?: string } | undefined;
+    return r?.id;
+  }
+
+  lastTrialResult(commandId: string): string | undefined {
+    const r = this.db.prepare(`SELECT result FROM runs WHERE command_id = ? AND channel LIKE '%.trial' AND status = 'ok' ORDER BY started_at DESC LIMIT 1`).get(commandId) as { result?: string } | undefined;
+    return r?.result ?? undefined;
   }
 
   recentDraftsFor(claimer: string, windowMs: number): number {
