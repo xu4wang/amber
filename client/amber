@@ -17,6 +17,8 @@ usage:
   amber schedule pause <id>                    stops it at once
   amber schedule resume <id> | delete <id>     the creator confirms on a card
   amber submit draft.json                      submit a new command for review
+  amber info                                   the Amber service this machine uses, and its website
+  amber config set-url <url>                   set the Amber service address for this machine
 
 context options (defaults come from botmux environment variables):
   --chat oc_...        chat id                ($BOTMUX_CHAT_ID)
@@ -28,13 +30,30 @@ context options (defaults come from botmux environment variables):
   --json               print raw JSON
 
 exit codes: 0 done, 1 error, 2 usage, 3 still waiting for a person
-environment: AMBER_URL (default http://amber.dev-beta.ksherpay.com)
+service address: $AMBER_URL, else ~/.config/amber-client.json {"url": "..."} (written by
+`amber config set-url`). Each installation sets its own; nothing is built in.
 """
 import json, os, sys, time, urllib.request, urllib.error
 
-BASE = os.environ.get("AMBER_URL", "http://amber.dev-beta.ksherpay.com").rstrip("/")
-if BASE.endswith("/v1/drafts"):  # old amber-submit style
-    BASE = BASE[: -len("/v1/drafts")]
+CONFIG = os.path.expanduser("~/.config/amber-client.json")
+
+
+def service_url():
+    url = os.environ.get("AMBER_URL", "").strip()
+    if not url:
+        try:
+            with open(CONFIG, encoding="utf-8") as f:
+                url = str(json.load(f).get("url", "")).strip()
+        except (OSError, ValueError):
+            url = ""
+    if not url:
+        raise SystemExit("amber: 还没配置 Amber 服务地址。请向部署 Amber 的人要地址，然后运行：amber config set-url http://<地址>"
+                         "（或设置环境变量 AMBER_URL）")
+    url = url.rstrip("/")
+    return url[: -len("/v1/drafts")] if url.endswith("/v1/drafts") else url
+
+
+BASE = None
 
 
 class Usage(Exception):
@@ -42,6 +61,8 @@ class Usage(Exception):
 
 
 def call(method, path, body=None, timeout=150):
+    global BASE
+    BASE = BASE or service_url()
     data = json.dumps(body, ensure_ascii=False).encode("utf-8") if body is not None else None
     req = urllib.request.Request(BASE + path, data=data, method=method, headers={"content-type": "application/json"})
     try:
@@ -129,6 +150,17 @@ def main(argv):
     if not pos:
         raise Usage()
     cmd = pos[0]
+    if cmd == "config":
+        if len(pos) < 3 or pos[1] != "set-url" or not pos[2].startswith(("http://", "https://")):
+            raise Usage()
+        os.makedirs(os.path.dirname(CONFIG), exist_ok=True)
+        with open(CONFIG, "w", encoding="utf-8") as f:
+            json.dump({"url": pos[2].rstrip("/")}, f)
+        print("已设置 Amber 服务地址：%s" % pos[2].rstrip("/"))
+        return 0
+    if cmd == "info":
+        r = call("GET", "/v1/info")
+        return out(r, opts, "Amber 服务：%s\n网站：%s\n本机名称：%s" % (BASE, r.get("webUrl"), r.get("machine")))
     if cmd == "submit":
         if len(pos) < 2:
             raise Usage()

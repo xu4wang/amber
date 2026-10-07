@@ -41,6 +41,6 @@ node src/main.ts       # 飞书长连接 + agent 接口 127.0.0.1:7341 + 网站 
 
 ## 状态
 
-早期开发中。网站（`http://amber.dev-beta.ksherpay.com`）目前可以登录并查看自己能用的指令和定时任务；登录方式是在飞书私聊 Amber 发「登录」，点一次性链接（5 分钟有效、只能用一次），不需要配置 OAuth 回调地址。登录后可以在网页上执行指令（结果中的表格、图表完整显示）、创建和管理自己的定时任务、查看最近运行。
+早期开发中。网站目前可以登录并查看自己能用的指令和定时任务；登录方式是在飞书私聊 Amber 发「登录」，点一次性链接（5 分钟有效、只能用一次），不需要配置 OAuth 回调地址。登录后可以在网页上执行指令（结果中的表格、图表完整显示）、创建和管理自己的定时任务、查看最近运行。
 
-在 dev-beta 上以 launchd 常驻（`~/Library/LaunchAgents/com.ksher.amber.plist`），日志在 `~/.config/amber/data/amber.log`。
+部署方式（launchd 常驻、nginx）见 [安装与部署](docs/install.md)。

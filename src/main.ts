@@ -10,7 +10,7 @@ setServices(cfg.services);
 const store = new Store(cfg.dataDir);
 const bot = new AmberBot(cfg, store);
 await bot.start();
-startApi(Number(process.env.AMBER_API_PORT ?? 7341), cfg.machines, bot.flow, bot.agent, () => bot.signer.jwks());
+startApi(Number(process.env.AMBER_API_PORT ?? 7341), cfg.machines, bot.flow, bot.agent, () => bot.signer.jwks(), { webUrl: cfg.webBaseUrl });
 startWeb(Number(process.env.AMBER_WEB_PORT ?? 7342), store, {
   isMember: (c, u) => bot.isMember(c, u),
   chatName: c => bot.chatName(c),

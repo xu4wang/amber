@@ -22,7 +22,14 @@ chmod 755 ~/.local/bin/amber
 
 skill 在 agent 开新会话时加载，已经在跑的会话看不到。
 
-**服务地址**：默认是 `http://amber.dev-beta.ksherpay.com`，可以用环境变量 `AMBER_URL` 改。只有 Amber 配置里 `machines` 列出的 IP 能访问。
+**服务地址**：命令行和 skill 里都不写死地址，每台机器装好后配置一次：
+
+```sh
+amber config set-url http://amber.example.com    # 写入 ~/.config/amber-client.json
+amber info                                        # 检查：显示服务地址、网站地址、本机在 Amber 里的名字
+```
+
+也可以用环境变量 `AMBER_URL`，它的优先级高于配置文件。只有 Amber 配置里 `machines` 列出的 IP 能访问。网站地址由服务端的 `webBaseUrl` 决定，agent 通过 `amber info` 获取，不需要另外配置。
 
 ## 命令
 
@@ -38,6 +45,8 @@ amber schedule pause <编号>                  立即暂停
 amber schedule resume <编号>                 恢复，需要创建人在卡片上确认
 amber schedule delete <编号>                 删除，需要创建人在卡片上确认
 amber submit draft.json                      提交新指令草稿
+amber info                                   本机连的 Amber 服务、网站地址
+amber config set-url <地址>                  设置本机的 Amber 服务地址
 ```
 
 通用选项：
@@ -105,4 +114,5 @@ $ amber wait 1a2b3c4d
 | POST | `/v1/schedules/list` | 无 |
 | POST | `/v1/schedules/<编号>/pause\|resume\|delete` | 无 |
 | POST | `/v1/drafts` | 草稿 JSON |
+| GET | `/v1/info` | 无，返回网站地址 `webUrl` 和本机名字 |
 | GET | `/v1/keys` | 无，返回公钥，见 [identity.md](identity.md) |

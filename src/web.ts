@@ -37,7 +37,7 @@ export interface WebDeps {
   cityOf(unionId: string): Promise<string | undefined>;
   signer: Signer;
   scheduler: Scheduler;
-  /** Origin of the site, e.g. http://amber.dev-beta.ksherpay.com — POSTs from anywhere else are refused. */
+  /** Origin of the site, e.g. http://amber.example.com — POSTs from anywhere else are refused. */
   origin: string;
 }
 

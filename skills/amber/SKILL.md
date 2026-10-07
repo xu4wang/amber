@@ -19,7 +19,7 @@ Amber 的接口**分不清你背后是谁**（只按机器 IP 放行）。所以
 
 ## 网站
 
-用户想在网页上看自己能用的指令和定时任务：让他打开 http://amber.dev-beta.ksherpay.com ，在飞书私聊 Amber 发送「登录」，点卡片上的按钮。登录链接只发在他自己的私聊里，你不要代为转发。
+用户想在网页上查看、执行指令或管理定时任务时：用 `amber info` 查到网站地址告诉他，让他在飞书私聊 Amber 发送「登录」，点卡片上的按钮。登录链接只发在他自己的私聊里，你不要代为转发。
 
 ## 会话参数
 
@@ -31,12 +31,12 @@ Amber 的接口**分不清你背后是谁**（只按机器 IP 放行）。所以
 ## 常用命令
 
 ```sh
-amber list --user u@ksher.com                     # 这里能用的指令
-amber show 天气 --user u@ksher.com                # 参数，以及 run 会直接执行还是要确认
-amber run 天气 city=上海 --user u@ksher.com       # 执行
+amber list --user user@example.com                     # 这里能用的指令
+amber show 天气 --user user@example.com                # 参数，以及 run 会直接执行还是要确认
+amber run 天气 city=上海 --user user@example.com       # 执行
 amber wait <request>                              # 等确认卡片的结果（默认最多 10 分钟）
 amber result <run>                                # 某次运行的输出
-amber schedule add 天气 --at "工作日 09:00" city=上海 --user u@ksher.com
+amber schedule add 天气 --at "工作日 09:00" city=上海 --user user@example.com
 amber schedule list
 amber schedule pause <id>                         # 立即暂停
 amber schedule resume <id> / delete <id>          # 要创建人在卡片上确认
@@ -103,4 +103,6 @@ amber submit draft.json --label <你的 bot 名>
 
 ## 安装
 
-`amber` 是一个只依赖 Python 3 标准库的脚本，装在 `~/.local/bin/amber`；有的机器 PATH 里没有 `~/.local/bin`，找不到命令时用完整路径 `~/.local/bin/amber`。服务地址默认 `http://amber.dev-beta.ksherpay.com`，可用 `AMBER_URL` 覆盖；只有机队机器的 IP 能访问。
+`amber` 是一个只依赖 Python 3 标准库的脚本，一般装在 `~/.local/bin/amber`；PATH 里找不到时用完整路径。
+
+服务地址每个安装环境自己配置，skill 里不写死：`amber info` 能显示当前机器连的是哪个 Amber。如果提示「还没配置 Amber 服务地址」，**不要自己猜地址**，告诉用户需要部署 Amber 的人提供地址，再运行 `amber config set-url <地址>`（或设置环境变量 `AMBER_URL`）。

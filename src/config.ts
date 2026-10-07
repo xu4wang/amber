@@ -55,6 +55,6 @@ export function loadConfig(): AmberConfig {
     machines: fileCfg.machines && typeof fileCfg.machines === 'object' ? fileCfg.machines : { '127.0.0.1': 'local' },
     approval: fileCfg.approval,
     wiki: fileCfg.wiki,
-    webBaseUrl: String(fileCfg.webBaseUrl ?? 'http://amber.dev-beta.ksherpay.com').replace(/\/$/, ''),
+    webBaseUrl: String(fileCfg.webBaseUrl ?? `http://localhost:${process.env.AMBER_WEB_PORT ?? 7342}`).replace(/\/$/, ''),
   };
 }

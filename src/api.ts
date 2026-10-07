@@ -20,7 +20,7 @@ function readBody(req: IncomingMessage): Promise<any> {
   });
 }
 
-export function startApi(port: number, machines: Record<string, string>, flow: Flow, agent: AgentGate, jwks: () => object): void {
+export function startApi(port: number, machines: Record<string, string>, flow: Flow, agent: AgentGate, jwks: () => object, info: { webUrl: string }): void {
   const server = createServer(async (req, res) => {
     const reply = (status: number, body: unknown) => {
       res.writeHead(status, { 'content-type': 'application/json; charset=utf-8' });
@@ -39,6 +39,8 @@ export function startApi(port: number, machines: Record<string, string>, flow: F
       if (req.method === 'GET' && (m = /^\/v1\/requests\/([A-Za-z0-9-]{1,40})$/.exec(path))) {
         return reply(200, { ok: true, ...(await agent.requestStatus(m[1], Number(url.searchParams.get('wait') ?? 0))) });
       }
+      // Deployment facts agents need but should not hard-code (the website address).
+      if (req.method === 'GET' && path === '/v1/info') return reply(200, { ok: true, service: 'amber', webUrl: info.webUrl, machine });
       if (req.method === 'GET' && (m = /^\/v1\/runs\/([A-Za-z0-9-]{1,40})$/.exec(path))) {
         return reply(200, { ok: true, ...agent.runResult(m[1]) });
       }
