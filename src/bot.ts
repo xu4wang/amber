@@ -64,6 +64,14 @@ export class AmberBot {
     log('long connection started');
     await this.resolveAdmins();
     await this.flow.loadReviewers();
+    // Fallback for when approval events are not delivered: poll pending approvals.
+    const poll = async () => {
+      for (const code of this.store.pendingApprovalInstances()) {
+        await this.flow.onApprovalEvent(code).catch(e => log('approval poll failed', code, (e as Error).message));
+      }
+    };
+    await poll();
+    setInterval(() => { poll().catch(() => {}); }, 60_000);
   }
 
   /** Emails are resolved through Amber's own app (needs contact:user.id:readonly); union_ids are taken as-is. */

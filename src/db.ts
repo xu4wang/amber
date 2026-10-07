@@ -194,6 +194,10 @@ export class Store {
     return { instance: (r?.approval_instance as string) || undefined, docUrl: (r?.review_doc_url as string) || undefined, docId: (r?.review_doc_id as string) || undefined };
   }
 
+  pendingApprovalInstances(): string[] {
+    return (this.db.prepare(`SELECT approval_instance FROM commands WHERE status = 'pending' AND approval_instance IS NOT NULL`).all() as { approval_instance: string }[]).map(r => r.approval_instance);
+  }
+
   commandByApprovalInstance(instance: string): string | undefined {
     const r = this.db.prepare('SELECT id FROM commands WHERE approval_instance = ?').get(instance) as { id?: string } | undefined;
     return r?.id;
