@@ -14,6 +14,8 @@ export interface AmberConfig {
   /** Local services scripts may call with an execution identity token (D27). */
   services: Record<string, { audience: string; tcpPort?: number; unixSocket?: string }>;
   configDir: string;
+  /** IP → machine name. Only these addresses may submit drafts (D31). */
+  machines: Record<string, string>;
   approval?: { code: string; reviewNodeId: string; formFieldId: string };
   wiki?: { spaceId: string; parentNodeToken: string; baseUrl: string };
 }
@@ -48,6 +50,7 @@ export function loadConfig(): AmberConfig {
     admins: Array.isArray(fileCfg.admins) ? fileCfg.admins : [],
     services: fileCfg.services && typeof fileCfg.services === 'object' ? fileCfg.services : {},
     configDir,
+    machines: fileCfg.machines && typeof fileCfg.machines === 'object' ? fileCfg.machines : { '127.0.0.1': 'local' },
     approval: fileCfg.approval,
     wiki: fileCfg.wiki,
   };

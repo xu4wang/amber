@@ -35,12 +35,8 @@ if (cmd === 'list') {
   store.audit(null, 'operator.retire', { id: rest[0] });
   console.log('retired', rest[0]);
 } else if (cmd === 'submit') {
-  const { machineToken } = await import('./api.ts');
-  const { join } = await import('node:path');
-  const { homedir } = await import('node:os');
-  const token = machineToken(process.env.AMBER_CONFIG_DIR ?? join(homedir(), '.config', 'amber'));
   const base = `http://127.0.0.1:${process.env.AMBER_API_PORT ?? 7341}`;
-  const r = await fetch(`${base}/v1/drafts`, { method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' }, body: readFileSync(rest[0] ?? usage(), 'utf8') });
+  const r = await fetch(`${base}/v1/drafts`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: readFileSync(rest[0] ?? usage(), 'utf8') });
   console.log(r.status, JSON.stringify(await r.json(), null, 2));
   if (!r.ok) process.exit(1);
 } else {

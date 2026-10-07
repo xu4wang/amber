@@ -28,10 +28,12 @@ Amber 把「和 LLM agent 一起跑通的一次操作」封存成经过审核的
 ```sh
 npm install
 node src/main.ts                    # 飞书长连接 + 本机接口 127.0.0.1:7341
-node src/cli.ts submit draft.json   # 提交草稿
+node src/cli.ts submit draft.json   # 提交草稿（本机）
 ```
 
-配置放在 `~/.config/amber/`：`lark-app.env`（应用 ID 和密钥）、`config.json`（管理员、审核人、审批、知识库等）。本仓库不包含任何凭证。
+其他机器上的 agent 用 `client/amber-submit draft.json` 提交（按 IP 白名单放行，不需要凭证；提交来源由 Amber 按 IP 自动识别）。给 agent 的写法说明见 [docs/agent-guide.md](docs/agent-guide.md)。
+
+配置放在 `~/.config/amber/`：`lark-app.env`（应用 ID 和密钥）、`config.json`（管理员、审核人、审批、知识库、允许提交的机器 IP 等）。本仓库不包含任何凭证。
 
 ## 状态
 

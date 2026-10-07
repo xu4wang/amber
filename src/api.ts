@@ -1,25 +1,12 @@
-// Local API for agents. Listens on 127.0.0.1 only and requires the machine token.
-// This surface can only submit drafts — it cannot claim,
-// review or run anything, so a leaked machine token cannot get past claim and review.
+// API for agents. Listens on 127.0.0.1 only. Fleet machines reach it through nginx, which only
+// allows the fleet's IP addresses and passes the client address in X-Amber-Client-IP (D31).
+// There are no credentials: this surface can only submit drafts — it cannot claim, review or run
+// anything — so access by IP is enough. The submitting machine is derived from the address.
 import { createServer } from 'node:http';
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
-import { randomBytes, timingSafeEqual } from 'node:crypto';
 import type { Flow, DraftInput } from './flow.ts';
 import { AmberError } from './engine.ts';
 
-export function machineToken(configDir: string): string {
-  const p = join(configDir, 'machine-token');
-  if (!existsSync(p)) writeFileSync(p, randomBytes(32).toString('hex') + '\n', { mode: 0o600 });
-  return readFileSync(p, 'utf8').trim();
-}
-
-function same(a: string, b: string): boolean {
-  const x = Buffer.from(a), y = Buffer.from(b);
-  return x.length === y.length && timingSafeEqual(x, y);
-}
-
-export function startApi(port: number, token: string, flow: Flow, jwks: () => object): void {
+export function startApi(port: number, machines: Record<string, string>, flow: Flow, jwks: () => object): void {
   const server = createServer((req, res) => {
     const reply = (status: number, body: unknown) => {
       res.writeHead(status, { 'content-type': 'application/json; charset=utf-8' });
@@ -27,15 +14,19 @@ export function startApi(port: number, token: string, flow: Flow, jwks: () => ob
     };
     // Public: services verifying Amber's execution identity tokens fetch the key set here.
     if (req.method === 'GET' && req.url === '/v1/keys') return reply(200, jwks());
-    const auth = String(req.headers.authorization ?? '').replace(/^Bearer\s+/i, '');
-    if (!same(auth, token)) return reply(401, { error: 'unauthorized' });
+    // Behind nginx: the client address comes from X-Amber-Client-IP. Direct loopback calls are this machine.
+    const fwd = String(req.headers['x-amber-client-ip'] ?? '').trim();
+    const machine = fwd ? machines[fwd] : (machines['127.0.0.1'] ?? 'local');
+    if (!machine) return reply(403, { error: 'forbidden', message: `IP ${fwd} 不在白名单里` });
     if (req.method === 'POST' && req.url === '/v1/drafts') {
       let body = '';
       req.on('data', c => { body += c; if (body.length > 256 * 1024) req.destroy(); });
       req.on('end', async () => {
         try {
           const input = JSON.parse(body) as DraftInput;
-          const r = await flow.submitDraft(input);
+          // The machine is known from the address; the agent may only add a label after it.
+          const label = typeof input.submittedBy === 'string' && input.submittedBy.trim() ? `${input.submittedBy.trim().slice(0, 40)} @ ${machine}` : machine;
+          const r = await flow.submitDraft({ ...input, submittedBy: label });
           reply(200, { ok: true, ...r });
         } catch (e) {
           reply(400, { ok: false, error: e instanceof AmberError ? e.code : 'bad_request', message: (e as Error).message });

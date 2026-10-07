@@ -207,7 +207,7 @@ export class Flow {
 
   async submitDraft(d: DraftInput): Promise<{ id: string; claimMessageId?: string }> {
     if (!/^oc_[A-Za-z0-9]+$/.test(d.chatId)) throw new AmberError('bad_chat', 'chatId 格式不对');
-    if (!d.submittedBy || d.submittedBy.length > 80) throw new AmberError('bad_submitter', '请注明提交来源（submittedBy，例如「Beta（botmux @ host-1）」）');
+    if (!d.submittedBy || d.submittedBy.length > 120) throw new AmberError('bad_submitter', '缺少提交来源');
     if (!d.name || d.name.length > 40 || /\s/.test(d.name)) throw new AmberError('bad_name', '名称不能为空、不能有空格、最多 40 个字');
     if ((d as any).steps !== undefined) throw new AmberError('bad_script', '指令不再有「步骤」：请提交一段 script（参数 + 一段脚本）');
     try { d.script = validateScript(d.script); } catch (e) { throw new AmberError('bad_script', (e as Error).message); }
