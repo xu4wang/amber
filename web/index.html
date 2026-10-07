@@ -83,6 +83,9 @@ details.node details.node > summary { font-weight: 500; color: var(--muted); }
 .leaf.sch .clock { font-size: 12px; }
 .leaf .state { margin-left: auto; font-size: 12px; white-space: nowrap; }
 .leaf .state.active { color: var(--ok); } .leaf .state.paused { color: var(--warn); }
+.examples { flex: 1; font-size: 13px; color: var(--muted); line-height: 2; }
+.chip.ex { border: 1px solid var(--line); cursor: pointer; font: inherit; font-size: 12px; padding: 1px 8px; }
+.chip.ex:hover { border-color: var(--accent); color: var(--accent); }
 .empty-leaf { padding: 2px 6px 6px 22px; color: var(--muted); font-size: 13px; }
 
 /* right pane */
@@ -335,7 +338,8 @@ function cmdPane(key, { c, scope }) {
         <div class="actions"><button class="btn ${c.options.confirm ? 'danger' : 'primary'}" data-do="run">${c.options.confirm ? '确认执行' : '执行'}</button>
           <span class="note">以你本人的身份执行</span></div></form>
       ${c.options.schedulable ? `<form data-form="sch" style="display:none">${paramInputs(c)}
-        <div class="field"><label>时间</label><input name="__at" placeholder="每天 09:00 / 工作日 09:00 / 每周一 09:00 / 每 2 小时 / 每 15 分钟"></div>
+        <div class="field"><label>时间</label><input name="__at" placeholder="例如：工作日 09:00"></div>
+        <div class="field"><label></label><span class="examples">常用写法（点一下填入）：${['每天 09:00', '工作日 09:00', '每周一 09:00', '每小时', '每 2 小时', '每 15 分钟', '每 5 分钟'].map(x => `<button type="button" class="chip ex" data-ex="${x}">${x}</button>`).join(' ')}<br><span class="note">分钟间隔只能是 5、10、15、20、30（最短 5 分钟）</span></span></div>
         <div class="field"><label>时区</label><select name="__tz"><option value="Asia/Shanghai">北京时间</option><option value="Asia/Bangkok">曼谷时间</option></select></div>
         <p class="note">每次都以你的身份自动执行；结果发到${scope.startsWith('group:') ? '这个群' : '你和 Amber 的私聊'}，没有输出时不发。</p>
         <div class="actions"><button class="btn primary" data-do="sch">${c.options.confirm ? '确认并创建定时任务' : '创建定时任务'}</button></div>
@@ -429,6 +433,8 @@ document.addEventListener('click', async ev => {
   const leaf = ev.target.closest('#tree .leaf');
   if (leaf) return select(leaf.dataset.key);
   if (ev.target.closest('[data-back]')) { history.replaceState(null, '', '#'); return welcome(); }
+  const ex = ev.target.closest('[data-ex]');
+  if (ex) { const i = ex.closest('form').querySelector('[name=__at]'); i.value = ex.dataset.ex; i.focus(); return; }
   const tab = ev.target.closest('[data-tab]');
   if (tab) {
     tab.parentElement.querySelectorAll('button').forEach(b => b.classList.toggle('on', b === tab));
