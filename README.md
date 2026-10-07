@@ -1,47 +1,37 @@
 # Amber
 
-**Run it once. Keep it forever.**（跑通一次，随时再用。）
+**跑通一次，随时再用。**（Run it once. Keep it forever.）
 
-Amber turns an operation that someone got working together with an LLM agent into a reviewed,
-deterministic command for Feishu (Lark). Commands run without a model in the loop.
+Amber 把「和 LLM agent 一起跑通的一次操作」封存成经过审核的确定性指令，在飞书里一键执行。执行时不经过模型。
 
-## How it works
+## 工作流程
 
-1. **Submit** — an agent submits a draft: parameters plus one or more Python steps. Nothing in the draft is trusted.
-2. **Claim** — Amber posts a claim card to the chat the command belongs to. A person runs a trial with their
-   own identity (taken from the Feishu event, not from the agent) and submits it for review.
-3. **Review** — Amber writes the full code into a Feishu wiki doc and starts a Feishu approval;
-   every configured reviewer must approve. The approved spec hash is pinned; any change needs a new review.
-4. **Run** — in the chat (or the owner's private chat with Amber), `@Amber` lists the commands, collects parameters
-   with a card form and updates the card in place with the result.
+1. **提交**：agent 提交一份草稿，包含参数和一到多个 Python 步骤。草稿里的任何内容都不被信任。
+2. **认领**：Amber 在指令所属的群或私聊里发出认领卡。认领人以**自己的身份**（来自飞书事件，而不是 agent）试运行一次，确认后提交审核。
+3. **审核**：Amber 把完整代码写进飞书知识库文档，并发起飞书审批；**所有审核人都同意**才生效。通过的版本按哈希锁定，代码一改就要重新审核。
+4. **执行**：在群里（或创建人与 Amber 的私聊里）`@Amber`，列出可用指令，用卡片表单填参数，结果原地更新在卡片上。
 
-## Design rules
+## 设计原则
 
-- **One concept: the command.** A command is parameters + steps; each step carries its own code.
-  - `script` steps run in a macOS sandbox: no reads under `$HOME`, writes only to a per-run temp dir,
-    network only when declared.
-  - `privileged` steps run without the sandbox and can only be approved by an admin
-    (their trial runs still use the sandbox).
-- **Output is content.** Steps print Markdown; ` ```vega-lite ` and ` ```table ` blocks are adapted by each channel
-  (Feishu cards get native charts / tables; a web UI can render the same content fully).
-- **Scope.** A command belongs to the group or private chat it was created in; admins can make it global.
-- **Execution identity tokens.** For services a step declares, Amber signs a short-lived Ed25519 JWS
-  (`iss amber`, `aud`, `sub` = caller union_id, command, spec hash, run, expiry). Services verify it with
-  the public keys at `/v1/keys`. A step that talks to services cannot reach the internet.
+- **只有「指令」一个概念**：指令 = 参数 + 步骤，每个步骤自带代码。
+  - `script`（脚本）：在 macOS 沙盒里运行，读不到 `$HOME` 下的任何文件，只能写本次运行的临时目录，声明了才能联网。
+  - `privileged`（特权脚本）：不进沙盒，只有管理员能批准；审核通过之前，试运行仍在沙盒里。
+- **输出只是内容**：步骤输出 Markdown；其中的 ` ```vega-lite ` 和 ` ```table ` 代码块由各渠道自己适配（飞书卡片转成原生图表和表格，网页可以完整显示同一份内容）。
+- **作用域**：指令属于创建它的群或私聊；管理员可以把它设为全局可用。
+- **执行身份凭证**：步骤声明要调用的服务时，Amber 为本次执行签发短时效的 Ed25519 签名凭证（`iss amber`、`aud`、`sub` = 执行人 union_id、指令、版本哈希、执行编号、过期时间）。服务方用 `/v1/keys` 的公钥验证。声明了服务的步骤不能访问外网。
 
-## Running
+## 运行
 
-Requires Node.js ≥ 24 (runs TypeScript directly) and macOS (`sandbox-exec`).
+需要 Node.js ≥ 24（直接运行 TypeScript）和 macOS（`sandbox-exec`）。
 
 ```sh
 npm install
-node src/main.ts            # Feishu long connection + local API on 127.0.0.1:7341
-node src/cli.ts submit draft.json
+node src/main.ts                    # 飞书长连接 + 本机接口 127.0.0.1:7341
+node src/cli.ts submit draft.json   # 提交草稿
 ```
 
-Configuration lives in `~/.config/amber/` (`lark-app.env` with the app id/secret, `config.json` with
-admins, reviewers, approval and wiki settings). Nothing in this repository contains credentials.
+配置放在 `~/.config/amber/`：`lark-app.env`（应用 ID 和密钥）、`config.json`（管理员、审核人、审批、知识库等）。本仓库不包含任何凭证。
 
-## Status
+## 状态
 
-Early development. Not yet: write-operation confirmation, schedules, web UI.
+早期开发中。尚未完成：写操作确认、定时任务、网站。
