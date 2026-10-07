@@ -28,6 +28,7 @@ Amber 把「和 LLM agent 一起跑通的一次操作」封存成经过审核的
 | 文档 | 内容 |
 |---|---|
 | [使用指南](docs/usage.md) | 给使用者：固化指令、认领审核、在飞书/agent/网站执行、定时任务、常见问题 |
+| [视频手册](https://xu4wang.github.io/amber-manual/) | 给使用者：按章节观看的操作演示，每章 1 分钟左右 |
 | [安装与部署](docs/install.md) | 环境要求、配置文件、launchd 常驻、nginx、运维 |
 | [飞书应用配置](docs/feishu-setup.md) | 权限清单、长连接事件、审批定义、知识库、发布检查 |
 | [amber 命令行与 skill](docs/cli-and-skill.md) | 安装、命令、三档行为、定时任务、接口 |
