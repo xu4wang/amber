@@ -41,11 +41,16 @@ export function listCard(cmds: CommandRow[], scopeLabel: string): object {
   return shell('Amber · 指令', 'orange', els);
 }
 
-export function formCard(c: CommandRow): object {
+export function formCard(c: CommandRow, prefill: Record<string, string> = {}): object {
+  const isWrite = c.sideEffect === 'write';
+  const runText = isWrite ? '确认执行（写操作）' : '执行';
+  const runType = isWrite ? 'danger' : 'primary';
+  const warn = isWrite ? [{ tag: 'markdown', content: '<font color="red">⚠️ 写操作：执行后会真实修改数据。请核对参数再点「确认执行」。</font>' }] : [];
   if (c.params.length === 0) {
-    return shell(`Amber · ${c.name}`, 'orange', [
+    return shell(`Amber · ${c.name}`, isWrite ? 'red' : 'orange', [
       { tag: 'markdown', content: sanitizeMarkdown(c.description || '') || '这条指令没有参数。' },
-      btn('执行', { a: 'run', c: c.id }, 'primary'),
+      ...warn,
+      btn(runText, { a: 'run', c: c.id }, runType),
       btn('返回', { a: 'list' }),
     ]);
   }
@@ -55,17 +60,18 @@ export function formCard(c: CommandRow): object {
     label: { tag: 'plain_text', content: p.label ?? p.name },
     label_position: 'left',
     placeholder: { tag: 'plain_text', content: p.defaultFrom === 'caller.city' ? `不填则用你的办公城市${p.default ? `（查不到时用 ${p.default}）` : ''}` : p.default !== undefined ? `默认：${p.default}` : (p.required ? '必填' : '可不填') },
-    ...(p.default !== undefined && !p.defaultFrom ? { default_value: p.default } : {}),
+    ...(prefill[p.name] !== undefined ? { default_value: prefill[p.name] } : p.default !== undefined && !p.defaultFrom ? { default_value: p.default } : {}),
     required: !!p.required,
   }));
-  return shell(`Amber · ${c.name}`, 'orange', [
+  return shell(`Amber · ${c.name}`, isWrite ? 'red' : 'orange', [
     ...(c.description ? [{ tag: 'markdown', content: `<font color="grey">${sanitizeMarkdown(c.description, 200)}</font>` }] : []),
+    ...warn,
     {
       tag: 'form',
       name: 'args',
       elements: [
         ...inputs,
-        btn('执行', { a: 'run', c: c.id }, 'primary', { form_action_type: 'submit', name: 'submit' }),
+        btn(runText, { a: 'run', c: c.id }, runType, { form_action_type: 'submit', name: 'submit' }),
       ],
     },
     btn('返回', { a: 'list' }),

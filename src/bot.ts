@@ -221,12 +221,13 @@ export class AmberBot {
       return;
     }
     const positional = parts.slice(1);
-    if (positional.length === 0 && cmd.params.some(p => p.required && p.default === undefined)) {
-      await this.replyCard(msg.message_id, inThread, formCard(cmd));
-      return;
-    }
     const raw: Record<string, string> = {};
     cmd.params.forEach((p, i) => { if (positional[i] !== undefined) raw[p.name] = positional[i]; });
+    // Write commands never run from a one-line shortcut: show the confirmation form, prefilled.
+    if (cmd.sideEffect === 'write' || (positional.length === 0 && cmd.params.some(p => p.required && p.default === undefined))) {
+      await this.replyCard(msg.message_id, inThread, formCard(cmd, raw));
+      return;
+    }
     // Reply with a "running" card first, then patch it with the result.
     const sent = await this.client.im.v1.message.reply({
       path: { message_id: msg.message_id },
@@ -237,9 +238,9 @@ export class AmberBot {
     if (cardMessageId) await this.patch(cardMessageId, final);
   }
 
-  private async execute(cmd: CommandRow, raw: Record<string, string | undefined>, caller: Caller): Promise<object> {
+  private async execute(cmd: CommandRow, raw: Record<string, string | undefined>, caller: Caller, viaForm = false): Promise<object> {
     try {
-      const r = await runCommand(this.store, cmd, raw, caller, { city: () => this.cityOf(caller.unionId), signer: this.signer });
+      const r = await runCommand(this.store, cmd, raw, caller, { city: () => this.cityOf(caller.unionId), signer: this.signer }, { viaForm });
       if (!r.ok) return errorCard(cmd.name, `执行失败：${r.error}`, cmd.id);
       return resultCard(cmd.name, caller.openId, r.blocks, r.runId, r.elapsedMs, cmd.id);
     } catch (e) {
@@ -322,7 +323,7 @@ export class AmberBot {
         const form: Record<string, string> = d.action?.form_value ?? {};
         // Respond within the callback window, then patch the card when execution finishes.
         setTimeout(async () => {
-          const final = await this.execute(cmd, form, caller);
+          const final = await this.execute(cmd, form, caller, true);
           if (messageId) await this.patch(messageId, final);
         }, 300);
         return raw(runningCard(cmd.name, caller.openId));

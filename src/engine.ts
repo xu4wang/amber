@@ -79,11 +79,12 @@ export async function validateArgs(params: ParamDef[], raw: Record<string, strin
 export type Block = { kind: 'markdown'; text: string };
 export interface RunOutcome { runId: string; ok: boolean; blocks: Block[]; markdown: string; error?: string; elapsedMs: number; args: Record<string, string> }
 
-export async function runCommand(store: Store, cmd: CommandRow, rawArgs: Record<string, string | undefined>, caller: Caller, facts: CallerFacts = {}, opts: { trial?: boolean } = {}): Promise<RunOutcome> {
+export async function runCommand(store: Store, cmd: CommandRow, rawArgs: Record<string, string | undefined>, caller: Caller, facts: CallerFacts = {}, opts: { trial?: boolean; viaForm?: boolean } = {}): Promise<RunOutcome> {
   if (cmd.status !== 'active' && !(opts.trial && cmd.status === 'draft')) throw new AmberError('not_active', '指令未生效');
-  if (opts.trial && cmd.sideEffect === 'write') throw new AmberError('trial_write', '写操作指令暂不支持试运行');
+  if (opts.trial && cmd.sideEffect === 'write') throw new AmberError('trial_write', '写操作指令不试运行（会真实修改数据），请审核人仔细看代码');
   if (computeSpecHash(cmd) !== cmd.specHash) throw new AmberError('spec_mismatch', '指令定义与审核通过的版本不一致，已拒绝执行');
-  if (cmd.sideEffect === 'write') throw new AmberError('write_needs_confirm', '写操作需要确认（尚未实现）');
+  // Write commands only run from the confirmation form (D29): never from a one-line shortcut.
+  if (cmd.sideEffect === 'write' && !opts.trial && !opts.viaForm) throw new AmberError('write_needs_form', '写操作只能从表单卡片确认执行');
   const args = await validateArgs(cmd.params, rawArgs, facts);
   const city = facts.city ? await facts.city() : undefined;
   const started = Date.now();

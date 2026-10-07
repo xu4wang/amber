@@ -84,8 +84,10 @@ export function claimCard(c: CommandRow, trial?: { by?: string; blocks?: Block[]
     els.push({ tag: 'markdown', content: `**试运行结果**（由 ${person(trial.by)} 执行）` });
     els.push(...renderBlocks(trial.blocks));
   }
-  const buttons: unknown[] = [btn('试运行', { a: 'claim_try', c: c.id }, trial?.blocks ? 'default' : 'primary')];
-  if (trial?.blocks) buttons.push(btn('提交审核', { a: 'claim_submit', c: c.id }, 'primary'));
+  const isWrite = c.sideEffect === 'write';
+  if (isWrite) els.push({ tag: 'markdown', content: '<font color="red">这是写操作指令：不试运行（会真实修改数据）。请确认代码后直接提交，审核人会逐行审查。</font>' });
+  const buttons: unknown[] = isWrite ? [] : [btn('试运行', { a: 'claim_try', c: c.id }, trial?.blocks ? 'default' : 'primary')];
+  if (trial?.blocks || isWrite) buttons.push(btn('提交审核', { a: 'claim_submit', c: c.id }, 'primary'));
   buttons.push(btn('丢弃', { a: 'claim_drop', c: c.id }, 'danger'));
   els.push({ tag: 'column_set', flex_mode: 'flow', columns: buttons.map(b => ({ tag: 'column', width: 'auto', elements: [b] })) });
   return shell(`待认领：${c.name}`, 'orange', els);
@@ -297,7 +299,7 @@ export class Flow {
       }
     }
     if (action === 'claim_submit') {
-      if (meta.trialBy !== caller.unionId) throw new AmberError('trial_first', '请先由你本人试运行成功，再提交审核');
+      if (c.sideEffect !== 'write' && meta.trialBy !== caller.unionId) throw new AmberError('trial_first', '请先由你本人试运行成功，再提交审核');
       if (computeSpecHash(c) !== c.specHash) throw new AmberError('spec_mismatch', '定义已变化，请重新提交');
       if (this.reviewers.length === 0) throw new AmberError('no_reviewers', '审核人名单未配置或无法解析，暂时不能提交审核');
       this.store.setMeta(c.id, { ownerUnionId: caller.unionId, ownerOpenId: caller.openId ?? null });
