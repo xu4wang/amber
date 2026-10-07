@@ -99,7 +99,7 @@ export async function runCommand(store: Store, cmd: CommandRow, rawArgs: Record<
       store.audit(caller.unionId, 'identity.issue', { runId, service: name, aud: d.audience });
       services[name] = { token, ...(d.tcpPort ? { tcpPort: d.tcpPort } : {}), ...(d.unixSocket ? { unixSocket: d.unixSocket } : {}) };
     }
-    const r = await runStep(step, { params: args, caller: { unionId: caller.unionId, chatId: caller.chatId, channel: caller.channel, city }, runId, ...(Object.keys(services).length ? { services } : {}) });
+    const r = await runStep(step, { params: args, caller: { unionId: caller.unionId, chatId: caller.chatId, channel: caller.channel, city }, runId, ...(Object.keys(services).length ? { services } : {}) }, { forceSandbox: !!opts.trial });
     if (!r.ok) {
       store.finishRun(runId, 'failed', null, r.error ?? 'failed');
       store.audit(caller.unionId, 'run.failed', { runId, error: r.error });

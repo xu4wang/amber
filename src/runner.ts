@@ -71,13 +71,14 @@ export function validateStep(s: unknown): Step {
   throw new Error('未知的步骤类型（只支持 script / privileged）');
 }
 
-export async function runStep(step: Step, input: StepInput): Promise<StepResult> {
+export async function runStep(step: Step, input: StepInput, opts: { forceSandbox?: boolean } = {}): Promise<StepResult> {
   const work = mkdtempSync(join(tmpdir(), 'amber-run-'));
   try {
     const file = join(work, 'main.py');
     writeFileSync(file, step.code);
     const pyArgs = ['-I', file];
-    const sandboxed = step.kind === 'script';
+    // Privileged code that has not been approved yet (trial runs) still goes through the sandbox.
+    const sandboxed = step.kind === 'script' || !!opts.forceSandbox;
     const cmd = sandboxed ? '/usr/bin/sandbox-exec' : PYTHON;
     const args = sandboxed
       ? ['-p', profile(!!step.network, step.services ?? []), '-D', `HOME=${homedir()}`, '-D', `WORKDIR=${work}`, PYTHON, ...pyArgs]
