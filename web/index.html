@@ -79,6 +79,10 @@ details.node details.node > summary { font-weight: 500; color: var(--muted); }
 .leaf.sel { background: var(--accent-soft); color: var(--accent); }
 .leaf .dot { width: 7px; height: 7px; border-radius: 50%; flex: none; background: var(--muted); }
 .leaf .dot.ok { background: var(--ok); } .leaf .dot.failed { background: var(--warn); } .leaf .dot.paused { background: var(--warn); }
+.leaf.sch.child { padding-left: 38px; font-size: 13px; }
+.leaf.sch .clock { font-size: 12px; }
+.leaf .state { margin-left: auto; font-size: 12px; white-space: nowrap; }
+.leaf .state.active { color: var(--ok); } .leaf .state.paused { color: var(--warn); }
 .empty-leaf { padding: 2px 6px 6px 22px; color: var(--muted); font-size: 13px; }
 
 /* right pane */
@@ -242,16 +246,21 @@ function cmdLeaf(c, scope) {
     <span class="name">${esc(c.name)}</span>${c.options.confirm ? '<span class="chip warn">需确认</span>' : ''}</div>`;
 }
 
-function schLeaf(s, scope) {
+// A schedule sits under the command it runs: the command is "what", the schedule is "when".
+function schLeaf(s, scope, orphan) {
   const key = 's:' + s.id;
   ITEMS.set(key, { kind: 'sch', s, scope });
-  return `<div class="leaf" data-key="${esc(key)}" data-search="${esc(s.command.toLowerCase())}">
-    <span class="dot ${s.status === 'active' ? 'ok' : 'paused'}"></span><span class="name">${esc(s.command)}</span><span class="sub">${esc(s.rule.replace(/（.*）/, ''))}</span></div>`;
+  const state = s.status === 'active' ? '运行中' : '已暂停';
+  return `<div class="leaf sch ${orphan ? '' : 'child'}" data-key="${esc(key)}" data-search="${esc(s.command.toLowerCase())}">
+    <span class="clock">⏰</span><span class="name">${orphan ? esc(s.command) + ' · ' : ''}${esc(s.rule.replace(/（.*）/, ''))}</span>
+    <span class="state ${s.status}">${state}</span></div>`;
 }
 
 function folder(title, scope, cmds, schs, open) {
-  const inner = (cmds.length ? cmds.map(c => cmdLeaf(c, scope)).join('') : '<div class="empty-leaf">还没有指令</div>')
-    + (schs.length ? `<details class="node" open><summary>定时任务<span class="count">${schs.length}</span></summary>${schs.map(s => schLeaf(s, scope)).join('')}</details>` : '');
+  const ids = new Set(cmds.map(c => c.id));
+  const orphans = schs.filter(s => !ids.has(s.commandId));   // e.g. the command was retired; the schedule is paused
+  const inner = (cmds.length ? cmds.map(c => cmdLeaf(c, scope) + schs.filter(s => s.commandId === c.id).map(s => schLeaf(s, scope, false)).join('')).join('') : '<div class="empty-leaf">还没有指令</div>')
+    + orphans.map(s => schLeaf(s, scope, true)).join('');
   return `<details class="node" ${open ? 'open' : ''}><summary>${esc(title)}<span class="count">${cmds.length}</span></summary>${inner}</details>`;
 }
 
@@ -341,7 +350,7 @@ function cmdPane(key, { c, scope }) {
 function schPane({ s, scope }) {
   const args = Object.entries(s.args || {}).map(([k, v]) => `${esc(k)}=${esc(v)}`).join(' ');
   document.getElementById('pane').innerHTML = `${backBtn}
-    <div class="pane-head"><h1>⏰ ${esc(s.command)}</h1><span class="chip">${esc(s.rule)}</span></div>
+    <div class="pane-head"><h1>⏰ 定时执行「${esc(s.command)}」</h1><span class="chip">${esc(s.rule)}</span></div>
     <div class="where">${esc(scopeName(scope))} · 定时任务 ${esc(s.id)}</div>
     <div class="box" style="margin-top:16px">
       <div class="field"><label>状态</label><span style="color:${s.status === 'active' ? 'var(--ok)' : 'var(--warn)'}">${s.status === 'active' ? '运行中' : '已暂停' + (s.pauseReason ? '：' + esc(s.pauseReason) : '')}</span></div>

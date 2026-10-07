@@ -235,6 +235,7 @@ const LAST: Record<string, string> = { ok: '成功', ok_silent: '成功（无输
 function schView(store: Store, s: ScheduleRow, viewer?: string) {
   return {
     mine: viewer ? s.creatorUnionId === viewer : false,
+    commandId: s.commandId,
     id: s.id, command: store.getCommand(s.commandId)?.name ?? s.commandId, rule: describeRule(s.rule), status: s.status, pauseReason: s.pauseReason,
     next: s.status === 'active' ? formatAt(s.nextRunAt, s.rule.tz) : null, last: s.lastRunAt ? `${formatAt(s.lastRunAt, s.rule.tz)} ${LAST[s.lastStatus ?? ''] ?? ''}` : null,
     args: s.args,
