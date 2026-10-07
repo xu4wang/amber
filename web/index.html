@@ -343,7 +343,7 @@ function cmdPane(key, { c, scope }) {
       ${c.options.schedulable ? `<form data-form="sch" style="display:none">${paramInputs(c)}
         <div class="field"><label>时间</label><input name="__at" placeholder="例如：工作日 09:00"></div>
         <div class="field"><label></label><span class="examples">常用写法（点一下填入）：${['每天 09:00', '工作日 09:00', '每周一 09:00', '每小时', '每 2 小时', '每 15 分钟', '每 5 分钟'].map(x => `<button type="button" class="chip ex" data-ex="${x}">${x}</button>`).join(' ')}<br><span class="note">分钟间隔只能是 5、10、15、20、30（最短 5 分钟）</span></span></div>
-        <div class="field"><label>时区</label><select name="__tz"><option value="Asia/Shanghai">北京时间</option><option value="Asia/Bangkok">曼谷时间</option></select></div>
+        <div class="field"><label>时区</label><select name="__tz">${(DATA.timezones || []).map(z => `<option value="${esc(z.tz)}">${esc(z.label)}</option>`).join('')}</select></div>
         <p class="note">每次都以你的身份自动执行；结果发到${scope.startsWith('group:') ? '这个群' : '你和 Amber 的私聊'}，没有输出时不发。</p>
         <div class="actions"><button class="btn primary" data-do="sch">${c.options.confirm ? '确认并创建定时任务' : '创建定时任务'}</button></div>
         <div class="sch-msg note" style="margin-top:8px"></div></form>` : ''}

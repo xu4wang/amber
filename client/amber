@@ -11,7 +11,7 @@ usage:
   amber run <command> [name=value ...]         run (or ask for confirmation)
   amber wait <request> [--timeout SECONDS]     wait for a confirmation request (default 600 s)
   amber result <run>                           output of a run
-  amber schedule add <command> --at "每天 09:00" [--tz Asia/Bangkok] [name=value ...]
+  amber schedule add <command> --at "每天 09:00" [--tz <时区>] [name=value ...]
                                                (also: 工作日 09:00, 每周一 09:00, 每 2 小时, 每 15 分钟; min 5 minutes)
   amber schedule list
   amber schedule pause <id>                    stops it at once

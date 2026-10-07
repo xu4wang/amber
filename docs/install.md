@@ -59,7 +59,11 @@ AMBER_LARK_APP_SECRET=xxxxxxxxxxxxxxxx
   "services": {
     "data-mcp": { "audience": "data-mcp", "tcpPort": 8765 }
   },
-  "webBaseUrl": "http://amber.example.com"
+  "webBaseUrl": "http://amber.example.com",
+  "timezones": [
+    { "tz": "Asia/Shanghai", "label": "北京时间" },
+    { "tz": "Asia/Bangkok", "label": "曼谷时间" }
+  ]
 }
 ```
 
@@ -72,6 +76,7 @@ AMBER_LARK_APP_SECRET=xxxxxxxxxxxxxxxx
 | `wiki` | 放审核文档的知识库位置。要和 `approval` 一起配置 |
 | `services` | 脚本可以调用的本机服务，Amber 会为它们签发执行身份凭证，见 [identity.md](identity.md) |
 | `webBaseUrl` | **必填**。网站的外部地址，用来生成登录链接、做跨站请求检查，并通过 `/v1/info` 告诉 agent（不填只会是 localhost，登录链接在别的电脑上打不开） |
+| `timezones` | 可选。定时任务可选的时区（IANA 名称加显示名），**第一个是默认时区**；网站下拉框、卡片上的时间说明都用它。不配就只用 Amber 服务器所在的时区，显示为「服务器时间」 |
 | `dataDir` | 可选，数据目录，默认是 `~/.config/amber/data` |
 
 ### 3.3 签名密钥

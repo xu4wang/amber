@@ -4,9 +4,11 @@ import { AmberBot } from './bot.ts';
 import { setServices } from './runner.ts';
 import { startApi } from './api.ts';
 import { startWeb } from './web.ts';
+import { setTimezones } from './schedule-rule.ts';
 
 const cfg = loadConfig();
 setServices(cfg.services);
+setTimezones(cfg.timezones);
 const store = new Store(cfg.dataDir);
 const bot = new AmberBot(cfg, store);
 await bot.start();

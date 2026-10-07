@@ -11,6 +11,7 @@ import { AgentGate } from './agent.ts';
 import type { Deps } from './agent.ts';
 import { Scheduler } from './scheduler.ts';
 import { newToken, hashToken, LOGIN_TTL_MS } from './web.ts';
+import { formatAtDefault } from './schedule-rule.ts';
 
 function log(...a: unknown[]): void {
   console.log(new Date().toISOString(), ...a);
@@ -345,8 +346,7 @@ export class AmberBot {
 
   /** Card in the private chat after the link was used. */
   async onLoginUsed(messageId: string, at: number): Promise<void> {
-    const t = new Date(at + 8 * 3600_000).toISOString().slice(11, 16);
-    await this.patch(messageId, infoCard('已登录网站', `这个链接已于北京时间 ${t} 使用，不能再次使用。\n如果不是你本人操作，请立即发送「退出网站」。`));
+    await this.patch(messageId, infoCard('已登录网站', `这个链接已于 ${formatAtDefault(at)} 使用，不能再次使用。\n如果不是你本人操作，请立即发送「退出网站」。`));
   }
 
   private chatNameCache = new Map<string, string>();

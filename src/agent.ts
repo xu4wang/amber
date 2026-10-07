@@ -10,7 +10,7 @@ import type { Caller } from './engine.ts';
 import { visibleCommands, findVisible, runCommand, validateArgs, AmberError } from './engine.ts';
 import type { Signer } from './identity.ts';
 import { requestCard, runningCard, resultCard, errorCard, closedCard, person, sanitizeMarkdown } from './cards.ts';
-import { parseRule, validateRule, nextRun, describeRule, formatAt, DEFAULT_TZ } from './schedule-rule.ts';
+import { parseRule, validateRule, nextRun, describeRule, formatAt, defaultTz } from './schedule-rule.ts';
 import type { Scheduler } from './scheduler.ts';
 import { MAX_PER_CHAT } from './scheduler.ts';
 
@@ -123,7 +123,7 @@ export class AgentGate {
     const cmd = findVisible(this.store, this.viewer(ctx), name);
     if (!cmd.options.schedulable) throw new AmberError('not_schedulable', `「${cmd.name}」审核时没有允许定时执行（options.schedulable）`);
     if (this.store.schedulesInChat(ctx.chatId).length >= MAX_PER_CHAT) throw new AmberError('too_many', `这里已有 ${MAX_PER_CHAT} 个定时任务`);
-    const rule = parseRule(String(at ?? ''), tz || DEFAULT_TZ);
+    const rule = parseRule(String(at ?? ''), tz || defaultTz());
     const cleanArgs = this.cleanArgs(args);
     await precheck(cmd, cleanArgs);
     const req = await this.post(ctx, 'schedule', cmd, cleanArgs, { rule });

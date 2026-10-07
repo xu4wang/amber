@@ -13,7 +13,7 @@ import type { Caller } from './engine.ts';
 import { runCommand, AmberError } from './engine.ts';
 import type { Signer } from './identity.ts';
 import type { Scheduler } from './scheduler.ts';
-import { describeRule, formatAt } from './schedule-rule.ts';
+import { describeRule, formatAt, defaultTz, timezones } from './schedule-rule.ts';
 
 export const LOGIN_TTL_MS = 5 * 60_000;
 const SESSION_TTL_MS = 7 * 24 * 3600_000;
@@ -163,7 +163,7 @@ export function startWeb(port: number, store: Store, deps: WebDeps): void {
         if (req.method === 'GET' && url.pathname === '/web/api/me') {
           return json(res, 200, { ok: true, name: (await deps.nameOf(who.unionId)) ?? '', unionId: who.unionId });
         }
-        if (req.method === 'GET' && url.pathname === '/web/api/overview') return json(res, 200, { ok: true, ...(await overview(store, deps, who.unionId)) });
+        if (req.method === 'GET' && url.pathname === '/web/api/overview') return json(res, 200, { ok: true, ...(await overview(store, deps, who.unionId)), timezones: timezones() });
         if (req.method === 'GET' && url.pathname === '/web/api/runs') {
           return json(res, 200, { ok: true, runs: store.runsByCaller(who.unionId, 30).map(r => ({
             id: r.id, command: r.commandName, channel: r.channel, status: r.status, startedAt: r.startedAt, elapsedMs: r.finishedAt ? r.finishedAt - r.startedAt : null, args: r.args, scheduleId: r.scheduleId,
@@ -210,7 +210,7 @@ export function startWeb(port: number, store: Store, deps: WebDeps): void {
           for (const [k, v] of Object.entries(body.args ?? {})) if (v !== null && v !== undefined && String(v) !== '') args[k] = String(v).slice(0, 2000);
           const { parseRule } = await import('./schedule-rule.ts');
           const sch = await deps.scheduler.create({ cmd: t.cmd, chatId: t.chatId, chatType: t.chatType, replyTo: null, inThread: false, creator: { ...person, chatId: t.chatId, chatType: t.chatType },
-            args, rule: parseRule(String(body.at ?? ''), String(body.tz || 'Asia/Shanghai')), requestedBy: 'web', via: { via: 'web' } });
+            args, rule: parseRule(String(body.at ?? ''), String(body.tz || defaultTz())), requestedBy: 'web', via: { via: 'web' } });
           return json(res, 200, { ok: true, scheduleId: sch.id, rule: describeRule(sch.rule), next: formatAt(sch.nextRunAt, sch.rule.tz) });
         }
         if ((m = /^\/web\/api\/schedules\/([A-Za-z0-9-]{1,40})\/(pause|resume|delete|run)$/.exec(url.pathname))) {

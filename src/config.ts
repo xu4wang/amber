@@ -18,6 +18,8 @@ export interface AmberConfig {
   machines: Record<string, string>;
   approval?: { code: string; reviewNodeId: string; formFieldId: string };
   wiki?: { spaceId: string; parentNodeToken: string; baseUrl: string };
+  /** Time zones offered for schedules; the first is the default. Empty = the server's own time zone. */
+  timezones: { tz: string; label: string }[];
   /** Public address of the website (D34), used in login links. */
   webBaseUrl: string;
 }
@@ -55,6 +57,7 @@ export function loadConfig(): AmberConfig {
     machines: fileCfg.machines && typeof fileCfg.machines === 'object' ? fileCfg.machines : { '127.0.0.1': 'local' },
     approval: fileCfg.approval,
     wiki: fileCfg.wiki,
+    timezones: Array.isArray(fileCfg.timezones) ? fileCfg.timezones : [],
     webBaseUrl: String(fileCfg.webBaseUrl ?? `http://localhost:${process.env.AMBER_WEB_PORT ?? 7342}`).replace(/\/$/, ''),
   };
 }

@@ -9,8 +9,19 @@ export type Rule =
   | { kind: 'minutely'; every: number; tz: string };                  // every 5/10/15/20/30 minutes, on the clock
 
 const WEEKDAYS = '一二三四五六日';
-const TZ_LABEL: Record<string, string> = { 'Asia/Shanghai': '北京时间', 'Asia/Bangkok': '曼谷时间', 'Asia/Ho_Chi_Minh': '胡志明时间', 'Asia/Singapore': '新加坡时间' };
-export const DEFAULT_TZ = 'Asia/Shanghai';
+// Time zones are a deployment setting (config: timezones). The first one is the default; with no
+// setting, the Amber server's own time zone is used.
+export interface TimeZoneOption { tz: string; label: string }
+export const SERVER_TZ = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+let ZONES: TimeZoneOption[] = [{ tz: SERVER_TZ, label: '服务器时间' }];
+export function setTimezones(list: TimeZoneOption[] | undefined): void {
+  const ok = (list ?? []).filter(z => z && typeof z.tz === 'string' && (() => { try { new Intl.DateTimeFormat('en-US', { timeZone: z.tz }); return true; } catch { return false; } })())
+    .map(z => ({ tz: z.tz, label: String(z.label || z.tz) }));
+  if (ok.length) ZONES = ok;
+}
+export function timezones(): TimeZoneOption[] { return ZONES; }
+export function defaultTz(): string { return ZONES[0].tz; }
+function tzLabel(tz: string): string { return ZONES.find(z => z.tz === tz)?.label ?? tz; }
 
 function checkTz(tz: string): string {
   try { new Intl.DateTimeFormat('en-US', { timeZone: tz }); } catch { throw new AmberError('bad_rule', `不认识的时区：${tz}`); }
@@ -24,7 +35,7 @@ function time(h: string, m: string): string {
 }
 
 /** "每天 9:00" / "工作日 18:30" / "每周一 9:00" / "每小时" / "每 2 小时" / "每 2 小时 15 分" / "每 15 分钟"; English: "daily 9:00", "weekdays 9:00", "weekly mon 9:00", "every 2h", "every 15m". */
-export function parseRule(text: string, tz = DEFAULT_TZ): Rule {
+export function parseRule(text: string, tz = defaultTz()): Rule {
   checkTz(tz);
   const s = text.trim().replace(/：/g, ':').replace(/\s+/g, ' ');
   const T = '(\\d{1,2}):(\\d{2})';
@@ -70,7 +81,7 @@ function describeRuleRaw(r: Rule): string {
 }
 
 export function describeRule(r: Rule): string {
-  const tz = TZ_LABEL[r.tz] ?? r.tz;
+  const tz = tzLabel(r.tz);
   if (r.kind === 'hourly') return `${r.every === 1 ? '每小时' : `每 ${r.every} 小时`}的第 ${r.minute} 分（${tz}）`;
   if (r.kind === 'minutely') return `每 ${r.every} 分钟（${tz}）`;
   return `${describeRuleRaw(r)}（${tz}）`;
@@ -123,6 +134,11 @@ export function nextRun(r: Rule, after: number): number {
     if (t > after) return t;
   }
   throw new Error('no next run');
+}
+
+/** "10月8日 周四 09:00（北京时间）" in the default time zone — for times shown outside a schedule. */
+export function formatAtDefault(t: number): string {
+  return `${formatAt(t, defaultTz())}（${tzLabel(defaultTz())}）`;
 }
 
 export function formatAt(t: number, tz: string): string {
