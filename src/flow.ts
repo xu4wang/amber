@@ -39,14 +39,14 @@ function btn(text: string, value: Record<string, string>, type: 'primary' | 'def
 }
 
 function stepLabel(k: string): string {
-  return k === 'privileged' ? '<font color="red">特权脚本（不在沙盒里运行，可读本机文件）</font>' : k === 'sql' ? 'SQL 查询（以执行人身份查数仓）' : '脚本（沙盒运行）';
+  return k === 'privileged' ? '<font color="red">特权脚本（不在沙盒里运行，可读本机文件）</font>' : '脚本（沙盒运行）';
 }
 
 function specSummary(c: CommandRow): string {
   const params = c.params.length
     ? c.params.map(p => `${p.label ?? p.name}（${p.type === 'integer' ? '整数' : '文本'}${p.defaultFrom === 'caller.city' ? '，默认办公城市' : p.default !== undefined ? `，默认 ${p.default}` : ''}${p.required ? '，必填' : ''}）`).join('、')
     : '无';
-  const steps = c.steps.map((s, i) => `${i + 1}. ${stepLabel(s.kind)}${s.kind !== 'sql' && s.network ? '，需要联网' : ''}`).join('\n');
+  const steps = c.steps.map((s, i) => `${i + 1}. ${stepLabel(s.kind)}${s.network ? '，可访问外网' : ''}${s.services?.length ? `，以执行人身份调用：${s.services.join('、')}（不能访问外网）` : ''}`).join('\n');
   return [
     `**名称**：${sanitizeMarkdown(c.name, 40)}`,
     `**说明**：${sanitizeMarkdown(c.description || '（无）', 200)}`,
@@ -59,11 +59,11 @@ function specSummary(c: CommandRow): string {
 
 const FENCE = '`'.repeat(3);
 
-/** Full code / SQL of every step, so reviewers see exactly what will run. */
+/** Full code of every step, so reviewers see exactly what will run. */
 function codePanels(c: CommandRow): unknown[] {
   return c.steps.map((s, i) => {
-    const body = s.kind === 'sql' ? s.sql : s.code;
-    const lang = s.kind === 'sql' ? 'sql' : 'python';
+    const body = s.code;
+    const lang = 'python';
     const shown = body.length > 12000 ? body.slice(0, 12000) + '\n# ……（超过 12000 字符，完整内容见网站）' : body;
     return {
       tag: 'collapsible_panel',
@@ -123,6 +123,7 @@ export class Flow {
   reviewers: string[] = [];
   /** Only admins may approve commands containing privileged steps. */
   isAdmin: (unionId: string) => boolean = () => false;
+  signer?: import('./identity.ts').Signer;
 
   constructor(client: lark.Client, store: Store, reviewerEmails: string[]) {
     this.client = client;

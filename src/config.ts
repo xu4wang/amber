@@ -11,6 +11,9 @@ export interface AmberConfig {
   reviewers: string[];
   /** Admins: emails (resolved to union_id at runtime) or union_ids ("on_..."). Admins change command scope by chatting with Amber. */
   admins: string[];
+  /** Local services steps may call with an execution identity token (D27). */
+  services: Record<string, { audience: string; tcpPort?: number; unixSocket?: string }>;
+  configDir: string;
 }
 
 function parseEnvFile(path: string): Record<string, string> {
@@ -41,5 +44,7 @@ export function loadConfig(): AmberConfig {
     dataDir,
     reviewers: Array.isArray(fileCfg.reviewers) ? fileCfg.reviewers : [],
     admins: Array.isArray(fileCfg.admins) ? fileCfg.admins : [],
+    services: fileCfg.services && typeof fileCfg.services === 'object' ? fileCfg.services : {},
+    configDir,
   };
 }

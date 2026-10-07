@@ -5,6 +5,7 @@ import { visibleCommands, findVisible, runCommand, AmberError } from './engine.t
 import { listCard, formCard, runningCard, resultCard, errorCard, infoCard } from './cards.ts';
 import type { AmberConfig } from './config.ts';
 import { Flow } from './flow.ts';
+import { Signer } from './identity.ts';
 
 function log(...a: unknown[]): void {
   console.log(new Date().toISOString(), ...a);
@@ -29,13 +30,16 @@ export class AmberBot {
   private cfg: AmberConfig;
   private adminUnionIds = new Set<string>();
   flow: Flow;
+  signer: Signer;
 
   constructor(cfg: AmberConfig, store: Store) {
     this.cfg = cfg;
     this.store = store;
     this.client = new lark.Client({ appId: cfg.appId, appSecret: cfg.appSecret });
     this.ws = new lark.WSClient({ appId: cfg.appId, appSecret: cfg.appSecret, loggerLevel: lark.LoggerLevel.warn });
+    this.signer = new Signer(cfg.configDir);
     this.flow = new Flow(this.client, store, cfg.reviewers);
+    this.flow.signer = this.signer;
     this.flow.isAdmin = (u: string) => this.isAdmin(u);
   }
 
@@ -214,7 +218,7 @@ export class AmberBot {
 
   private async execute(cmd: CommandRow, raw: Record<string, string | undefined>, caller: Caller): Promise<object> {
     try {
-      const r = await runCommand(this.store, cmd, raw, caller, { city: () => this.cityOf(caller.unionId) });
+      const r = await runCommand(this.store, cmd, raw, caller, { city: () => this.cityOf(caller.unionId), signer: this.signer });
       if (!r.ok) return errorCard(cmd.name, `执行失败：${r.error}`, cmd.id);
       return resultCard(cmd.name, caller.openId, r.blocks, r.runId, r.elapsedMs, cmd.id);
     } catch (e) {
@@ -265,14 +269,14 @@ export class AmberBot {
         this.flow.checkClaimer(String(value.c), caller);
         setTimeout(async () => {
           let card: object;
-          try { card = await this.flow.onClaimAction('claim_try', String(value.c), caller, { city: () => this.cityOf(caller.unionId) }); }
+          try { card = await this.flow.onClaimAction('claim_try', String(value.c), caller, { city: () => this.cityOf(caller.unionId), signer: this.signer }); }
           catch (e) { card = errorCard('Amber', e instanceof AmberError ? e.message : '试运行出错'); }
           if (messageId) await this.patch(messageId, card);
         }, 300);
         return { toast: { type: 'info', content: '试运行中，结果会更新在这张卡片上' } };
       }
       if (typeof value.a === 'string' && value.a.startsWith('claim_')) {
-        return raw(await this.flow.onClaimAction(value.a, String(value.c), caller, { city: () => this.cityOf(caller.unionId) }));
+        return raw(await this.flow.onClaimAction(value.a, String(value.c), caller, { city: () => this.cityOf(caller.unionId), signer: this.signer }));
       }
       if (value.a === 'review_ok' || value.a === 'review_no') {
         const reason = String(d.action?.form_value?.reason ?? '');

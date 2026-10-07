@@ -1,6 +1,7 @@
 import type { Store, CommandRow, ParamDef } from './db.ts';
 import { computeSpecHash } from './db.ts';
-import { runStep } from './runner.ts';
+import { runStep, serviceDef } from './runner.ts';
+import type { Signer } from './identity.ts';
 
 export interface Caller {
   unionId: string;
@@ -49,7 +50,7 @@ export function findVisible(store: Store, caller: Caller, idOrName: string): Com
   return c;
 }
 
-export interface CallerFacts { city?: () => Promise<string | undefined> }
+export interface CallerFacts { city?: () => Promise<string | undefined>; signer?: Signer }
 
 export async function validateArgs(params: ParamDef[], raw: Record<string, string | undefined>, facts: CallerFacts = {}): Promise<Record<string, string>> {
   const out: Record<string, string> = {};
@@ -90,7 +91,15 @@ export async function runCommand(store: Store, cmd: CommandRow, rawArgs: Record<
   store.audit(caller.unionId, 'run.start', { runId, commandId: cmd.id, name: cmd.name, channel: caller.channel, chatId: caller.chatId });
   const blocks: Block[] = [];
   for (const step of cmd.steps) {
-    const r = await runStep(step, { params: args, caller: { unionId: caller.unionId, chatId: caller.chatId, channel: caller.channel, city }, runId });
+    const services: Record<string, { token: string; tcpPort?: number; unixSocket?: string }> = {};
+    for (const name of step.services ?? []) {
+      const d = serviceDef(name);
+      if (!d || !facts.signer) continue;
+      const token = facts.signer.issue({ aud: d.audience, sub: caller.unionId, cmd: cmd.id, rev: cmd.specHash, run: runId, chat: caller.chatId, channel: opts.trial ? `${caller.channel}.trial` : caller.channel });
+      store.audit(caller.unionId, 'identity.issue', { runId, service: name, aud: d.audience });
+      services[name] = { token, ...(d.tcpPort ? { tcpPort: d.tcpPort } : {}), ...(d.unixSocket ? { unixSocket: d.unixSocket } : {}) };
+    }
+    const r = await runStep(step, { params: args, caller: { unionId: caller.unionId, chatId: caller.chatId, channel: caller.channel, city }, runId, ...(Object.keys(services).length ? { services } : {}) });
     if (!r.ok) {
       store.finishRun(runId, 'failed', null, r.error ?? 'failed');
       store.audit(caller.unionId, 'run.failed', { runId, error: r.error });

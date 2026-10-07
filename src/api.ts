@@ -19,12 +19,14 @@ function same(a: string, b: string): boolean {
   return x.length === y.length && timingSafeEqual(x, y);
 }
 
-export function startApi(port: number, token: string, flow: Flow): void {
+export function startApi(port: number, token: string, flow: Flow, jwks: () => object): void {
   const server = createServer((req, res) => {
     const reply = (status: number, body: unknown) => {
       res.writeHead(status, { 'content-type': 'application/json; charset=utf-8' });
       res.end(JSON.stringify(body));
     };
+    // Public: services verifying Amber's execution identity tokens fetch the key set here.
+    if (req.method === 'GET' && req.url === '/v1/keys') return reply(200, jwks());
     const auth = String(req.headers.authorization ?? '').replace(/^Bearer\s+/i, '');
     if (!same(auth, token)) return reply(401, { error: 'unauthorized' });
     if (req.method === 'POST' && req.url === '/v1/drafts') {
