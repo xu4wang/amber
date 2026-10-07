@@ -7,7 +7,7 @@ import type { Caller } from './engine.ts';
 import { findVisible, runCommand, validateArgs, AmberError } from './engine.ts';
 import { validateRule, nextRun, describeRule, formatAt } from './schedule-rule.ts';
 import type { Rule } from './schedule-rule.ts';
-import { scheduleResultCard, errorCard, scheduleListCard } from './cards.ts';
+import { scheduleResultCard, errorCard, scheduleListCard, rebindCard, closedCard } from './cards.ts';
 import type { ScheduleView } from './cards.ts';
 import type { Deps } from './agent.ts';
 
@@ -161,6 +161,42 @@ export class Scheduler {
     this.store.audit(creator.unionId, 'schedule.create', { id: s.id, commandId: cmd.id, specHash: cmd.specHash, rule, args: o.args, ...o.via });
     log('schedule created', s.id, cmd.name, describeRule(rule));
     return s;
+  }
+
+  /** A command got a new version: pause its schedules and ask each creator to confirm (D38). */
+  async onCommandReplaced(prev: CommandRow, next: CommandRow): Promise<void> {
+    for (const s of this.store.schedulesOfCommand(prev.id)) {
+      this.store.updateSchedule(s.id, { status: 'paused', pauseReason: '指令已更新为新版本，等待确认换绑' });
+      this.store.audit(null, 'schedule.pause', { id: s.id, reason: 'command_replaced', old: prev.id, new: next.id });
+      try {
+        await this.deps.send({ unionId: s.creatorUnionId }, rebindCard({ scheduleId: s.id, name: next.name, ruleText: describeRule(s.rule), oldHash: prev.specHash, newId: next.id, newHash: next.specHash, stillSchedulable: next.options.schedulable }));
+      } catch (e: any) { log('rebind card failed', s.id, e?.response?.data?.code ?? e?.message); }
+    }
+  }
+
+  /** A command was taken offline: pause its schedules and tell each creator. */
+  async onCommandRetired(c: CommandRow, by: string): Promise<number> {
+    const list = this.store.schedulesOfCommand(c.id);
+    for (const s of list) {
+      if (s.status === 'active') this.pause(s, '指令已下线');
+      await this.notifyCreator(s, `定时任务已暂停：${c.name}`, `指令「${c.name}」已被${by}下线，定时任务 ${s.id}（${describeRule(s.rule)}）已暂停。`);
+    }
+    return list.length;
+  }
+
+  /** Creator confirmed: run the schedule on the new version from now on. Same args, same time rule. */
+  rebind(s: ScheduleRow, newId: string, actor: Caller): object {
+    if (!this.canManage(s, actor.unionId)) throw new AmberError('forbidden', '只有定时任务的创建人或管理员可以操作');
+    const next = this.store.getCommand(newId);
+    if (!next || next.status !== 'active') throw new AmberError('changed', '新版本已不可用');
+    if (!next.options.schedulable) throw new AmberError('not_schedulable', '新版本不允许定时执行');
+    // The creator must still be allowed to use it where the schedule lives.
+    findVisible(this.store, { unionId: s.creatorUnionId, chatId: s.chatId, chatType: s.chatType, channel: 'schedule' }, next.id);
+    this.store.rebindSchedule(s.id, next.id, next.specHash);
+    this.store.updateSchedule(s.id, { status: 'active', pauseReason: null, failCount: 0, nextRunAt: nextRun(s.rule, Date.now()) });
+    this.store.audit(actor.unionId, 'schedule.rebind', { id: s.id, from: s.commandId, to: next.id, specHash: next.specHash });
+    const n = this.store.getSchedule(s.id)!;
+    return closedCard(`已换绑到新版本：${next.name}`, 'green', `定时任务 ${s.id}：${describeRule(n.rule)}，下次 ${formatAt(n.nextRunAt, n.rule.tz)}，现在运行新版本 ${next.specHash.slice(0, 8)}。`);
   }
 
   canManage(s: ScheduleRow, unionId: string): boolean {

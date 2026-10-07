@@ -12,6 +12,7 @@ import type { FeishuReview } from './feishu-review.ts';
 import type { Caller, CallerFacts, Block } from './engine.ts';
 import { runCommand, AmberError } from './engine.ts';
 import { sanitizeMarkdown, person, renderBlocks } from './cards.ts';
+import { lineDiff } from './diff.ts';
 
 function log(...a: unknown[]): void { console.log(new Date().toISOString(), ...a); }
 
@@ -76,10 +77,37 @@ function codePanels(c: CommandRow): unknown[] {
   }];
 }
 
-export function claimCard(c: CommandRow, trial?: { by?: string; blocks?: Block[]; error?: string }, submittedBy?: string): object {
+/** What changed compared with the version this draft replaces (D38). */
+function changePanels(c: CommandRow, prev: CommandRow): unknown[] {
+  const changed: string[] = [];
+  if (JSON.stringify(prev.params) !== JSON.stringify(c.params)) changed.push('参数');
+  if (JSON.stringify(prev.options) !== JSON.stringify(c.options)) changed.push('选项');
+  if (prev.description !== c.description) changed.push('说明');
+  const { code: _a, ...prevRun } = prev.script; const { code: _b, ...nextRun } = c.script;
+  if (JSON.stringify(prevRun) !== JSON.stringify(nextRun)) changed.push('运行方式（联网、服务、超时）');
+  const d = lineDiff(prev.script.code, c.script.code);
+  const codeLine = d === null ? '代码改动太大，无法逐行比较，请看完整代码' : d.stat.added || d.stat.removed ? `代码：新增 ${d.stat.added} 行，删除 ${d.stat.removed} 行` : '代码没有变化';
+  const els: unknown[] = [{ tag: 'markdown', content: `**与当前版本的差异**：${changed.length ? changed.join('、') + '有变化；' : ''}${codeLine}` }];
+  if (d && d.text) {
+    const shown = d.text.length > 8000 ? d.text.slice(0, 8000) + '\n……（差异太长，完整内容见文档）' : d.text;
+    els.push({
+      tag: 'collapsible_panel', expanded: true,
+      header: { title: { tag: 'markdown', content: '代码差异（- 删除，+ 新增）' } },
+      elements: [{ tag: 'markdown', content: FENCE + 'diff\n' + shown.split(FENCE).join('``\u200b`') + '\n' + FENCE }],
+    });
+  }
+  return els;
+}
+
+export function claimCard(c: CommandRow, trial?: { by?: string; blocks?: Block[]; error?: string }, submittedBy?: string, prev?: CommandRow): object {
+  const who = submittedBy ? `**${sanitizeMarkdown(submittedBy, 80)}**` : 'agent';
+  const intro = prev
+    ? `${who} 提交了「${sanitizeMarkdown(c.name, 40)}」的**新版本**，等待认领。审核通过后会替换当前版本（${prev.specHash.slice(0, 8)}）。只有原创建人或管理员可以认领。\n<font color="grey">请确认这是你让 agent 做的；不认识的草稿直接点「丢弃」。</font>`
+    : `${who} 提交了一条新指令，等待认领。认领人会成为这条指令的创建人，提交后由审核人审核。\n<font color="grey">请确认这是你让 agent 做的；不认识的草稿直接点「丢弃」。</font>`;
   const els: unknown[] = [
-    { tag: 'markdown', content: `${submittedBy ? `**${sanitizeMarkdown(submittedBy, 80)}**` : 'agent'} 提交了一条新指令，等待认领。认领人会成为这条指令的创建人，提交后由审核人审核。\n<font color="grey">请确认这是你让 agent 做的；不认识的草稿直接点「丢弃」。</font>` },
+    { tag: 'markdown', content: intro },
     { tag: 'markdown', content: specSummary(c) },
+    ...(prev ? changePanels(c, prev) : []),
     ...codePanels(c),
   ];
   if (trial?.error) els.push({ tag: 'markdown', content: `❌ 试运行失败：${sanitizeMarkdown(trial.error, 300)}` });
@@ -107,7 +135,7 @@ export function claimCard(c: CommandRow, trial?: { by?: string; blocks?: Block[]
   if (trial?.blocks) buttons.push(btn('提交审核', { a: 'claim_submit', c: c.id }, 'primary'));
   buttons.push(btn('丢弃', { a: 'claim_drop', c: c.id }, 'danger'));
   els.push({ tag: 'column_set', flex_mode: 'flow', columns: buttons.map(b => ({ tag: 'column', width: 'auto', elements: [b] })) });
-  return shell(`待认领：${c.name}`, 'orange', els);
+  return shell(prev ? `待认领（新版本）：${c.name}` : `待认领：${c.name}`, 'orange', els);
 }
 
 export function reviewCard(c: CommandRow, creatorOpenIdForReviewer: string | undefined, state: { approved: number; total: number; mine?: string }): object {
@@ -213,7 +241,9 @@ export class Flow {
     if (!d.name || d.name.length > 40 || /\s/.test(d.name)) throw new AmberError('bad_name', '名称不能为空、不能有空格、最多 40 个字');
     if ((d as any).steps !== undefined) throw new AmberError('bad_script', '指令不再有「步骤」：请提交一段 script（参数 + 一段脚本）');
     try { d.script = validateScript(d.script); } catch (e) { throw new AmberError('bad_script', (e as Error).message); }
-    if (this.store.nameTaken(d.chatId, d.name)) throw new AmberError('name_taken', `这里已经有一条叫「${d.name}」的指令（生效中或待审核）`);
+    if (this.store.nameInProgress(d.chatId, d.name)) throw new AmberError('name_taken', `「${d.name}」已有一个版本在认领或审核中，请等它结束（或在认领卡上丢弃）后再提交`);
+    // Same name as an active command here = a new version of it (D38).
+    const prev = this.store.activeByName(d.chatId, d.name);
     if ((d as any).sideEffect !== undefined) throw new AmberError('bad_options', '已不区分读写：请用 options.confirm（执行前确认）/ options.schedulable（允许定时）');
     const options = normalizeOptions(d.options);
     let expectedClaimer: string | undefined;
@@ -222,6 +252,7 @@ export class Flow {
       const { ids } = await this.resolveEmails([d.claimer]);
       if (!ids[0]) throw new AmberError('claimer_unresolved', `找不到认领人 ${d.claimer}`);
       expectedClaimer = ids[0];
+      if (prev && prev.ownerUnionId !== expectedClaimer && !this.isAdmin(expectedClaimer)) throw new AmberError('not_owner', `「${d.name}」的新版本只能由原创建人或管理员认领`);
       // Anti-spam: an agent picks the claimer for p2p drafts, so cap how many claim cards one person can receive.
       if (this.store.recentDraftsFor(expectedClaimer, 3600_000) >= 5) throw new AmberError('rate_limited', '这位认领人一小时内已收到 5 张认领卡，请稍后再提交');
     }
@@ -229,14 +260,14 @@ export class Flow {
       scopeType: d.chatType, chatId: d.chatId, ownerUnionId: expectedClaimer ?? '', name: d.name, description: d.description ?? '',
       params: d.params ?? [], script: d.script, options, status: 'draft',
     });
-    this.store.setMeta(row.id, { expectedClaimer: expectedClaimer ?? null, originMessageId: d.originMessageId ?? null, submittedBy: d.submittedBy ?? null });
-    this.store.audit(null, 'draft.submit', { id: row.id, name: row.name, chatId: row.chatId, chatType: d.chatType, submittedBy: d.submittedBy, machine: d.machine ?? null, specHash: row.specHash });
+    this.store.setMeta(row.id, { expectedClaimer: expectedClaimer ?? null, originMessageId: d.originMessageId ?? null, submittedBy: d.submittedBy ?? null, replaces: prev?.id ?? null });
+    this.store.audit(null, 'draft.submit', { id: row.id, name: row.name, chatId: row.chatId, chatType: d.chatType, submittedBy: d.submittedBy, machine: d.machine ?? null, specHash: row.specHash, replaces: prev?.id ?? null });
     // Group: claim card in the group (only members can click). p2p: Amber can't enter the agent's DM, so the claim card goes to the claimer's DM with Amber.
     let claimMessageId: string | undefined;
     try {
       claimMessageId = d.chatType === 'p2p'
-        ? await this.send({ unionId: expectedClaimer }, claimCard(row, undefined, d.submittedBy))
-        : await this.send(d.originMessageId ? { replyTo: d.originMessageId, inThread: !!d.inThread } : { chatId: d.chatId }, claimCard(row, undefined, d.submittedBy));
+        ? await this.send({ unionId: expectedClaimer }, claimCard(row, undefined, d.submittedBy, prev))
+        : await this.send(d.originMessageId ? { replyTo: d.originMessageId, inThread: !!d.inThread } : { chatId: d.chatId }, claimCard(row, undefined, d.submittedBy, prev));
     } catch (e: any) {
       const code = e?.response?.data?.code;
       this.store.setStatus(row.id, 'rejected');
@@ -269,11 +300,10 @@ export class Flow {
         return;
       }
       for (const o of approved) this.store.recordReview(c.id, c.specHash, o, 'approve', null);
-      this.store.setStatus(c.id, 'active');
-      this.store.audit(null, 'command.active', { id: c.id, specHash: c.specHash, via: 'feishu_approval', instanceCode });
+      const replaced = await this.activate(c, { via: 'feishu_approval', instanceCode });
       const where = c.scopeType === 'p2p' ? '在你和 Amber 的私聊里' : '在本群 @Amber';
       if (meta.claimMessageId) await this.patch(meta.claimMessageId, shell(`已生效：${c.name}`, 'green', [
-        { tag: 'markdown', content: `✅ 飞书审批已通过（${approved.size} 位审核人全部同意），指令「${sanitizeMarkdown(c.name, 40)}」现已生效。${where}发「${sanitizeMarkdown(c.name, 40)}」即可使用。${rv.docUrl ? `\n\n[查看代码文档](${rv.docUrl})` : ''}` },
+        { tag: 'markdown', content: `✅ 飞书审批已通过（${approved.size} 位审核人全部同意），指令「${sanitizeMarkdown(c.name, 40)}」现已生效${replaced ? `，已替换旧版本（${replaced.specHash.slice(0, 8)}）` : ''}。${where}发「${sanitizeMarkdown(c.name, 40)}」即可使用。${rv.docUrl ? `\n\n[查看代码文档](${rv.docUrl})` : ''}` },
       ]));
       await note(`**${new Date().toISOString().slice(0, 16).replace('T', ' ')} UTC：飞书审批通过，指令已生效。**`);
     } else if (inst.status === 'REJECTED' || inst.status === 'CANCELED' || inst.status === 'DELETED') {
@@ -292,6 +322,39 @@ export class Flow {
     const meta = this.store.getMeta(c.id);
     if (meta.expectedClaimer && meta.expectedClaimer !== caller.unionId) throw new AmberError('not_claimer', '只有指定的认领人可以操作');
     if (c.scopeType === 'group' && caller.chatId !== c.chatId) throw new AmberError('wrong_chat', '只能在草稿所属的群里认领');
+    this.checkOwnerForNewVersion(c, caller);
+  }
+
+  /** The active version this draft replaces, if it is still active. */
+  prevOf(id: string): CommandRow | undefined {
+    const r = this.store.getMeta(id).replaces;
+    const p = r ? this.store.getCommand(r) : undefined;
+    return p && p.status === 'active' ? p : undefined;
+  }
+
+  /** A new version takes over someone's command: only its creator (or an admin) may claim it. */
+  private checkOwnerForNewVersion(c: CommandRow, caller: Caller): void {
+    const prev = this.prevOf(c.id);
+    if (prev && prev.ownerUnionId !== caller.unionId && !this.isAdmin(caller.unionId)) {
+      throw new AmberError('not_owner', `这是「${c.name}」的新版本，只有原创建人或管理员可以认领`);
+    }
+  }
+
+  /** Called after a version is activated: retire the version it replaced and hand over (D38). */
+  onReplaced: (prev: CommandRow, next: CommandRow) => Promise<void> = async () => {};
+
+  private async activate(c: CommandRow, via: Record<string, unknown>): Promise<CommandRow | undefined> {
+    const prev = this.prevOf(c.id);
+    if (prev) {
+      // Retire first: only one active command per name per chat.
+      this.store.setStatus(prev.id, 'retired');
+      if (prev.global) this.store.setGlobal(c.id, true);
+      this.store.audit(null, 'command.replace', { old: prev.id, oldSpec: prev.specHash, new: c.id, newSpec: c.specHash });
+    }
+    this.store.setStatus(c.id, 'active');
+    this.store.audit(null, 'command.active', { id: c.id, specHash: c.specHash, ...via });
+    if (prev) await this.onReplaced(prev, this.store.getCommand(c.id)!).catch(e => log('onReplaced failed', (e as Error).message));
+    return prev;
   }
 
   /** Claim-card actions. `caller.chatId` is the chat where the card was clicked. */
@@ -306,14 +369,15 @@ export class Flow {
       this.store.audit(caller.unionId, 'draft.drop', { id: c.id });
       return shell(`已丢弃：${c.name}`, 'grey', [{ tag: 'markdown', content: `由 ${person(caller.openId)} 丢弃。` }]);
     }
+    if (action !== 'claim_drop') this.checkOwnerForNewVersion(c, caller);
     if (action === 'claim_try') {
       try {
         const r = await runCommand(this.store, c, form, caller, facts, { trial: true });
-        if (!r.ok) return claimCard(c, { error: r.error }, meta.submittedBy);
+        if (!r.ok) return claimCard(c, { error: r.error }, meta.submittedBy, this.prevOf(c.id));
         this.store.setMeta(c.id, { trialBy: caller.unionId });
-        return claimCard(c, { by: caller.openId, blocks: r.blocks }, meta.submittedBy);
+        return claimCard(c, { by: caller.openId, blocks: r.blocks }, meta.submittedBy, this.prevOf(c.id));
       } catch (e) {
-        return claimCard(c, { error: e instanceof AmberError ? e.message : (e as Error).message }, meta.submittedBy);
+        return claimCard(c, { error: e instanceof AmberError ? e.message : (e as Error).message }, meta.submittedBy, this.prevOf(c.id));
       }
     }
     if (action === 'claim_submit') {
@@ -329,8 +393,8 @@ export class Flow {
         if (this.reviewerOpenIds.length !== this.reviewers.length) throw new AmberError('no_reviewers', '审核人名单无法解析成飞书账号，暂时不能提交审核');
         const creator = (await this.nameOf(caller.unionId)) ?? '认领人';
         try {
-          const doc = await this.review.createDoc(fresh, { creator, submittedBy: meta.submittedBy, trial: this.store.lastTrialResult(c.id) });
-          const instance = await this.review.startApproval(fresh, caller.openId, this.reviewerOpenIds, doc.url, creator);
+          const doc = await this.review.createDoc(fresh, { creator, submittedBy: meta.submittedBy, trial: this.store.lastTrialResult(c.id), prev: this.prevOf(c.id) });
+          const instance = await this.review.startApproval(fresh, caller.openId, this.reviewerOpenIds, doc.url, creator, this.prevOf(c.id));
           this.store.setReview(c.id, { instance, docUrl: doc.url, docId: doc.docId });
           this.store.audit(caller.unionId, 'review.feishu_started', { id: c.id, instance, doc: doc.url });
           log('feishu review started', c.id, instance);
@@ -374,8 +438,7 @@ export class Flow {
       this.store.setStatus(c.id, 'rejected');
       if (meta.claimMessageId) await this.patch(meta.claimMessageId, shell(`已驳回：${c.name}`, 'red', [{ tag: 'markdown', content: `审核人驳回：${sanitizeMarkdown(reason.trim(), 300)}` }]));
     } else if (approved >= this.reviewers.length) {
-      this.store.setStatus(c.id, 'active');
-      this.store.audit(null, 'command.active', { id: c.id, specHash: c.specHash });
+      await this.activate(c, { via: 'card_review' });
       const where = c.scopeType === 'p2p' ? '在你和 Amber 的私聊里' : '在本群 @Amber';
       if (meta.claimMessageId) await this.patch(meta.claimMessageId, shell(`已生效：${c.name}`, 'green', [
         { tag: 'markdown', content: `✅ 指令「${sanitizeMarkdown(c.name, 40)}」已通过全部 ${this.reviewers.length} 位审核人的审核，现已生效。${where}发「${sanitizeMarkdown(c.name, 40)}」即可使用。` },

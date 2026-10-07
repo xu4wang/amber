@@ -23,5 +23,7 @@ startWeb(Number(process.env.AMBER_WEB_PORT ?? 7342), store, {
   signer: bot.signer,
   scheduler: bot.scheduler,
   origin: new URL(cfg.webBaseUrl).origin,
+  retire: (id, actor, by) => bot.retire(id, actor, by),
+  isAdmin: u => bot.isAdminPublic(u),
 });
 console.log(new Date().toISOString(), 'amber started; data dir', cfg.dataDir);

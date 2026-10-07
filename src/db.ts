@@ -102,7 +102,9 @@ export class Store {
         spec_hash TEXT NOT NULL,
         created_at INTEGER NOT NULL
       );
-      CREATE UNIQUE INDEX IF NOT EXISTS commands_scope_name ON commands(chat_id, name) WHERE status IN ('active','pending','draft');
+      -- One active command per name per chat. A new version (draft/pending) may exist next to it (D38).
+      DROP INDEX IF EXISTS commands_scope_name;
+      CREATE UNIQUE INDEX IF NOT EXISTS commands_active_name ON commands(chat_id, name) WHERE status = 'active';
       CREATE TABLE IF NOT EXISTS runs (
         id TEXT PRIMARY KEY,
         command_id TEXT NOT NULL,
@@ -140,6 +142,7 @@ export class Store {
       ['approval_instance', 'TEXT'],     // Feishu approval instance code for the pending revision
       ['review_doc_url', 'TEXT'],        // wiki doc with the full code of the pending revision
       ['review_doc_id', 'TEXT'],
+      ['replaces', 'TEXT'],              // id of the active command this draft is a new version of (D38)
     ] as const) if (!cols.includes(col)) this.db.exec(`ALTER TABLE commands ADD COLUMN ${col} ${ddl}`);
     this.db.exec(`CREATE TABLE IF NOT EXISTS reviews (
       command_id TEXT NOT NULL,
@@ -306,9 +309,10 @@ export class Store {
     return (this.db.prepare('SELECT * FROM commands ORDER BY created_at').all() as Record<string, unknown>[]).map(r => this.toRow(r));
   }
 
-  getMeta(id: string): { expectedClaimer?: string; trialBy?: string; claimMessageId?: string; originMessageId?: string; ownerOpenId?: string; submittedBy?: string } {
-    const r = this.db.prepare('SELECT expected_claimer, trial_by, claim_message_id, origin_message_id, owner_open_id, submitted_by FROM commands WHERE id = ?').get(id) as Record<string, unknown> | undefined;
+  getMeta(id: string): { expectedClaimer?: string; trialBy?: string; claimMessageId?: string; originMessageId?: string; ownerOpenId?: string; submittedBy?: string; replaces?: string } {
+    const r = this.db.prepare('SELECT expected_claimer, trial_by, claim_message_id, origin_message_id, owner_open_id, submitted_by, replaces FROM commands WHERE id = ?').get(id) as Record<string, unknown> | undefined;
     return {
+      replaces: (r?.replaces as string) || undefined,
       expectedClaimer: (r?.expected_claimer as string) || undefined,
       trialBy: (r?.trial_by as string) || undefined,
       claimMessageId: (r?.claim_message_id as string) || undefined,
@@ -318,8 +322,8 @@ export class Store {
     };
   }
 
-  setMeta(id: string, m: { expectedClaimer?: string | null; trialBy?: string | null; claimMessageId?: string | null; originMessageId?: string | null; submittedBy?: string | null; ownerUnionId?: string; ownerOpenId?: string | null }): void {
-    const map: Record<string, string> = { expectedClaimer: 'expected_claimer', trialBy: 'trial_by', claimMessageId: 'claim_message_id', originMessageId: 'origin_message_id', submittedBy: 'submitted_by', ownerUnionId: 'owner_union_id', ownerOpenId: 'owner_open_id' };
+  setMeta(id: string, m: { expectedClaimer?: string | null; trialBy?: string | null; claimMessageId?: string | null; originMessageId?: string | null; submittedBy?: string | null; ownerUnionId?: string; ownerOpenId?: string | null; replaces?: string | null }): void {
+    const map: Record<string, string> = { replaces: 'replaces', expectedClaimer: 'expected_claimer', trialBy: 'trial_by', claimMessageId: 'claim_message_id', originMessageId: 'origin_message_id', submittedBy: 'submitted_by', ownerUnionId: 'owner_union_id', ownerOpenId: 'owner_open_id' };
     for (const [k, v] of Object.entries(m)) {
       if (v === undefined) continue;
       this.db.prepare(`UPDATE commands SET ${map[k]} = ? WHERE id = ?`).run(v, id);
@@ -356,8 +360,27 @@ export class Store {
     return Number(r.n);
   }
 
-  nameTaken(chatId: string, name: string): boolean {
-    return !!this.db.prepare(`SELECT 1 FROM commands WHERE chat_id = ? AND name = ? AND status IN ('active','pending','draft')`).get(chatId, name);
+  /** A draft or a revision under review with this name (only one version may be in progress at a time). */
+  nameInProgress(chatId: string, name: string): boolean {
+    return !!this.db.prepare(`SELECT 1 FROM commands WHERE chat_id = ? AND name = ? AND status IN ('pending','draft')`).get(chatId, name);
+  }
+
+  activeByName(chatId: string, name: string): CommandRow | undefined {
+    const r = this.db.prepare(`SELECT * FROM commands WHERE chat_id = ? AND name = ? AND status = 'active'`).get(chatId, name) as Record<string, unknown> | undefined;
+    return r ? this.toRow(r) : undefined;
+  }
+
+  /** Earlier versions: commands this one (transitively) replaced, newest first. */
+  versionsOf(id: string): CommandRow[] {
+    const out: CommandRow[] = [];
+    let cur = this.getMeta(id).replaces;
+    while (cur && out.length < 50) {
+      const c = this.getCommand(cur);
+      if (!c) break;
+      out.push(c);
+      cur = this.getMeta(cur).replaces;
+    }
+    return out;
   }
 
   recordReview(commandId: string, specHash: string, reviewer: string, decision: 'approve' | 'reject', reason: string | null): void {
@@ -477,6 +500,14 @@ export class Store {
 
   schedulesByCreator(unionId: string): ScheduleRow[] {
     return (this.db.prepare(`SELECT * FROM schedules WHERE creator_union_id = ? AND status != 'deleted' ORDER BY created_at`).all(unionId) as Record<string, unknown>[]).map(r => this.toSchedule(r));
+  }
+
+  schedulesOfCommand(commandId: string): ScheduleRow[] {
+    return (this.db.prepare(`SELECT * FROM schedules WHERE command_id = ? AND status != 'deleted' ORDER BY created_at`).all(commandId) as Record<string, unknown>[]).map(r => this.toSchedule(r));
+  }
+
+  rebindSchedule(id: string, commandId: string, specHash: string): void {
+    this.db.prepare('UPDATE schedules SET command_id = ?, spec_hash = ? WHERE id = ?').run(commandId, specHash, id);
   }
 
   allSchedules(): ScheduleRow[] {

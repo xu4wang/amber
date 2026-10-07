@@ -129,6 +129,8 @@ details.node details.node > summary { font-weight: 500; color: var(--muted); }
 .hljs-subst { color: var(--ink); }
 .kv { display: grid; grid-template-columns: 110px 1fr; gap: 4px 12px; font-size: 14px; margin-bottom: 12px; }
 .kv dt { color: var(--muted); } .kv dd { margin: 0; word-break: break-all; }
+.manage { margin-top: 28px; padding-top: 12px; border-top: 1px dashed var(--line); }
+.manage h3 { margin: 0 0 6px; }
 .welcome { color: var(--muted); max-width: 560px; margin-top: 40px; }
 .welcome h2 { color: var(--ink); font-size: 20px; }
 .back { display: none; }
@@ -350,7 +352,10 @@ function cmdPane(key, { c, scope }) {
       <form data-form="code" style="display:none"><div id="src" class="note">读取中……</div></form>
     </div>
     <div class="result-area"><h3 class="note" style="margin:0 0 8px">执行结果</h3>
-    <div class="output wait" id="out">${last ? '' : '还没有在这里执行过。'}</div></div>`;
+    <div class="output wait" id="out">${last ? '' : '还没有在这里执行过。'}</div></div>
+    ${c.canManage ? `<div class="manage"><h3 class="note">管理</h3>
+      <p class="note">要修改这条指令，跟你的 agent 说改什么，它会提交新版本，审核通过后自动替换。不再需要时可以下线：下线后不能再执行，它的定时任务会暂停。</p>
+      <button class="btn" data-retire="1">下线这条指令</button></div>` : ''}`;
   if (last) showOutput(document.getElementById('out'), last.r, last.meta);
 }
 
@@ -404,11 +409,12 @@ async function loadSource() {
   el.innerHTML = `<dl class="kv">
       <dt>运行方式</dt><dd>${esc(how)}，${esc(net)}，超时 ${sc.timeoutMs / 1000} 秒</dd>
       <dt>语言</dt><dd>${esc(sc.lang)}</dd>
-      <dt>版本</dt><dd><code>${esc(x.specHash)}</code></dd>
+      <dt>版本</dt><dd>第 ${x.history.length + 1} 版 · <code>${esc(x.specHash)}</code></dd>
       <dt>生效时间</dt><dd>${fmtTime(x.createdAt)}</dd>
       ${x.reviewDocUrl ? `<dt>审核文档</dt><dd><a href="${esc(x.reviewDocUrl)}" target="_blank" rel="noopener noreferrer">在飞书知识库查看</a></dd>` : ''}
     </dl>
     <div class="code"><pre class="gutter">${gutter}</pre><pre class="src"><code>${body}</code></pre></div>
+    ${x.history.length ? `<p class="note">历史版本：${x.history.map((v, i) => `第 ${x.history.length - i} 版 <code>${esc(v.specHash.slice(0, 8))}</code>（${fmtTime(v.createdAt)}${v.reviewDocUrl ? `，<a href="${esc(v.reviewDocUrl)}" target="_blank" rel="noopener noreferrer">审核文档</a>` : ''}）`).join('；')}</p>` : ''}
     <p class="note">这就是审核通过、实际运行的代码。版本是指令定义（名称、参数、代码、选项）的哈希，每次执行前都会重新核对。</p>`;
 }
 
@@ -490,6 +496,19 @@ document.addEventListener('click', async ev => {
     }
     doBtn.disabled = false;
     doBtn.textContent = text;
+    return;
+  }
+  const ret = ev.target.closest('[data-retire]');
+  if (ret) {
+    const { c, scope } = ITEMS.get(SEL);
+    if (!confirm(`确定下线「${c.name}」？下线后不能再执行，它的定时任务会暂停。`)) return;
+    ret.disabled = true;
+    const r = await post(`/web/api/commands/${encodeURIComponent(c.id)}/retire`, { scope, confirm: true });
+    if (!r.ok) { alert(r.message || r.error); ret.disabled = false; return; }
+    alert(`「${r.name}」已下线${r.schedules ? `，${r.schedules} 个定时任务已暂停` : ''}。`);
+    history.replaceState(null, '', '#');
+    await reload(null);
+    welcome();
     return;
   }
   const sch = ev.target.closest('[data-sch]');

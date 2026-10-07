@@ -37,6 +37,9 @@ export interface WebDeps {
   cityOf(unionId: string): Promise<string | undefined>;
   signer: Signer;
   scheduler: Scheduler;
+  /** Take a command offline (creator or admin only; schedules pause). */
+  retire(cmdId: string, actor: { unionId: string }, byLabel: string): Promise<{ name: string; schedules: number }>;
+  isAdmin(unionId: string): boolean;
   /** Origin of the site, e.g. http://amber.example.com — POSTs from anywhere else are refused. */
   origin: string;
 }
@@ -183,7 +186,8 @@ export function startWeb(port: number, store: Store, deps: WebDeps): void {
           const review = store.getReview(c.id);
           return json(res, 200, { ok: true, id: c.id, name: c.name, specHash: c.specHash, createdAt: c.createdAt,
             script: { kind: c.script.kind, lang: c.script.lang, network: !!c.script.network, services: c.script.services ?? [], timeoutMs: c.script.timeoutMs ?? 30000, code: c.script.code },
-            params: c.params, options: c.options, reviewDocUrl: review.docUrl ?? null });
+            params: c.params, options: c.options, reviewDocUrl: review.docUrl ?? null,
+            history: store.versionsOf(c.id).map(v => ({ id: v.id, specHash: v.specHash, createdAt: v.createdAt, reviewDocUrl: store.getReview(v.id).docUrl ?? null })) });
         }
         if (req.method !== 'POST') return json(res, 404, { ok: false, error: 'not_found' });
         // Cross-site request protection: JSON only (forces a CORS preflight, which is never granted) and same origin.
@@ -213,6 +217,12 @@ export function startWeb(port: number, store: Store, deps: WebDeps): void {
             args, rule: parseRule(String(body.at ?? ''), String(body.tz || defaultTz())), requestedBy: 'web', via: { via: 'web' } });
           return json(res, 200, { ok: true, scheduleId: sch.id, rule: describeRule(sch.rule), next: formatAt(sch.nextRunAt, sch.rule.tz) });
         }
+        if ((m = /^\/web\/api\/commands\/([A-Za-z0-9-]{1,40})\/retire$/.exec(url.pathname))) {
+          const t = await target(store, deps, who.unionId, String(body.scope ?? ''), m[1]);
+          if (body.confirm !== true) throw new AmberError('needs_confirm', '请确认后再下线');
+          const r = await deps.retire(t.cmd.id, { unionId: who.unionId }, (await deps.nameOf(who.unionId)) ?? '创建人');
+          return json(res, 200, { ok: true, ...r });
+        }
         if ((m = /^\/web\/api\/schedules\/([A-Za-z0-9-]{1,40})\/(pause|resume|delete|run)$/.exec(url.pathname))) {
           const sch = store.getSchedule(m[1]);
           if (!sch || !deps.scheduler.canManage(sch, who.unionId)) return json(res, 404, { ok: false, error: 'not_found', message: '没有这个定时任务，或你不是它的创建人' });
@@ -238,8 +248,10 @@ export function startWeb(port: number, store: Store, deps: WebDeps): void {
   server.listen(port, '127.0.0.1', () => console.log(new Date().toISOString(), `web listening on 127.0.0.1:${port}`));
 }
 
-function cmdView(c: CommandRow) {
+function cmdView(c: CommandRow, viewer?: string, isAdmin?: (u: string) => boolean, store?: Store) {
   return {
+    canManage: !!viewer && (c.ownerUnionId === viewer || !!isAdmin?.(viewer)),
+    version: store ? store.versionsOf(c.id).length + 1 : 1,
     id: c.id, name: c.name, description: c.description, global: c.global, options: c.options,
     params: c.params.map(p => ({ name: p.name, label: p.label ?? p.name, type: p.type, required: !!p.required, default: p.default, fromCity: p.defaultFrom === 'caller.city' })),
   };
@@ -267,17 +279,17 @@ async function overview(store: Store, deps: WebDeps, unionId: string) {
     if (!m) continue;
     groups.push({
       chatId, name: (await deps.chatName(chatId)) ?? chatId,
-      commands: store.listActiveByChat(chatId).filter(c => c.scopeType === 'group').map(cmdView),
+      commands: store.listActiveByChat(chatId).filter(c => c.scopeType === 'group').map(c => cmdView(c, unionId, deps.isAdmin, store)),
       schedules: store.schedulesInChat(chatId).map(s => schView(store, s, unionId)),
     });
   }
   return {
     p2p: {
-      commands: store.listActiveP2pByOwner(unionId).map(cmdView),
+      commands: store.listActiveP2pByOwner(unionId).map(c => cmdView(c, unionId, deps.isAdmin, store)),
       schedules: store.schedulesByCreator(unionId).filter(s => s.chatType === 'p2p').map(s => schView(store, s, unionId)),
     },
     groups,
-    global: store.listActiveGlobal().map(cmdView),
+    global: store.listActiveGlobal().map(c => cmdView(c, unionId, deps.isAdmin, store)),
     membershipUnknown,
   };
 }

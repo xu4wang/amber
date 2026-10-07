@@ -3,6 +3,7 @@
 // truth: it re-reads the approval instance from the API before activating anything.
 import type * as lark from '@larksuiteoapi/node-sdk';
 import type { CommandRow } from './db.ts';
+import { lineDiff } from './diff.ts';
 
 function log(...a: unknown[]): void { console.log(new Date().toISOString(), ...a); }
 
@@ -13,7 +14,7 @@ export interface ReviewConfig {
 
 const FENCE = '`'.repeat(3);
 
-function docMarkdown(c: CommandRow, opts: { creator: string; submittedBy?: string; trial?: string }): string {
+function docMarkdown(c: CommandRow, opts: { creator: string; submittedBy?: string; trial?: string; prev?: CommandRow }): string {
   const params = c.params.length
     ? ['| 参数 | 显示名 | 类型 | 默认值 | 必填 |', '|---|---|---|---|---|',
        ...c.params.map(p => `| ${p.name} | ${p.label ?? ''} | ${p.type === 'integer' ? '整数' : '文本'} | ${p.defaultFrom === 'caller.city' ? '执行人办公城市' + (p.default ? `（兜底 ${p.default}）` : '') : (p.default ?? '')} | ${p.required ? '是' : '否'} |`)].join('\n')
@@ -25,10 +26,19 @@ function docMarkdown(c: CommandRow, opts: { creator: string; submittedBy?: strin
   const trial = opts.trial
     ? `## 试运行结果\n\n由认领人试运行时的输出：\n\n${FENCE}text\n${opts.trial.slice(0, 20000).split(FENCE).join('``​`')}\n${FENCE}`
     : '';
+  let change = '';
+  if (opts.prev) {
+    const d = lineDiff(opts.prev.script.code, c.script.code);
+    const body = d === null ? '代码改动太大，无法逐行比较，请直接看下面的完整代码。'
+      : !d.text ? '代码没有变化（只改了参数、选项、说明或运行方式）。'
+      : `新增 ${d.stat.added} 行，删除 ${d.stat.removed} 行。\n\n${FENCE}diff\n${d.text.slice(0, 30000).split(FENCE).join('``\u200b`')}\n${FENCE}`;
+    change = `## 与当前版本的差异\n\n这是「${c.name}」的新版本，审核通过后替换当前版本 ${opts.prev.specHash.slice(0, 12)}。\n\n${body}`;
+  }
   return [
-    `# ${c.name}`,
+    `# ${c.name}${opts.prev ? '（新版本）' : ''}`,
     `**版本**：${c.specHash}`,
     `**范围**：${c.scopeType === 'p2p' ? '私聊（只有创建人）' : '群'}　**选项**：${c.options.confirm ? '执行前需要确认' : '直接执行'}，${c.options.schedulable ? '允许定时执行' : '不允许定时执行'}　**创建人**：${opts.creator}${opts.submittedBy ? `　**提交方**：${opts.submittedBy}` : ''}`,
+    change,
     `## 说明\n\n${c.description || '（无）'}`,
     `## 参数\n\n${params}`,
     code,
@@ -71,10 +81,10 @@ export class FeishuReview {
   }
 
   /** Creates the review doc in the wiki. Returns { url, docId }. */
-  async createDoc(c: CommandRow, opts: { creator: string; submittedBy?: string; trial?: string }): Promise<{ url: string; docId: string }> {
+  async createDoc(c: CommandRow, opts: { creator: string; submittedBy?: string; trial?: string; prev?: CommandRow }): Promise<{ url: string; docId: string }> {
     const w = this.cfg.wiki!;
     const r = await this.req('POST', `/open-apis/wiki/v2/spaces/${w.spaceId}/nodes`, {
-      obj_type: 'docx', node_type: 'origin', parent_node_token: w.parentNodeToken, title: `Amber 指令：${c.name}（${c.specHash.slice(0, 8)}）`,
+      obj_type: 'docx', node_type: 'origin', parent_node_token: w.parentNodeToken, title: `Amber 指令：${c.name}${opts.prev ? ' 新版本' : ''}（${c.specHash.slice(0, 8)}）`,
     });
     const node = r.data?.node;
     await this.appendMarkdown(node.obj_token, docMarkdown(c, opts));
@@ -82,10 +92,10 @@ export class FeishuReview {
   }
 
   /** Starts a 会签 approval with the given reviewers. Returns the instance code. */
-  async startApproval(c: CommandRow, initiatorOpenId: string, reviewerOpenIds: string[], docUrl: string, creatorLabel: string): Promise<string> {
+  async startApproval(c: CommandRow, initiatorOpenId: string, reviewerOpenIds: string[], docUrl: string, creatorLabel: string, prev?: CommandRow): Promise<string> {
     const a = this.cfg.approval!;
     const text = [
-      `指令：${c.name}`,
+      `指令：${c.name}${prev ? `（新版本，替换 ${prev.specHash.slice(0, 12)}）` : ''}`,
       `范围：${c.scopeType === 'p2p' ? '私聊' : '群'}　选项：${c.options.confirm ? '执行前需要确认' : '直接执行'}，${c.options.schedulable ? '允许定时执行' : '不允许定时执行'}`,
       `运行方式：${c.script.kind === 'privileged' ? '特权脚本' : '沙盒脚本'}`,
       `创建人：${creatorLabel}`,
@@ -96,7 +106,7 @@ export class FeishuReview {
     const r = await this.req('POST', '/open-apis/approval/v4/instances', {
       approval_code: a.code,
       // Show the command name in the approval list instead of only the definition name.
-      title: `Amber 指令：${c.name}`,
+      title: `Amber 指令：${c.name}${prev ? '（新版本）' : ''}`,
       title_display_method: 1,
       open_id: initiatorOpenId,
       form: JSON.stringify([{ id: a.formFieldId, type: 'textarea', value: text }]),

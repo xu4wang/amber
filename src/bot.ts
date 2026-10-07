@@ -63,7 +63,22 @@ export class AmberBot {
     this.agent = new AgentGate(store, deps);
     this.scheduler = new Scheduler(store, deps);
     this.agent.scheduler = this.scheduler;
+    this.flow.onReplaced = (prev, next) => this.scheduler.onCommandReplaced(prev, next);
   }
+
+  /** Take a command offline (D39). Only its creator or an admin. Its schedules pause. */
+  async retire(cmdId: string, actor: { unionId: string }, byLabel: string): Promise<{ name: string; schedules: number }> {
+    const c = this.store.getCommand(cmdId);
+    if (!c || c.status !== 'active') throw new AmberError('not_found', '指令不存在或已下线');
+    if (c.ownerUnionId !== actor.unionId && !this.isAdmin(actor.unionId)) throw new AmberError('forbidden', '只有指令的创建人或管理员可以下线');
+    this.store.setStatus(c.id, 'retired');
+    this.store.audit(actor.unionId, 'command.retire', { id: c.id, name: c.name, specHash: c.specHash });
+    log('command retired', c.id, c.name);
+    const schedules = await this.scheduler.onCommandRetired(c, byLabel);
+    return { name: c.name, schedules };
+  }
+
+  isAdminPublic(unionId: string): boolean { return this.isAdmin(unionId); }
 
   /** Email → ids as seen by Amber's app. */
   async resolveUser(email: string): Promise<{ unionId: string; openId?: string } | undefined> {
@@ -272,6 +287,16 @@ export class AmberBot {
       await this.webLogin(parts[0].toLowerCase(), caller, msg.message_id, inThread);
       return;
     }
+    if (parts.length === 2 && ['下线', 'retire'].includes(parts[0].toLowerCase())) {
+      try {
+        const cmd = findVisible(this.store, caller, parts[1]);
+        const r = await this.retire(cmd.id, caller, (await this.nameOf(caller.unionId)) ?? '创建人');
+        await this.replyCard(msg.message_id, inThread, infoCard('指令已下线', `「${r.name}」已下线，不能再执行。${r.schedules ? `它的 ${r.schedules} 个定时任务已暂停，并已通知创建人。` : ''}`));
+      } catch (e) {
+        await this.replyCard(msg.message_id, inThread, errorCard('Amber', e instanceof AmberError ? e.message : '出错了'));
+      }
+      return;
+    }
     if (parts.length === 1 && ['定时任务', '定时', 'schedules'].includes(parts[0].toLowerCase())) {
       await this.replyCard(msg.message_id, inThread, this.scheduleList(caller));
       return;
@@ -449,6 +474,14 @@ export class AmberBot {
       }
       if (value.a === 'req_ok' || value.a === 'req_no') {
         return raw(await this.agent.onClick(value.a === 'req_ok', String(value.r), caller, chatId, messageId));
+      }
+      if (value.a === 'sch_rebind' || value.a === 'sch_drop') {
+        const s = this.store.getSchedule(String(value.s));
+        if (!s) throw new AmberError('not_found', '定时任务已不存在');
+        if (value.a === 'sch_rebind') return raw(this.scheduler.rebind(s, String(value.c), caller));
+        if (!this.scheduler.canManage(s, caller.unionId)) throw new AmberError('forbidden', '只有定时任务的创建人或管理员可以操作');
+        this.scheduler.remove(s, caller.unionId);
+        return raw(infoCard('定时任务已删除', `定时任务 ${s.id} 已删除。`));
       }
       if (typeof value.a === 'string' && value.a.startsWith('sch_')) {
         const s = this.store.getSchedule(String(value.s));

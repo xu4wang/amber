@@ -275,3 +275,21 @@ export function scheduleResultCard(name: string, creatorOpenId: string | undefin
     { tag: 'markdown', content: `${sanitizeMarkdown(ruleText, 60)} · 以 ${person(creatorOpenId)} 的身份执行 · ${(elapsedMs / 1000).toFixed(1)} 秒 · run ${runId} · 任务 ${scheduleId}`, text_size: 'notation' },
   ]);
 }
+
+/** Sent to a schedule's creator when the command it runs got a new version (D38). */
+export function rebindCard(o: { scheduleId: string; name: string; ruleText: string; oldHash: string; newId: string; newHash: string; stillSchedulable: boolean }): object {
+  const els: unknown[] = [
+    { tag: 'markdown', content: `指令「**${sanitizeMarkdown(o.name, 40)}**」更新了版本（${o.oldHash.slice(0, 8)} → ${o.newHash.slice(0, 8)}）。你的定时任务 ${o.scheduleId}（${sanitizeMarkdown(o.ruleText, 60)}）已暂停，不会自动改用新版本。` },
+  ];
+  if (o.stillSchedulable) {
+    els.push({ tag: 'markdown', content: '确认新版本没问题后，点「换绑到新版本」继续运行；参数和时间保持不变。' });
+    els.push({ tag: 'column_set', flex_mode: 'none', columns: [
+      { tag: 'column', width: 'auto', elements: [btn('换绑到新版本', { a: 'sch_rebind', s: o.scheduleId, c: o.newId }, 'primary')] },
+      { tag: 'column', width: 'auto', elements: [btn('删除定时任务', { a: 'sch_drop', s: o.scheduleId })] },
+    ] });
+  } else {
+    els.push({ tag: 'markdown', content: '<font color="red">新版本不允许定时执行，这个定时任务无法继续。</font>' });
+    els.push(btn('删除定时任务', { a: 'sch_drop', s: o.scheduleId }));
+  }
+  return shell(`Amber · 指令已更新：${o.name}`, 'orange', els);
+}
