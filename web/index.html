@@ -13,69 +13,107 @@
 <style>
 :root {
   --bg: #f7f5f1; --panel: #ffffff; --ink: #1d1a16; --muted: #6b645b; --line: #e6e0d6;
-  --accent: #b8620e; --accent-soft: #fbefe0; --ok: #2f7d4f; --warn: #b3261e; --chip: #f1ece4;
+  --accent: #b8620e; --accent-soft: #fbefe0; --ok: #2f7d4f; --warn: #b3261e; --chip: #f1ece4; --hover: #f3eee6;
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
     --bg: #14110e; --panel: #1d1915; --ink: #ece6dd; --muted: #a39a8e; --line: #322b24;
-    --accent: #f2a23a; --accent-soft: #2e2214; --ok: #6cc28f; --warn: #f08a80; --chip: #29231d;
+    --accent: #f2a23a; --accent-soft: #2e2214; --ok: #6cc28f; --warn: #f08a80; --chip: #29231d; --hover: #26201a;
   }
 }
 :root[data-theme="dark"] {
   --bg: #14110e; --panel: #1d1915; --ink: #ece6dd; --muted: #a39a8e; --line: #322b24;
-  --accent: #f2a23a; --accent-soft: #2e2214; --ok: #6cc28f; --warn: #f08a80; --chip: #29231d;
+  --accent: #f2a23a; --accent-soft: #2e2214; --ok: #6cc28f; --warn: #f08a80; --chip: #29231d; --hover: #26201a;
 }
 * { box-sizing: border-box; }
-body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.65 "PingFang SC", "Noto Sans SC", system-ui, sans-serif; }
-header { display: flex; align-items: center; gap: 12px; padding: 14px 16px; border-bottom: 1px solid var(--line); background: var(--panel); }
-header img { width: 32px; height: 32px; border-radius: 8px; }
-header .brand { font-weight: 700; font-size: 18px; }
+html, body { height: 100%; }
+body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.6 "PingFang SC", "Noto Sans SC", system-ui, sans-serif; display: flex; flex-direction: column; }
+header { display: flex; align-items: center; gap: 12px; padding: 10px 16px; border-bottom: 1px solid var(--line); background: var(--panel); flex: none; }
+header img { width: 28px; height: 28px; border-radius: 7px; }
+header .brand { font-weight: 700; font-size: 17px; }
 header .who { margin-left: auto; color: var(--muted); font-size: 14px; display: flex; gap: 10px; align-items: center; }
-main { max-width: 860px; margin: 0 auto; padding: 24px 16px 64px; }
 button, .btn { font: inherit; border: 1px solid var(--line); background: var(--panel); color: var(--ink); border-radius: 8px; padding: 6px 14px; cursor: pointer; text-decoration: none; display: inline-block; }
 .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
-.login { text-align: center; padding: 48px 0; }
+.btn.danger { background: var(--warn); border-color: var(--warn); color: #fff; }
+.btn.small { padding: 2px 10px; font-size: 13px; }
+button:disabled { opacity: .55; cursor: default; }
+.note { color: var(--muted); font-size: 13px; }
+.chip { font-size: 12px; background: var(--chip); color: var(--muted); border-radius: 999px; padding: 1px 8px; font-weight: 400; white-space: nowrap; }
+.chip.accent { background: var(--accent-soft); color: var(--accent); }
+.chip.warn { color: var(--warn); }
+code { font-family: ui-monospace, Menlo, monospace; font-size: 13px; }
+
+/* login */
+#app.center { overflow: auto; }
+.login { text-align: center; padding: 48px 16px; }
 .login img { width: 96px; height: 96px; border-radius: 22px; }
 .login h1 { margin: 16px 0 4px; font-size: 28px; }
 .login .slogan { color: var(--muted); margin: 0 0 28px; }
 .steps { text-align: left; max-width: 420px; margin: 0 auto 28px; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 16px 20px; }
 .steps ol { margin: 0; padding-left: 20px; }
-.note { color: var(--muted); font-size: 13px; }
-section { margin-top: 28px; }
-section h2 { font-size: 17px; margin: 0 0 10px; display: flex; gap: 8px; align-items: baseline; }
-section h2 .count { color: var(--muted); font-weight: 400; font-size: 13px; }
-.card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 12px 16px; margin-bottom: 10px; }
-.card .title { font-weight: 600; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
-.card .desc { color: var(--muted); font-size: 14px; margin-top: 2px; }
-.chip { font-size: 12px; background: var(--chip); color: var(--muted); border-radius: 999px; padding: 1px 8px; font-weight: 400; }
-.chip.accent { background: var(--accent-soft); color: var(--accent); }
-.chip.warn { color: var(--warn); }
-.params { font-size: 13px; color: var(--muted); margin-top: 6px; }
-.empty { color: var(--muted); font-size: 14px; padding: 4px 0 8px; }
-.banner { background: var(--accent-soft); border-radius: 10px; padding: 10px 14px; font-size: 14px; margin-bottom: 8px; }
-.sch-state.paused { color: var(--warn); }
-.run-form { margin-top: 10px; border-top: 1px dashed var(--line); padding-top: 10px; display: none; }
-.run-form.open { display: block; }
+
+/* two panes */
+#app { flex: 1; min-height: 0; }
+#app.split { display: grid; grid-template-columns: 300px 1fr; }
+#tree { border-right: 1px solid var(--line); background: var(--panel); overflow: auto; padding: 10px 8px 24px; }
+#pane { overflow: auto; padding: 24px 32px 48px; }
+.search { width: 100%; font: inherit; padding: 6px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); color: var(--ink); margin-bottom: 8px; }
+.banner { background: var(--accent-soft); border-radius: 8px; padding: 8px 10px; font-size: 13px; margin: 0 4px 8px; }
+details.node { margin: 2px 0; }
+details.node > summary { list-style: none; cursor: pointer; padding: 4px 6px; border-radius: 6px; font-weight: 600; font-size: 14px; display: flex; gap: 6px; align-items: center; }
+details.node > summary::-webkit-details-marker { display: none; }
+details.node > summary::before { content: '▸'; color: var(--muted); font-size: 11px; width: 10px; transition: transform .1s; }
+details.node[open] > summary::before { transform: rotate(90deg); }
+details.node > summary:hover { background: var(--hover); }
+details.node > summary .count { color: var(--muted); font-weight: 400; font-size: 12px; margin-left: auto; }
+details.node details.node { margin-left: 14px; }
+details.node details.node > summary { font-weight: 500; color: var(--muted); }
+.leaf { display: flex; gap: 6px; align-items: center; padding: 4px 6px 4px 22px; border-radius: 6px; cursor: pointer; font-size: 14px; overflow: hidden; }
+.leaf .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.leaf .sub { color: var(--muted); font-size: 12px; margin-left: auto; white-space: nowrap; }
+.leaf:hover { background: var(--hover); }
+.leaf.sel { background: var(--accent-soft); color: var(--accent); }
+.leaf .dot { width: 7px; height: 7px; border-radius: 50%; flex: none; background: var(--muted); }
+.leaf .dot.ok { background: var(--ok); } .leaf .dot.failed { background: var(--warn); } .leaf .dot.paused { background: var(--warn); }
+.empty-leaf { padding: 2px 6px 6px 22px; color: var(--muted); font-size: 13px; }
+
+/* right pane */
+.pane-head { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.pane-head h1 { font-size: 22px; margin: 0; }
+.where { color: var(--muted); font-size: 13px; margin-top: 2px; }
+.desc { color: var(--muted); margin: 8px 0 16px; }
+.box { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 14px 18px; margin-bottom: 16px; }
+.box h3 { margin: 0 0 10px; font-size: 14px; color: var(--muted); font-weight: 600; }
 .field { display: flex; gap: 10px; align-items: center; margin-bottom: 8px; flex-wrap: wrap; }
-.field label { min-width: 88px; color: var(--muted); font-size: 14px; }
-.field input, .field select { flex: 1; min-width: 160px; font: inherit; padding: 6px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); color: var(--ink); }
-.actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; align-items: center; }
-.btn.danger { background: var(--warn); border-color: var(--warn); color: #fff; }
-.btn.small { padding: 2px 10px; font-size: 13px; }
-button:disabled { opacity: .55; cursor: default; }
-.output { margin-top: 12px; border: 1px solid var(--line); border-radius: 10px; padding: 10px 14px; background: var(--bg); overflow-x: auto; }
+.field label { min-width: 96px; color: var(--muted); font-size: 14px; }
+.field input, .field select { flex: 1; min-width: 180px; max-width: 420px; font: inherit; padding: 6px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); color: var(--ink); }
+.actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; align-items: center; }
+.tabs { display: flex; gap: 4px; margin-bottom: 12px; border-bottom: 1px solid var(--line); }
+.tabs button { border: none; border-bottom: 2px solid transparent; border-radius: 0; background: none; padding: 6px 12px; color: var(--muted); }
+.tabs button.on { color: var(--accent); border-bottom-color: var(--accent); font-weight: 600; }
+.output { border: 1px solid var(--line); border-radius: 12px; padding: 14px 18px; background: var(--panel); overflow-x: auto; }
 .output.err { border-color: var(--warn); color: var(--warn); }
+.output.wait { color: var(--muted); }
 .output table { border-collapse: collapse; font-size: 14px; margin: 8px 0; }
 .output th, .output td { border: 1px solid var(--line); padding: 4px 10px; text-align: left; }
+.output th { background: var(--bg); }
 .output td.num { text-align: right; font-variant-numeric: tabular-nums; }
-.output .meta { color: var(--muted); font-size: 12px; margin-top: 6px; }
-.output .chart { width: 100%; }
-.runs { font-size: 14px; }
-.runs .row { display: flex; gap: 10px; padding: 6px 0; border-bottom: 1px solid var(--line); align-items: center; flex-wrap: wrap; }
-.runs .row .when { color: var(--muted); min-width: 110px; }
-.status-ok { color: var(--ok); } .status-failed { color: var(--warn); }
-code { font-family: ui-monospace, Menlo, monospace; font-size: 13px; }
-@media (max-width: 520px) { header .who span.name { display: none; } }
+.output .meta { color: var(--muted); font-size: 12px; margin-top: 10px; border-top: 1px dashed var(--line); padding-top: 8px; }
+.output .chart { width: 100%; margin: 8px 0; }
+.welcome { color: var(--muted); max-width: 560px; margin-top: 40px; }
+.welcome h2 { color: var(--ink); font-size: 20px; }
+.back { display: none; }
+
+/* narrow screens: list first, then detail */
+@media (max-width: 860px) {
+  #app.split { grid-template-columns: 1fr; }
+  #app.split #pane { display: none; padding: 16px; }
+  #app.split.detail #tree { display: none; }
+  #app.split.detail #pane { display: block; }
+  #tree { border-right: none; }
+  .back { display: inline-block; margin-bottom: 12px; }
+  header .who span.name { display: none; }
+}
 </style>
 </head>
 <body>
@@ -84,15 +122,18 @@ code { font-family: ui-monospace, Menlo, monospace; font-size: 13px; }
   <span class="brand">Amber</span>
   <span class="who" id="who"></span>
 </header>
-<main id="app"><p class="note">加载中……</p></main>
+<main id="app"><p class="note" style="padding:16px">加载中……</p></main>
 <script>
 const FEISHU = '__FEISHU_CHAT_LINK__';
 const app = document.getElementById('app');
 const whoEl = document.getElementById('who');
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const fmtTime = t => { const d = new Date(t); return `${d.getMonth() + 1}-${d.getDate()} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`; };
+const CH = { bot: '飞书', web: '网站', agent: 'agent', schedule: '定时', 'bot.trial': '试运行', 'agent.trial': '试运行' };
 
 function loginView() {
   whoEl.innerHTML = '';
+  app.className = 'center';
   app.innerHTML = `
     <div class="login">
       <img src="/logo.svg" alt="Amber">
@@ -107,9 +148,6 @@ function loginView() {
       <p class="note" style="margin-top:20px">登录链接 5 分钟内有效、只能用一次，请不要转发给别人。</p>
     </div>`;
 }
-
-const fmtTime = t => { const d = new Date(t); return `${d.getMonth() + 1}-${d.getDate()} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`; };
-const CH = { bot: '飞书', web: '网站', agent: 'agent', schedule: '定时', 'bot.trial': '试运行', 'web.trial': '试运行' };
 
 async function post(path, body) {
   const r = await fetch(path, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
@@ -130,75 +168,186 @@ function tableHtml(src) {
 
 function renderOutput(el, md) {
   const charts = [];
-  const parts = [];
-  let last = 0;
+  let html = '', last = 0, m;
   const re = /```(vega-lite|table)\s*\n([\s\S]*?)```/g;
-  let m;
+  const text = s => { if (s.trim()) html += DOMPurify.sanitize(marked.parse(s)); };
   while ((m = re.exec(md))) {
-    parts.push({ md: md.slice(last, m.index) });
-    parts.push({ kind: m[1], src: m[2] });
+    text(md.slice(last, m.index));
+    if (m[1] === 'table') html += tableHtml(m[2]);
+    else { html += `<div class="chart" data-chart="${charts.length}"></div>`; charts.push(m[2]); }
     last = m.index + m[0].length;
   }
-  parts.push({ md: md.slice(last) });
-  let html = '';
-  for (const p of parts) {
-    if (p.md !== undefined) { if (p.md.trim()) html += DOMPurify.sanitize(marked.parse(p.md)); }
-    else if (p.kind === 'table') html += tableHtml(p.src);
-    else { html += `<div class="chart" data-chart="${charts.length}"></div>`; charts.push(p.src); }
-  }
+  text(md.slice(last));
   el.innerHTML = html || '<p class="note">（没有输出）</p>';
   el.querySelectorAll('[data-chart]').forEach(div => {
+    if (typeof vegaEmbed !== 'function') { div.innerHTML = '<p class="note">（图表组件没有加载成功，请刷新页面）</p>'; return; }
     let spec;
     try { spec = JSON.parse(charts[Number(div.dataset.chart)]); } catch { div.innerHTML = '<p class="note">（图表格式不正确）</p>'; return; }
     // Only inline data: never let output make the browser fetch other URLs.
     const strip = o => { if (o && typeof o === 'object') { if (o.data && o.data.url) delete o.data.url; Object.values(o).forEach(strip); } };
     strip(spec);
     spec.width = spec.width ?? 'container';
-    vegaEmbed(div, spec, { actions: false, renderer: 'svg' }).catch(() => { div.innerHTML = '<p class="note">（图表无法显示）</p>'; });
+    try { vegaEmbed(div, spec, { actions: false, renderer: 'svg' }).catch(() => { div.innerHTML = '<p class="note">（图表无法显示）</p>'; }); }
+    catch { div.innerHTML = '<p class="note">（图表无法显示）</p>'; }
   });
 }
 
-function showResult(el, r) {
-  el.style.display = 'block';
+function showOutput(el, r, meta) {
   el.className = 'output' + (r.ok ? '' : ' err');
   if (!r.ok) { el.textContent = '❌ ' + (r.message || r.error || '执行失败'); return; }
   const body = document.createElement('div');
   renderOutput(body, r.markdown || '');
   el.innerHTML = '';
   el.appendChild(body);
-  el.insertAdjacentHTML('beforeend', `<div class="meta">以你的身份执行 · ${(r.elapsedMs / 1000).toFixed(1)} 秒 · run ${esc(r.runId)}</div>`);
+  if (meta) el.insertAdjacentHTML('beforeend', `<div class="meta">${meta}</div>`);
 }
 
-// ---- command cards
-const CMDS = new Map();
-function params(c) {
-  if (!c.params.length) return '';
-  return `<div class="params">参数：${c.params.map(p => `${esc(p.label)}${p.required ? '（必填）' : ''}`).join('，')}</div>`;
+// ---- state
+let DATA = null;          // overview
+let RUNS = [];
+let SEL = null;           // { kind: 'cmd'|'sch'|'run', key }
+const ITEMS = new Map();  // key -> { kind, c?, scope?, where?, s?, r? }
+const LAST = new Map();   // command key -> last result shown this page session
+
+function scopeName(scope) {
+  if (scope === 'p2p') return '我的私聊';
+  if (scope === 'global') return '全局指令';
+  const g = DATA.groups.find(x => 'group:' + x.chatId === scope);
+  return g ? `群：${g.name}` : scope;
 }
 
-function cmdCard(c, scope) {
-  const key = scope + '|' + c.id;
-  CMDS.set(key, { c, scope });
-  const inputs = c.params.map(p => `<div class="field"><label>${esc(p.label)}${p.required ? ' *' : ''}</label>
+function cmdLeaf(c, scope) {
+  const key = 'c:' + scope + ':' + c.id;
+  ITEMS.set(key, { kind: 'cmd', c, scope });
+  return `<div class="leaf" data-key="${esc(key)}" data-search="${esc((c.name + ' ' + (c.description || '')).toLowerCase())}">
+    <span class="name">${esc(c.name)}</span>${c.options.confirm ? '<span class="chip warn">需确认</span>' : ''}</div>`;
+}
+
+function schLeaf(s, scope) {
+  const key = 's:' + s.id;
+  ITEMS.set(key, { kind: 'sch', s, scope });
+  return `<div class="leaf" data-key="${esc(key)}" data-search="${esc(s.command.toLowerCase())}">
+    <span class="dot ${s.status === 'active' ? 'ok' : 'paused'}"></span><span class="name">${esc(s.command)}</span><span class="sub">${esc(s.rule.replace(/（.*）/, ''))}</span></div>`;
+}
+
+function folder(title, scope, cmds, schs, open) {
+  const inner = (cmds.length ? cmds.map(c => cmdLeaf(c, scope)).join('') : '<div class="empty-leaf">还没有指令</div>')
+    + (schs.length ? `<details class="node" open><summary>定时任务<span class="count">${schs.length}</span></summary>${schs.map(s => schLeaf(s, scope)).join('')}</details>` : '');
+  return `<details class="node" ${open ? 'open' : ''}><summary>${esc(title)}<span class="count">${cmds.length}</span></summary>${inner}</details>`;
+}
+
+function renderTree() {
+  ITEMS.clear();
+  const o = DATA;
+  let html = '<input class="search" id="q" placeholder="搜索指令">';
+  if (o.membershipUnknown) html += '<div class="banner">Amber 暂时无法读取群成员，群里的指令先不显示。</div>';
+  html += folder('我的私聊', 'p2p', o.p2p.commands, o.p2p.schedules, true);
+  for (const g of o.groups) html += folder(`群：${g.name}`, 'group:' + g.chatId, g.commands, g.schedules, true);
+  html += folder('全局指令', 'global', o.global, [], true);
+  html += `<details class="node"><summary>最近运行<span class="count">${RUNS.length}</span></summary>${RUNS.map(r => {
+    const key = 'r:' + r.id;
+    ITEMS.set(key, { kind: 'run', r });
+    return `<div class="leaf" data-key="${esc(key)}" data-search="${esc(r.command.toLowerCase())}"><span class="dot ${esc(r.status)}"></span><span class="name">${esc(r.command)}</span><span class="sub">${fmtTime(r.startedAt)} · ${esc(CH[r.channel] || r.channel)}</span></div>`;
+  }).join('') || '<div class="empty-leaf">还没有运行记录</div>'}</details>`;
+  document.getElementById('tree').innerHTML = html;
+  document.getElementById('q').addEventListener('input', e => {
+    const q = e.target.value.trim().toLowerCase();
+    document.querySelectorAll('#tree .leaf').forEach(l => { l.style.display = !q || l.dataset.search.includes(q) ? '' : 'none'; });
+    if (q) document.querySelectorAll('#tree details').forEach(d => { d.open = true; });
+  });
+  markSelected();
+}
+
+function markSelected() {
+  document.querySelectorAll('#tree .leaf').forEach(l => l.classList.toggle('sel', !!SEL && l.dataset.key === SEL));
+}
+
+function select(key, push = true) {
+  const it = ITEMS.get(key);
+  if (!it) return welcome();
+  SEL = key;
+  markSelected();
+  if (push) history.replaceState(null, '', '#' + encodeURIComponent(key));
+  app.classList.add('detail');
+  if (it.kind === 'cmd') cmdPane(key, it);
+  else if (it.kind === 'sch') schPane(it);
+  else runPane(it);
+}
+
+const backBtn = '<button class="back btn small" data-back="1">← 返回列表</button>';
+
+function welcome() {
+  SEL = null;
+  markSelected();
+  app.classList.remove('detail');
+  const n = DATA.p2p.commands.length + DATA.global.length + DATA.groups.reduce((a, g) => a + g.commands.length, 0);
+  document.getElementById('pane').innerHTML = `<div class="welcome"><h2>选择左侧的一条指令</h2>
+    <p>你一共可以使用 ${n} 条指令。选中后在这里填参数、以你本人的身份执行，结果显示在下方，和在飞书里看到的是同一份内容。</p>
+    <p>需要确认的指令要点两次按钮；允许定时的指令可以在「定时」页创建定时任务。</p></div>`;
+}
+
+function paramInputs(c) {
+  return c.params.map(p => `<div class="field"><label>${esc(p.label)}${p.required ? ' *' : ''}</label>
     <input name="${esc(p.name)}" ${p.type === 'integer' ? 'inputmode="numeric"' : ''} value="${p.default && !p.fromCity ? esc(p.default) : ''}"
       placeholder="${p.fromCity ? '不填则用你的办公城市' : p.required ? '必填' : '可不填'}"></div>`).join('');
-  return `<div class="card" data-key="${esc(key)}"><div class="title">${esc(c.name)}
-    ${c.global ? '<span class="chip accent">全局</span>' : ''}
-    ${c.options.confirm ? '<span class="chip warn">需确认</span>' : ''}
-    ${c.options.schedulable ? '<span class="chip">可定时</span>' : ''}</div>
-    ${c.description ? `<div class="desc">${esc(c.description)}</div>` : ''}${params(c)}
-    <div class="actions"><button class="btn small" data-open="run">执行…</button>${c.options.schedulable ? '<button class="btn small" data-open="sch">定时…</button>' : ''}</div>
-    <form class="run-form" data-form="run">${inputs}
-      ${c.options.confirm ? '<p class="note" style="color:var(--warn)">⚠️ 这条指令要求执行前确认：请核对参数，点两次按钮才会执行。</p>' : ''}
-      <div class="actions"><button class="btn ${c.options.confirm ? 'danger' : 'primary'}" data-do="run">${c.options.confirm ? '确认执行' : '执行'}</button></div>
-      <div class="output" style="display:none"></div></form>
-    ${c.options.schedulable ? `<form class="run-form" data-form="sch">${inputs}
-      <div class="field"><label>时间</label><input name="__at" placeholder="每天 09:00 / 工作日 09:00 / 每周一 09:00 / 每 2 小时"></div>
-      <div class="field"><label>时区</label><select name="__tz"><option value="Asia/Shanghai">北京时间</option><option value="Asia/Bangkok">曼谷时间</option></select></div>
-      <p class="note">每次都以你的身份自动执行；结果发到${scope.startsWith('group:') ? '这个群' : '你和 Amber 的私聊'}，没有输出时不发。</p>
-      <div class="actions"><button class="btn primary" data-do="sch">${c.options.confirm ? '确认并创建定时任务' : '创建定时任务'}</button></div>
-      <div class="output" style="display:none"></div></form>` : ''}
-  </div>`;
+}
+
+function cmdPane(key, { c, scope }) {
+  const pane = document.getElementById('pane');
+  const last = LAST.get(key);
+  pane.innerHTML = `${backBtn}
+    <div class="pane-head"><h1>${esc(c.name)}</h1>
+      ${c.global ? '<span class="chip accent">全局</span>' : ''}${c.options.confirm ? '<span class="chip warn">执行前需确认</span>' : ''}${c.options.schedulable ? '<span class="chip">可定时</span>' : ''}</div>
+    <div class="where">${esc(scopeName(scope))} · 指令 ${esc(c.id)}</div>
+    ${c.description ? `<div class="desc">${esc(c.description)}</div>` : '<div class="desc"></div>'}
+    <div class="box">
+      ${c.options.schedulable ? '<div class="tabs"><button class="on" data-tab="run">执行</button><button data-tab="sch">定时</button></div>' : ''}
+      <form data-form="run">${c.params.length ? paramInputs(c) : '<p class="note">这条指令没有参数。</p>'}
+        ${c.options.confirm ? '<p class="note" style="color:var(--warn)">⚠️ 执行前需要确认：请核对参数，按钮要点两次。</p>' : ''}
+        <div class="actions"><button class="btn ${c.options.confirm ? 'danger' : 'primary'}" data-do="run">${c.options.confirm ? '确认执行' : '执行'}</button>
+          <span class="note">以你本人的身份执行</span></div></form>
+      ${c.options.schedulable ? `<form data-form="sch" style="display:none">${paramInputs(c)}
+        <div class="field"><label>时间</label><input name="__at" placeholder="每天 09:00 / 工作日 09:00 / 每周一 09:00 / 每 2 小时"></div>
+        <div class="field"><label>时区</label><select name="__tz"><option value="Asia/Shanghai">北京时间</option><option value="Asia/Bangkok">曼谷时间</option></select></div>
+        <p class="note">每次都以你的身份自动执行；结果发到${scope.startsWith('group:') ? '这个群' : '你和 Amber 的私聊'}，没有输出时不发。</p>
+        <div class="actions"><button class="btn primary" data-do="sch">${c.options.confirm ? '确认并创建定时任务' : '创建定时任务'}</button></div>
+        <div class="sch-msg note" style="margin-top:8px"></div></form>` : ''}
+    </div>
+    <h3 class="note" style="margin:0 0 8px">执行结果</h3>
+    <div class="output wait" id="out">${last ? '' : '还没有在这里执行过。'}</div>`;
+  if (last) showOutput(document.getElementById('out'), last.r, last.meta);
+}
+
+function schPane({ s, scope }) {
+  const args = Object.entries(s.args || {}).map(([k, v]) => `${esc(k)}=${esc(v)}`).join(' ');
+  document.getElementById('pane').innerHTML = `${backBtn}
+    <div class="pane-head"><h1>⏰ ${esc(s.command)}</h1><span class="chip">${esc(s.rule)}</span></div>
+    <div class="where">${esc(scopeName(scope))} · 定时任务 ${esc(s.id)}</div>
+    <div class="box" style="margin-top:16px">
+      <div class="field"><label>状态</label><span style="color:${s.status === 'active' ? 'var(--ok)' : 'var(--warn)'}">${s.status === 'active' ? '运行中' : '已暂停' + (s.pauseReason ? '：' + esc(s.pauseReason) : '')}</span></div>
+      ${s.status === 'active' ? `<div class="field"><label>下次运行</label><span>${esc(s.next)}</span></div>` : ''}
+      <div class="field"><label>上次运行</label><span>${esc(s.last || '还没运行过')}</span></div>
+      <div class="field"><label>参数</label><span>${args ? `<code>${args}</code>` : '（默认）'}</span></div>
+      ${s.mine ? `<div class="actions">
+        ${s.status === 'active' ? `<button class="btn" data-sch="${esc(s.id)}:pause">暂停</button>` : `<button class="btn primary" data-sch="${esc(s.id)}:resume">恢复</button>`}
+        <button class="btn" data-sch="${esc(s.id)}:run">立即运行一次</button>
+        <button class="btn" data-sch="${esc(s.id)}:delete">删除</button></div>` : '<p class="note">只有创建人可以管理这个定时任务。</p>'}
+    </div>
+    <div class="output wait" id="out" style="display:none"></div>`;
+}
+
+async function runPane({ r }) {
+  document.getElementById('pane').innerHTML = `${backBtn}
+    <div class="pane-head"><h1>${esc(r.command)}</h1><span class="chip">${esc(CH[r.channel] || r.channel)}</span>
+      <span class="chip" style="color:${r.status === 'ok' ? 'var(--ok)' : 'var(--warn)'}">${r.status === 'ok' ? '成功' : r.status === 'failed' ? '失败' : '运行中'}</span></div>
+    <div class="where">${fmtTime(r.startedAt)} · run ${esc(r.id)}${r.elapsedMs != null ? ` · ${(r.elapsedMs / 1000).toFixed(1)} 秒` : ''}${Object.keys(r.args || {}).length ? ' · ' + Object.entries(r.args).map(([k, v]) => `${esc(k)}=${esc(v)}`).join(' ') : ''}</div>
+    <div class="output wait" id="out" style="margin-top:16px">读取中……</div>`;
+  const x = await fetch('/web/api/runs/' + encodeURIComponent(r.id)).then(z => z.json()).catch(() => ({ ok: false }));
+  const out = document.getElementById('out');
+  if (!out) return;
+  if (!x.ok) return showOutput(out, { ok: false, message: x.message || '读取失败' });
+  if (x.status !== 'ok') return showOutput(out, { ok: false, message: x.error || x.status });
+  showOutput(out, { ok: true, markdown: x.markdown });
 }
 
 function formArgs(form) {
@@ -207,20 +356,36 @@ function formArgs(form) {
   return args;
 }
 
-app.addEventListener('click', async ev => {
-  const open = ev.target.closest('[data-open]');
-  if (open) {
-    const card = open.closest('.card');
-    card.querySelectorAll('.run-form').forEach(f => f.classList.toggle('open', f.dataset.form === open.dataset.open && !f.classList.contains('open')));
+async function refreshRuns() {
+  const r = await fetch('/web/api/runs').then(x => x.json()).catch(() => null);
+  if (r && r.ok) RUNS = r.runs;
+}
+
+async function reload(keepKey) {
+  const o = await fetch('/web/api/overview').then(r => r.json());
+  if (!o.ok) return loginView();
+  DATA = o;
+  await refreshRuns();
+  renderTree();
+  if (keepKey && ITEMS.has(keepKey)) select(keepKey, false);
+}
+
+document.addEventListener('click', async ev => {
+  const leaf = ev.target.closest('#tree .leaf');
+  if (leaf) return select(leaf.dataset.key);
+  if (ev.target.closest('[data-back]')) { history.replaceState(null, '', '#'); return welcome(); }
+  const tab = ev.target.closest('[data-tab]');
+  if (tab) {
+    tab.parentElement.querySelectorAll('button').forEach(b => b.classList.toggle('on', b === tab));
+    document.querySelectorAll('#pane form').forEach(f => { f.style.display = f.dataset.form === tab.dataset.tab ? '' : 'none'; });
     return;
   }
   const doBtn = ev.target.closest('[data-do]');
   if (doBtn) {
     ev.preventDefault();
-    const card = doBtn.closest('.card');
-    const { c, scope } = CMDS.get(card.dataset.key);
+    const key = SEL;
+    const { c, scope } = ITEMS.get(key);
     const form = doBtn.closest('form');
-    const out = form.querySelector('.output');
     // Two-step button for commands that require confirmation.
     if (c.options.confirm && !doBtn.dataset.armed) {
       doBtn.dataset.armed = '1';
@@ -235,17 +400,28 @@ app.addEventListener('click', async ev => {
     doBtn.textContent = doBtn.dataset.do === 'run' ? '执行中……' : '创建中……';
     try {
       if (doBtn.dataset.do === 'run') {
+        const out = document.getElementById('out');
+        out.className = 'output wait';
+        out.textContent = '执行中……';
         const r = await post('/web/api/run', { scope, commandId: c.id, args: formArgs(form), confirm: c.options.confirm });
-        showResult(out, r);
-        loadRuns();
+        const meta = r.ok ? `以你的身份执行 · ${(r.elapsedMs / 1000).toFixed(1)} 秒 · run ${esc(r.runId)} · ${fmtTime(Date.now())}` : '';
+        LAST.set(key, { r, meta });
+        if (SEL === key) showOutput(document.getElementById('out'), r, meta);
+        await refreshRuns();
+        const keepSel = SEL;
+        renderTree();
+        SEL = keepSel; markSelected();
       } else {
+        const msg = form.querySelector('.sch-msg');
         const r = await post('/web/api/schedules', { scope, commandId: c.id, args: formArgs(form), at: form.querySelector('[name=__at]').value, tz: form.querySelector('[name=__tz]').value, confirm: c.options.confirm });
-        out.style.display = 'block';
-        out.className = 'output' + (r.ok ? '' : ' err');
-        out.textContent = r.ok ? `✅ 已创建定时任务 ${r.scheduleId}：${r.rule}，首次运行 ${r.next}` : '❌ ' + (r.message || r.error);
-        if (r.ok) setTimeout(main, 1500);
+        msg.style.color = r.ok ? 'var(--ok)' : 'var(--warn)';
+        msg.textContent = r.ok ? `✅ 已创建定时任务 ${r.scheduleId}：${r.rule}，首次运行 ${r.next}` : '❌ ' + (r.message || r.error);
+        if (r.ok) { await reload(null); SEL = key; markSelected(); }
       }
-    } catch (e) { out.style.display = 'block'; out.className = 'output err'; out.textContent = '❌ ' + e.message; }
+    } catch (e) {
+      const out = document.getElementById('out');
+      if (out) { out.className = 'output err'; out.textContent = '❌ ' + e.message; }
+    }
     doBtn.disabled = false;
     doBtn.textContent = text;
     return;
@@ -256,70 +432,23 @@ app.addEventListener('click', async ev => {
     if (op === 'delete' && !confirm('删除这个定时任务？')) return;
     sch.disabled = true;
     const r = await post(`/web/api/schedules/${id}/${op}`, {});
-    if (!r.ok) alert(r.message || r.error);
-    else if (op === 'run') alert(r.lastStatus === 'failed' ? '运行失败，详情见「我的最近运行」' : '已运行，结果已发到原来的位置');
-    main();
-    return;
-  }
-  const run = ev.target.closest('[data-run]');
-  if (run) {
-    const box = document.getElementById('run-view');
-    const r = await fetch('/web/api/runs/' + run.dataset.run).then(x => x.json());
-    box.style.display = 'block';
-    if (!r.ok) { box.className = 'output err'; box.textContent = r.message || '读取失败'; return; }
-    box.className = 'output';
-    if (r.status !== 'ok') { box.classList.add('err'); box.textContent = '❌ ' + (r.error || r.status); return; }
-    box.innerHTML = '';
-    const body = document.createElement('div');
-    renderOutput(body, r.markdown);
-    box.appendChild(body);
-    box.insertAdjacentHTML('beforeend', `<div class="meta">run ${esc(r.id)} · ${fmtTime(r.startedAt)}</div>`);
+    if (!r.ok) { alert(r.message || r.error); sch.disabled = false; return; }
+    if (op === 'run') alert(r.lastStatus === 'failed' ? '运行失败，详情见「最近运行」' : '已运行，结果已发到原来的位置');
+    await reload(op === 'delete' ? null : 's:' + id);
+    if (op === 'delete') welcome();
   }
 });
-
-function schCard(s) {
-  const args = Object.entries(s.args || {}).map(([k, v]) => `${esc(k)}=${esc(v)}`).join(' ');
-  const btns = s.mine ? `<div class="actions">
-      ${s.status === 'active' ? `<button class="btn small" data-sch="${esc(s.id)}:pause">暂停</button>` : `<button class="btn small primary" data-sch="${esc(s.id)}:resume">恢复</button>`}
-      <button class="btn small" data-sch="${esc(s.id)}:run">立即运行</button>
-      <button class="btn small" data-sch="${esc(s.id)}:delete">删除</button></div>` : '';
-  return `<div class="card"><div class="title">⏰ ${esc(s.command)} <span class="chip">${esc(s.rule)}</span></div>
-    <div class="desc"><span class="sch-state ${s.status}">${s.status === 'active' ? `下次 ${esc(s.next)}` : `已暂停${s.pauseReason ? '：' + esc(s.pauseReason) : ''}`}</span>
-    ${s.last ? ` · 上次 ${esc(s.last)}` : ''}${args ? ` · <code>${args}</code>` : ''}</div>${btns}</div>`;
-}
-
-function block(title, scope, cmds, schs, emptyText) {
-  const n = cmds.length + schs.length;
-  return `<section><h2>${esc(title)}<span class="count">${cmds.length} 条指令${schs.length ? ` · ${schs.length} 个定时任务` : ''}</span></h2>
-    ${n ? cmds.map(c => cmdCard(c, scope)).join('') + schs.map(schCard).join('') : `<div class="empty">${emptyText}</div>`}</section>`;
-}
-
-async function loadRuns() {
-  const el = document.getElementById('runs');
-  if (!el) return;
-  const r = await fetch('/web/api/runs').then(x => x.json()).catch(() => null);
-  if (!r || !r.ok) return;
-  el.innerHTML = r.runs.length ? r.runs.map(x => `<div class="row"><span class="when">${fmtTime(x.startedAt)}</span><b>${esc(x.command)}</b>
-      <span class="chip">${esc(CH[x.channel] || x.channel)}</span><span class="status-${esc(x.status)}">${x.status === 'ok' ? '成功' : x.status === 'failed' ? '失败' : '运行中'}</span>
-      <button class="btn small" data-run="${esc(x.id)}">查看</button></div>`).join('') : '<div class="empty">还没有运行记录。</div>';
-}
 
 async function main() {
   const me = await fetch('/web/api/me').then(r => r.json()).catch(() => null);
   if (!me || !me.ok) return loginView();
   whoEl.innerHTML = `<span class="name">${esc(me.name)}</span><button id="logout">退出</button>`;
   document.getElementById('logout').onclick = async () => { await post('/web/api/logout', {}).catch(() => {}); loginView(); };
-  const o = await fetch('/web/api/overview').then(r => r.json());
-  if (!o.ok) return loginView();
-  CMDS.clear();
-  let html = '<p class="note">点「执行…」填参数，以你本人的身份执行；结果和在飞书里看到的是同一份内容。</p>';
-  if (o.membershipUnknown) html += '<div class="banner">Amber 暂时无法读取群成员，群里的指令先不显示（需要在飞书后台给 Amber 开通「获取群成员」权限）。</div>';
-  html += block('我的私聊', 'p2p', o.p2p.commands, o.p2p.schedules, '你在私聊里还没有指令。');
-  for (const g of o.groups) html += block(`群：${g.name}`, 'group:' + g.chatId, g.commands, g.schedules, '这个群还没有指令。');
-  html += block('全局指令', 'global', o.global, [], '还没有全局指令。');
-  html += '<section><h2>我的最近运行</h2><div class="runs" id="runs"></div><div class="output" id="run-view" style="display:none"></div></section>';
-  app.innerHTML = html;
-  loadRuns();
+  app.className = 'split';
+  app.innerHTML = '<nav id="tree"></nav><section id="pane"></section>';
+  await reload(null);
+  const want = decodeURIComponent(location.hash.slice(1));
+  if (want && ITEMS.has(want)) select(want, false); else welcome();
 }
 main();
 </script>
