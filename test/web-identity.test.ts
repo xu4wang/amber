@@ -22,9 +22,20 @@ test('website: login by chat, run as yourself, CSRF and group membership enforce
   const env = await makeEnv();
   try {
     await activate(env, { chatId: GROUP, chatType: 'group', name: '谁', params: [], script: script('import json,sys\nprint("caller=" + json.load(sys.stdin)["caller"]["unionId"])') }, env.alice);
-    // Login links are only given in private chats.
+    // Asked in a group, the login link goes to the person's private chat, never into the group (D43).
+    const before = env.fake.sent.length;
     await env.say(env.bob, GROUP, '登录');
-    assert.match(FakeFeishu.text(env.fake.sent.at(-1)!.card), /只在私聊里发/);
+    const out = env.fake.sent.slice(before);
+    const dm = out.filter(m => m.to.unionId === env.bob.unionId);
+    assert.equal(dm.length, 1);
+    const groupLink = out.filter(m => m !== dm[0] && urlButton(m.card));
+    assert.equal(groupLink.length, 0, 'no login link in the group');
+    assert.match(FakeFeishu.text(out.at(-1)!.card), /已私聊发给你/);
+    const viaGroup = urlButton(dm[0].card)!;
+    const g = await fetch(viaGroup, { redirect: 'manual' });
+    assert.equal(g.status, 302, 'the link sent to the private chat works');
+    const gMe = await (await fetch(`http://127.0.0.1:${env.webPort}/web/api/me`, { headers: { cookie: g.headers.get('set-cookie')!.split(';')[0] } })).json();
+    assert.equal(gMe.unionId, env.bob.unionId);
     const bob = await login(env, env.bob);
     const base = `http://127.0.0.1:${env.webPort}`;
     const me = await (await fetch(`${base}/web/api/me`, { headers: { cookie: bob } })).json();

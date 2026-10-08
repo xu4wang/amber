@@ -335,12 +335,10 @@ export class AmberBot {
     if (cardMessageId) await this.patch(cardMessageId, final);
   }
 
-  /** D34: website login by chatting with Amber. Only in the person's own private chat. */
+  /** D34: website login by chatting with Amber. The link only ever appears in the person's own
+   *  private chat with Amber: asked in a group, Amber sends it there and says so in the group (D43). */
   private async webLogin(verb: string, caller: Caller, messageId: string, inThread: boolean): Promise<void> {
-    if (caller.chatType !== 'p2p') {
-      await this.replyCard(messageId, inThread, infoCard('网站登录', '为了安全，登录链接只在私聊里发。请私聊 Amber 发送「登录」。'));
-      return;
-    }
+    const inGroup = caller.chatType !== 'p2p';
     if (verb === '退出网站' || verb === 'logout') {
       const n = this.store.revokeWebSessionsOf(caller.unionId);
       this.store.audit(caller.unionId, 'web.logout_all', { sessions: n });
@@ -351,6 +349,7 @@ export class AmberBot {
       await this.replyCard(messageId, inThread, errorCard('网站登录', '一小时内申请登录太多次了，请稍后再试'));
       return;
     }
+    if (inGroup && !caller.unionId) return;
     const token = newToken();
     const h = hashToken(token);
     this.store.insertWebLogin(h, caller.unionId, caller.openId ?? null);
@@ -363,9 +362,23 @@ export class AmberBot {
         { tag: 'button', text: { tag: 'plain_text', content: '打开 Amber 网站' }, type: 'primary', behaviors: [{ type: 'open_url', default_url: url }] },
       ] },
     };
-    const sent = await this.client.im.v1.message.reply({ path: { message_id: messageId }, data: { msg_type: 'interactive', content: JSON.stringify(card), reply_in_thread: inThread } }) as any;
-    if (sent?.data?.message_id) this.store.setWebLoginMessage(h, sent.data.message_id);
-    this.store.audit(caller.unionId, 'web.login_link', {});
+    let sentId: string | undefined;
+    if (inGroup) {
+      // Never into the group: anyone there could open the link. Send it to the person's private chat.
+      try { sentId = await this.flow.send({ unionId: caller.unionId }, card); } catch (e: any) { log('login dm failed', e?.response?.data?.code ?? e?.message); }
+      if (!sentId) {
+        this.store.consumeWebLogin(h, LOGIN_TTL_MS + 60_000); // burn the unsent link
+        await this.replyCard(messageId, inThread, errorCard('网站登录', '没能给你发私聊消息。请直接私聊 Amber 发送「登录」。'));
+        return;
+      }
+      await this.replyCard(messageId, inThread, infoCard('网站登录', '登录链接已私聊发给你，请到和 Amber 的私聊里打开。链接只在私聊里发，不会出现在群里。'));
+    } else {
+      const r = await this.client.im.v1.message.reply({ path: { message_id: messageId }, data: { msg_type: 'interactive', content: JSON.stringify(card), reply_in_thread: inThread } }) as any;
+      sentId = r?.data?.message_id;
+    }
+    if (sentId) this.store.setWebLoginMessage(h, sentId);
+    this.store.audit(caller.unionId, 'web.login_link', inGroup ? { requestedIn: caller.chatId } : {});
+    const sent = { data: { message_id: sentId } };
     // Expire the card visibly once the link can no longer be used.
     setTimeout(() => {
       if (sent?.data?.message_id && this.store.consumeWebLogin(h, LOGIN_TTL_MS + 60_000)) {
