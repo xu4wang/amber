@@ -10,7 +10,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Store, CommandRow, ScheduleRow } from './db.ts';
 import type { Caller } from './engine.ts';
-import { runCommand, AmberError } from './engine.ts';
+import { runCommand, AmberError, secretVault } from './engine.ts';
 import type { Signer } from './identity.ts';
 import type { Scheduler } from './scheduler.ts';
 import { describeRule, formatAt, defaultTz, timezones } from './schedule-rule.ts';
@@ -185,7 +185,7 @@ export function startWeb(port: number, store: Store, deps: WebDeps): import('nod
           const c = t.cmd;
           const review = store.getReview(c.id);
           return json(res, 200, { ok: true, id: c.id, name: c.name, specHash: c.specHash, createdAt: c.createdAt,
-            script: { kind: c.script.kind, lang: c.script.lang, network: !!c.script.network, services: c.script.services ?? {}, timeoutMs: c.script.timeoutMs ?? 30000, code: c.script.code },
+            script: { kind: c.script.kind, lang: c.script.lang, network: !!c.script.network, services: c.script.services ?? {}, secrets: c.script.secrets ?? [], timeoutMs: c.script.timeoutMs ?? 30000, code: c.script.code },
             params: c.params, options: c.options, reviewDocUrl: review.docUrl ?? null,
             history: store.versionsOf(c.id).map(v => ({ id: v.id, specHash: v.specHash, createdAt: v.createdAt, reviewDocUrl: store.getReview(v.id).docUrl ?? null })) });
         }
@@ -216,6 +216,23 @@ export function startWeb(port: number, store: Store, deps: WebDeps): import('nod
           const sch = await deps.scheduler.create({ cmd: t.cmd, chatId: t.chatId, chatType: t.chatType, replyTo: null, inThread: false, creator: { ...person, chatId: t.chatId, chatType: t.chatType },
             args, rule: parseRule(String(body.at ?? ''), String(body.tz || defaultTz())), requestedBy: 'web', via: { via: 'web' } });
           return json(res, 200, { ok: true, scheduleId: sch.id, rule: describeRule(sch.rule), next: formatAt(sch.nextRunAt, sch.rule.tz) });
+        }
+        if ((m = /^\/web\/api\/commands\/([A-Za-z0-9-]{1,40})\/secrets$/.exec(url.pathname))) {
+          const t = await target(store, deps, who.unionId, String(body.scope ?? ''), m[1]);
+          const c = t.cmd;
+          if (c.ownerUnionId !== who.unionId && !deps.isAdmin(who.unionId)) throw new AmberError('forbidden', '只有指令的创建人或管理员可以设置密钥');
+          const name = String(body.name ?? '');
+          if (!(c.script.secrets ?? []).includes(name)) throw new AmberError('bad_secret', `这条指令没有声明密钥 ${name}`);
+          const vault = secretVault();
+          if (!vault) throw new AmberError('no_vault', '密钥存储不可用');
+          if (body.delete === true) {
+            vault.delete(c, name);
+            store.audit(who.unionId, 'secret.delete', { commandId: c.id, chatId: c.chatId, name: c.name, secret: name, via: 'web' });
+          } else {
+            try { vault.set(c, name, String(body.value ?? '').trim(), who.unionId); } catch (e) { throw new AmberError('bad_secret', (e as Error).message); }
+            store.audit(who.unionId, 'secret.set', { commandId: c.id, chatId: c.chatId, name: c.name, secrets: [name], via: 'web' });
+          }
+          return json(res, 200, { ok: true, secrets: vault.info(c, c.script.secrets!) });
         }
         if ((m = /^\/web\/api\/commands\/([A-Za-z0-9-]{1,40})\/retire$/.exec(url.pathname))) {
           const t = await target(store, deps, who.unionId, String(body.scope ?? ''), m[1]);
@@ -250,8 +267,13 @@ export function startWeb(port: number, store: Store, deps: WebDeps): import('nod
 }
 
 function cmdView(c: CommandRow, viewer?: string, isAdmin?: (u: string) => boolean, store?: Store) {
+  const canManage = !!viewer && (c.ownerUnionId === viewer || !!isAdmin?.(viewer));
+  // Secret names for everyone; when and what tail only for those who may change them (D48). Never values.
+  const secrets = c.script.secrets?.length ? (secretVault()?.info(c, c.script.secrets) ?? c.script.secrets.map(name => ({ name, set: false })))
+    .map(i => (canManage ? i : { name: i.name, set: i.set })) : [];
   return {
-    canManage: !!viewer && (c.ownerUnionId === viewer || !!isAdmin?.(viewer)),
+    canManage,
+    secrets,
     version: store ? store.versionsOf(c.id).length + 1 : 1,
     id: c.id, name: c.name, description: c.description, global: c.global, options: c.options,
     params: c.params.map(p => ({ name: p.name, label: p.label ?? p.name, type: p.type, required: !!p.required, default: p.default, fromCity: p.defaultFrom === 'caller.city' })),

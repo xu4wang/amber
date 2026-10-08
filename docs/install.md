@@ -100,6 +100,8 @@ AMBER_LARK_APP_SECRET=xxxxxxxxxxxxxxxx
 
 第一次启动时，Amber 会自动生成 `~/.config/amber/signing-key.pem`（Ed25519，权限 0600），用来签发执行身份凭证。请把它和数据库一起备份；丢了以后，服务方需要重新获取公钥。
 
+同时还会生成 `~/.config/amber/secrets-key`（权限 0600），用来加密指令密钥（数据库里只存密文）。**它和数据库要分开保管、一起备份**：丢了它，已保存的密钥都解不开，只能重新填写；它和数据库一起泄露，密钥就能被解开。
+
 ## 4. 启动
 
 先在前台跑一次，确认配置没问题：
@@ -226,7 +228,7 @@ server {
 |---|---|
 | 日志 | `~/.config/amber/data/amber.log` |
 | 数据 | `~/.config/amber/data/amber.db`（SQLite）：指令、运行记录、审计、请求、定时任务、网站登录 |
-| 备份 | 备份 `amber.db` 和 `signing-key.pem`。表结构升级时 Amber 会自动迁移，升级前建议手动复制一份数据库 |
+| 备份 | 备份 `amber.db`、`signing-key.pem` 和 `secrets-key`（后者建议和数据库分开存放）。表结构升级时 Amber 会自动迁移，升级前建议手动复制一份数据库 |
 | 更新代码 | `git pull`，然后 `launchctl kickstart -k …`。定时任务只在 Amber 运行时触发，停机期间错过的不会补跑 |
 | 运维命令 | `node src/cli.ts list`（列出全部指令）、`node src/cli.ts retire <id>`（下线指令）。每次操作都写审计。`node src/cli.ts keys` 从现有私钥文件导出公钥给服务方固定用：只读，私钥不存在或权限对同组、其他用户开放时直接报错、不会生成新密钥，也不写审计，导出由部署记录连同 kid 一起留档 |
 | 回归测试 | `npm test`：起一个隔离的 Amber（临时数据库 + 假飞书），覆盖认领、审核、新版本、下线、agent 三档、定时任务、网站、可信身份和沙盒，几秒跑完，不碰真实飞书和线上数据。改代码后先跑它 |

@@ -7,6 +7,8 @@ import { setServices, validateScript } from './runner.ts';
 import { startApi } from './api.ts';
 import { startWeb } from './web.ts';
 import { setTimezones } from './schedule-rule.ts';
+import { SecretVault } from './secrets.ts';
+import { setSecretVault } from './engine.ts';
 
 export interface Amber { bot: AmberBot; store: Store; api: Server; web: Server; close(): Promise<void> }
 
@@ -14,6 +16,7 @@ export async function startAmber(cfg: AmberConfig, opts: { apiPort: number; webP
   setServices(cfg.services);
   setTimezones(cfg.timezones);
   const store = new Store(cfg.dataDir);
+  setSecretVault(new SecretVault(store, cfg.configDir));
   // Fail closed and say so: these commands stay in the database but every run is refused (D40/D41).
   const interrupted = store.failInterruptedRuns();
   if (interrupted.length) { console.warn(new Date().toISOString(), 'interrupted runs marked failed', interrupted); store.audit(null, 'startup.interrupted_runs', { runs: interrupted }); }

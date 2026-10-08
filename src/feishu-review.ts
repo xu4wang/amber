@@ -2,6 +2,7 @@
 // plus one Feishu approval instance (会签: every reviewer must approve). Amber stays the source of
 // truth: it re-reads the approval instance from the API before activating anything.
 import type * as lark from '@larksuiteoapi/node-sdk';
+import { describeSecrets } from './secrets.ts';
 import type { CommandRow } from './db.ts';
 import { lineDiff } from './diff.ts';
 import { describeServices } from './runner.ts';
@@ -23,7 +24,8 @@ function docMarkdown(c: CommandRow, opts: { creator: string; submittedBy?: strin
   const s = c.script;
   const how = s.kind === 'privileged' ? '**特权脚本（已停用，不能执行）**' : '沙盒脚本';
   const net = s.network ? '，可访问外网' : s.services && Object.keys(s.services).length ? `，以执行人身份调用：${describeServices(s)}（不能访问外网）` : '，不联网';
-  const code = `## 代码\n\n${how}${net}；超时 ${(s.timeoutMs ?? 30000) / 1000} 秒。\n\n${FENCE}python\n${s.code.split(FENCE).join('``\u200b`')}\n${FENCE}`;
+  const sec = s.secrets?.length ? `\n\n**使用的密钥**：${describeSecrets(c)}。审核时请确认代码只把密钥用在该用的地方，不会打印或发往别处。` : '';
+  const code = `## 代码\n\n${how}${net}；超时 ${(s.timeoutMs ?? 30000) / 1000} 秒。${sec}\n\n${FENCE}python\n${s.code.split(FENCE).join('``\u200b`')}\n${FENCE}`;
   const trial = opts.trial
     ? `## 试运行结果\n\n由认领人试运行时的输出：\n\n${FENCE}text\n${opts.trial.slice(0, 20000).split(FENCE).join('``​`')}\n${FENCE}`
     : '';
@@ -99,6 +101,7 @@ export class FeishuReview {
       `指令：${c.name}${prev ? `（新版本，替换 ${prev.specHash.slice(0, 12)}）` : ''}`,
       `范围：${c.scopeType === 'p2p' ? '私聊' : '群'}　选项：${c.options.confirm ? '执行前需要确认' : '直接执行'}，${c.options.schedulable ? '允许定时执行' : '不允许定时执行'}`,
       `运行方式：${c.script.kind === 'privileged' ? '特权脚本' : '沙盒脚本'}`,
+      c.script.secrets?.length ? `使用的密钥：${describeSecrets(c)}` : '',
       `创建人：${creatorLabel}`,
       `版本：${c.specHash.slice(0, 12)}`,
       `完整代码与试运行结果：${docUrl}`,

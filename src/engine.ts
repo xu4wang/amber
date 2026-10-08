@@ -2,6 +2,28 @@ import type { Store, CommandRow, ParamDef } from './db.ts';
 import { computeSpecHash } from './db.ts';
 import { runScript, serviceDef, validateScript } from './runner.ts';
 import type { Signer } from './identity.ts';
+import { redact, type SecretVault } from './secrets.ts';
+
+let VAULT: SecretVault | undefined;
+/** The secret store used for runs (D48); set once at startup. */
+export function setSecretVault(v: SecretVault): void { VAULT = v; }
+export function secretVault(): SecretVault | undefined { return VAULT; }
+
+/** Declared secret names that have no value yet (all of them when no vault is configured). */
+export function missingSecrets(c: { chatId: string; name: string; script: { secrets?: string[] } }): string[] {
+  const names = c.script.secrets ?? [];
+  if (!names.length) return [];
+  if (!VAULT) return names;
+  return VAULT.info(c, names).filter(i => !i.set).map(i => i.name);
+}
+
+/** After a command line ends (retired, or a draft dropped / rejected with nothing active left under that
+ *  name), its secrets go too, so a later, unrelated command with the same name cannot inherit them. */
+export function dropOrphanSecrets(store: Store, chatId: string, name: string, actor: string | null): void {
+  if (!VAULT || store.activeByName(chatId, name) || store.nameInProgress(chatId, name)) return;
+  const n = VAULT.deleteAll({ chatId, name });
+  if (n) store.audit(actor, 'secret.drop_all', { chatId, name, count: n });
+}
 
 export interface Caller {
   unionId: string;
@@ -90,6 +112,14 @@ export async function runCommand(store: Store, cmd: CommandRow, rawArgs: Record<
   // confirm = true: only runnable from the confirmation form, never from a one-line shortcut (D30).
   if (cmd.options.confirm && !opts.trial && !opts.viaForm) throw new AmberError('needs_confirm', '这条指令需要在表单卡片上确认后执行');
   const args = await validateArgs(cmd.params, rawArgs, facts);
+  // Command secrets (D48): all declared names must be set before anything runs.
+  let secrets: Record<string, string> | undefined;
+  if (script.secrets?.length) {
+    if (!VAULT) throw new AmberError('no_vault', '密钥存储不可用');
+    const got = VAULT.values(cmd, script.secrets);
+    if ('missing' in got) throw new AmberError('missing_secret', `还没设置密钥：${got.missing.join('、')}。请指令创建人或管理员先设置（私聊 Amber 发「设置密钥 ${cmd.name}」，或在网站的指令页面设置）`);
+    secrets = got.values;
+  }
   const city = facts.city ? await facts.city() : undefined;
   const started = Date.now();
   const runId = store.startRun({ commandId: cmd.id, specHash: cmd.specHash, channel: opts.trial ? `${caller.channel}.trial` : caller.channel, callerUnionId: caller.unionId, chatId: caller.chatId, args });
@@ -104,7 +134,10 @@ export async function runCommand(store: Store, cmd: CommandRow, rawArgs: Record<
     store.audit(caller.unionId, 'identity.issue', { runId, service: name, aud: d.audience, count: use.calls });
     services[name] = { tokens, ...(d.tcpPort ? { tcpPort: d.tcpPort } : {}), ...(d.unixSocket ? { unixSocket: d.unixSocket } : {}) };
   }
-  const r = await runScript(script, { params: args, caller: { unionId: caller.unionId, chatId: caller.chatId, channel: caller.channel, city }, runId, ...(Object.keys(services).length ? { services } : {}) });
+  const raw = await runScript(script, { params: args, caller: { unionId: caller.unionId, chatId: caller.chatId, channel: caller.channel, city }, runId, ...(Object.keys(services).length ? { services } : {}), ...(secrets ? { secrets } : {}) });
+  // A secret that ends up in the output or the error message is masked before it is stored or shown.
+  const r = secrets ? { ...raw, content: redact(raw.content, secrets), ...(raw.error ? { error: redact(raw.error, secrets) } : {}) } : raw;
+  if (secrets) store.audit(caller.unionId, 'secret.use', { runId, commandId: cmd.id, names: Object.keys(secrets) });
   if (!r.ok) {
     store.finishRun(runId, 'failed', null, r.error ?? 'failed');
     store.audit(caller.unionId, 'run.failed', { runId, error: r.error });

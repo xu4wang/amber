@@ -7,7 +7,7 @@
 //      card in the chat; whoever clicks it is the identity, taken from the Feishu event.
 import type { Store, CommandRow, RequestRow, RequestKind, ScopeType } from './db.ts';
 import type { Caller } from './engine.ts';
-import { visibleCommands, findVisible, runCommand, validateArgs, AmberError } from './engine.ts';
+import { visibleCommands, findVisible, runCommand, validateArgs, AmberError, missingSecrets } from './engine.ts';
 import type { Signer } from './identity.ts';
 import { requestCard, runningCard, resultCard, errorCard, closedCard, person, sanitizeMarkdown } from './cards.ts';
 import { parseRule, validateRule, nextRun, describeRule, formatAt, defaultTz } from './schedule-rule.ts';
@@ -49,12 +49,15 @@ const REQUEST_TTL_MS = 24 * 3600_000;
 const REQUESTS_PER_CHAT_10MIN = 10;
 
 export function needsPerson(c: CommandRow): boolean {
-  return c.options.confirm || Object.keys(c.script.services ?? {}).length > 0;
+  // Commands with secrets (D48) always need a person: an agent alone never gets to use them.
+  return c.options.confirm || Object.keys(c.script.services ?? {}).length > 0 || !!c.script.secrets?.length;
 }
 
 /** Checks the given arguments before asking a person; values taken from the clicker (city) are filled in later. */
 async function precheck(cmd: CommandRow, args: Record<string, string>): Promise<void> {
   await validateArgs(cmd.params.map(p => (p.defaultFrom ? { ...p, required: false } : p)), args);
+  const missing = missingSecrets(cmd);
+  if (missing.length) throw new AmberError('missing_secret', `还没设置密钥：${missing.join('、')}。请指令创建人或管理员先私聊 Amber 发「设置密钥 ${cmd.name}」`);
 }
 
 export class AgentGate {
@@ -94,6 +97,8 @@ export class AgentGate {
       options: c.options,
       // How `amber run` will behave for this command.
       run: needsPerson(c) ? 'confirm_card' : 'direct',
+      // Names only; values are never exposed through the agent interface (D48).
+      ...(c.script.secrets?.length ? { secrets: c.script.secrets, secretsMissing: missingSecrets(c) } : {}),
     };
   }
 
@@ -361,7 +366,7 @@ export class AgentGate {
       try {
         const r = await runCommand(this.store, cmd, req.args, caller, { city: () => this.deps.cityOf(clicker.unionId), signer: this.deps.signer }, { viaForm: true });
         this.store.transitionRequest(req.id, 'running', r.ok ? 'done' : 'failed', { runId: r.runId, error: r.error });
-        card = r.ok ? resultCard(cmd.name, clicker.openId, r.blocks, r.runId, r.elapsedMs, cmd.id) : errorCard(cmd.name, `执行失败：${r.error}`);
+        card = r.ok ? resultCard(cmd.name, clicker.openId, r.blocks, r.runId, r.elapsedMs, cmd.id, cmd.scopeType !== 'p2p' && !!cmd.script.secrets?.length) : errorCard(cmd.name, `执行失败：${r.error}`);
       } catch (e) {
         this.store.transitionRequest(req.id, 'running', 'failed', { error: (e as Error).message });
         card = errorCard(cmd.name, e instanceof AmberError ? e.message : `出错了：${(e as Error).message}`);

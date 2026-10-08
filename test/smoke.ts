@@ -81,6 +81,9 @@ if (smoke.testChat) {
     ['定时结果', cards.scheduleResultCard(sample.name, undefined, output, 'run00001', 900, 'sch00000', '每天 09:00')],
     ['换绑卡', cards.rebindCard({ scheduleId: 'sch00000', name: sample.name, ruleText: '每天 09:00', oldHash: 'a'.repeat(64), newId: 'smoke001', newHash: 'b'.repeat(64), stillSchedulable: true })],
     ['信息卡', cards.infoCard('冒烟测试', '这是一条冒烟测试消息，会立即撤回。')],
+    ['密钥表单（私聊）', cards.secretFormCard({ ...sample, script: { ...sample.script, secrets: ['API_TOKEN', 'DB_PASSWORD'] } }, [{ name: 'API_TOKEN', set: true, last4: 'ab12', updatedAt: Date.now() }, { name: 'DB_PASSWORD', set: false }], '已保存：API_TOKEN')],
+    ['密钥：选择指令', cards.secretPickCard([{ c: sample, where: '群：测试群' }, { c: { ...sample, id: 'smoke002' }, where: '私聊' }])],
+    ['认领卡（带密钥）', claimCard({ ...sample, script: { ...sample.script, secrets: ['API_TOKEN'] } }, undefined, 'SmokeBot')],
   ];
   for (const [name, card] of all) {
     await check(`飞书接受卡片：${name}`, async () => {

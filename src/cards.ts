@@ -1,5 +1,6 @@
 import type { CommandRow } from './db.ts';
 import type { Block } from './engine.ts';
+import type { SecretInfo } from './secrets.ts';
 
 /** Executor output is untrusted text: no @mentions, no raw tags, links shown as plain text. */
 export function sanitizeMarkdown(md: string, maxChars = 6000): string {
@@ -197,10 +198,10 @@ export function runningCard(name: string, whoOpenId?: string): object {
   return shell(`Amber · ${name}`, 'wathet', [{ tag: 'markdown', content: `⏳ 正在以 ${person(whoOpenId)} 的身份执行……` }]);
 }
 
-export function resultCard(name: string, whoOpenId: string | undefined, blocks: Block[], runId: string, elapsedMs: number, cmdId: string): object {
+export function resultCard(name: string, whoOpenId: string | undefined, blocks: Block[], runId: string, elapsedMs: number, cmdId: string, sharedSecrets = false): object {
   return shell(`Amber · ${name}`, 'green', [
     ...renderBlocks(blocks),
-    { tag: 'markdown', content: `由 ${person(whoOpenId)} 执行 · ${(elapsedMs / 1000).toFixed(1)} 秒 · run ${runId}`, text_size: 'notation' },
+    { tag: 'markdown', content: `由 ${person(whoOpenId)} 执行 · ${(elapsedMs / 1000).toFixed(1)} 秒 · run ${runId}${sharedSecrets ? ' · 使用本群共用的密钥' : ''}`, text_size: 'notation' },
     btn('再执行一次', { a: 'pick', c: cmdId }),
   ]);
 }
@@ -353,4 +354,43 @@ export function rebindCard(o: { scheduleId: string; name: string; ruleText: stri
     els.push(btn('删除定时任务', { a: 'sch_drop', s: o.scheduleId }));
   }
   return shell(`Amber · 指令已更新：${o.name}`, 'orange', els);
+}
+
+// ---------- command secrets (D48)
+
+const fmtDay = (ms: number) => new Date(ms).toISOString().slice(0, 16).replace('T', ' ') + ' UTC';
+
+/** Private-chat form for a command's secrets. Values are typed here and never shown again. */
+export function secretFormCard(c: CommandRow, info: SecretInfo[], note?: string): object {
+  const where = c.scopeType === 'p2p' ? '私聊指令' : '群指令';
+  const status = info.map(i => `- **${i.name}**：${i.set ? `已设置${i.last4 ? `（末尾 ${sanitizeMarkdown(i.last4, 8)}）` : ''} · ${fmtDay(i.updatedAt!)}` : '<font color="red">未设置</font>'}`).join('\n');
+  return shell(`Amber · 设置密钥：${c.name}`, 'orange', [
+    { tag: 'markdown', content: `「**${sanitizeMarkdown(c.name, 40)}**」（${where}）运行时需要下面的密钥。这里填的值加密保存在 Amber 里，不会出现在聊天记录里，也不会交给 agent；执行时只交给这条指令。` },
+    ...(c.scopeType === 'p2p' ? [] : [{ tag: 'markdown', content: '<font color="red">这是群指令：群里每个执行它的人都会用到这些密钥。请只填权限够用的凭证。</font>' }]),
+    { tag: 'markdown', content: status },
+    ...(note ? [{ tag: 'markdown', content: `✅ ${sanitizeMarkdown(note, 300)}` }] : []),
+    {
+      tag: 'form', name: 'secrets', elements: [
+        ...info.map(i => ({
+          tag: 'input', name: i.name, input_type: 'password', label: { tag: 'plain_text', content: i.name }, label_position: 'top',
+          placeholder: { tag: 'plain_text', content: i.set ? '留空表示不修改' : '填写值（至少 6 个字符）' },
+        })),
+        btn('保存', { a: 'sec_save', c: c.id }, 'primary', { form_action_type: 'submit', name: 'save' }),
+      ],
+    },
+    { tag: 'markdown', content: '<font color="grey">只能覆盖或删除，不能再查看。删除密钥请在网站的指令页面操作。</font>', text_size: 'notation' },
+  ]);
+}
+
+/** Several commands match a name: pick one. */
+export function secretPickCard(items: { c: CommandRow; where: string }[]): object {
+  return shell('Amber · 设置密钥', 'orange', [
+    { tag: 'markdown', content: '有多条同名指令，选择要设置密钥的那一条：' },
+    ...items.map(({ c, where }) => ({
+      tag: 'column_set', flex_mode: 'none', columns: [
+        { tag: 'column', width: 'weighted', weight: 4, vertical_align: 'center', elements: [{ tag: 'markdown', content: `**${sanitizeMarkdown(c.name, 40)}** · ${sanitizeMarkdown(where, 60)}\n<font color="grey">${c.status === 'active' ? '已生效' : c.status === 'pending' ? '审核中' : '待认领'} · ${c.specHash.slice(0, 8)}</font>` }] },
+        { tag: 'column', width: 'auto', vertical_align: 'center', elements: [btn('选择', { a: 'sec_form', c: c.id }, 'primary')] },
+      ],
+    })),
+  ]);
 }

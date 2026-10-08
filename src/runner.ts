@@ -12,11 +12,16 @@ import { spawn } from 'node:child_process';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir, homedir } from 'node:os';
+import { SECRET_NAME, MAX_SECRETS } from './secrets.ts';
 
 export type ScriptKind = 'script' | 'privileged';
 /** Per-service declaration: how many calls one run may make (D41). One token is issued per call. */
 export interface ServiceUse { calls: number }
-export interface Script { kind: ScriptKind; lang: 'python'; code: string; network?: boolean; services?: Record<string, ServiceUse>; timeoutMs?: number }
+export interface Script {
+  kind: ScriptKind; lang: 'python'; code: string; network?: boolean; services?: Record<string, ServiceUse>; timeoutMs?: number;
+  /** Names of the command secrets this script needs (D48). Reviewed with the code; values are set separately. */
+  secrets?: string[];
+}
 
 export const MAX_SERVICE_CALLS = 20;
 /** Names of the services a script declares. */
@@ -63,6 +68,8 @@ export interface ScriptInput {
   runId: string;
   /** service name -> { tokens, address }, only for services the script declared. One single-use token per declared call. */
   services?: Record<string, { tokens: string[]; tcpPort?: number; unixSocket?: string }>;
+  /** Command secret name -> value, only the names the script declared (D48). */
+  secrets?: Record<string, string>;
 }
 
 export interface ScriptResult { ok: boolean; content: string; error?: string }
@@ -88,7 +95,15 @@ export function validateScript(s: unknown): Script {
     }
     const declared = Object.keys(services).length > 0;
     if (declared && x.network) throw new Error('调用内部服务的脚本不能同时开放外网（防止数据外传）');
-    return { kind: 'script', lang: 'python', code: x.code, network: !!x.network, ...(declared ? { services } : {}), ...(timeoutMs ? { timeoutMs } : {}) };
+    let secrets: string[] = [];
+    if (x.secrets !== undefined) {
+      if (!Array.isArray(x.secrets)) throw new Error('secrets 要写成密钥名称的数组，例如 ["GITLAB_TOKEN"]');
+      secrets = x.secrets.map(String);
+      for (const n of secrets) if (!SECRET_NAME.test(n)) throw new Error(`密钥名称 ${n} 不对：只能用大写字母、数字和下划线，以字母开头，最多 64 个字符`);
+      if (new Set(secrets).size !== secrets.length) throw new Error('secrets 里有重复的名称');
+      if (secrets.length > MAX_SECRETS) throw new Error(`一条指令最多声明 ${MAX_SECRETS} 个密钥`);
+    }
+    return { kind: 'script', lang: 'python', code: x.code, network: !!x.network, ...(declared ? { services } : {}), ...(timeoutMs ? { timeoutMs } : {}), ...(secrets.length ? { secrets } : {}) };
   }
   throw new Error('未知的脚本类型（只支持 script / privileged）');
 }

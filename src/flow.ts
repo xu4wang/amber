@@ -8,9 +8,10 @@ import type { Store, CommandRow, ParamDef, Script, CommandOptions } from './db.t
 import { normalizeOptions } from './db.ts';
 import { computeSpecHash } from './db.ts';
 import { validateScript, describeServices } from './runner.ts';
+import { describeSecrets } from './secrets.ts';
 import type { FeishuReview } from './feishu-review.ts';
 import type { Caller, CallerFacts, Block } from './engine.ts';
-import { runCommand, AmberError } from './engine.ts';
+import { runCommand, AmberError, dropOrphanSecrets } from './engine.ts';
 import { sanitizeMarkdown, person, renderBlocks, buttonRow } from './cards.ts';
 import { lineDiff } from './diff.ts';
 
@@ -60,6 +61,7 @@ function specSummary(c: CommandRow): string {
     `**参数**：${sanitizeMarkdown(params, 300)}`,
     `**选项**：${c.options.confirm ? '<font color="red">执行前需要确认</font>' : '直接执行'}；${c.options.schedulable ? '允许定时执行' : '不允许定时执行'}`,
     `**运行方式**：${how}`,
+    ...(s.secrets?.length ? [`**密钥**：${sanitizeMarkdown(describeSecrets(c), 400)}`] : []),
   ].join('\n');
 }
 
@@ -84,7 +86,7 @@ function changePanels(c: CommandRow, prev: CommandRow): unknown[] {
   if (JSON.stringify(prev.options) !== JSON.stringify(c.options)) changed.push('选项');
   if (prev.description !== c.description) changed.push('说明');
   const { code: _a, ...prevRun } = prev.script; const { code: _b, ...nextRun } = c.script;
-  if (JSON.stringify(prevRun) !== JSON.stringify(nextRun)) changed.push('运行方式（联网、服务、超时）');
+  if (JSON.stringify(prevRun) !== JSON.stringify(nextRun)) changed.push('运行方式（联网、服务、超时、密钥）');
   const d = lineDiff(prev.script.code, c.script.code);
   const codeLine = d === null ? '代码改动太大，无法逐行比较，请看完整代码' : d.stat.added || d.stat.removed ? `代码：新增 ${d.stat.added} 行，删除 ${d.stat.removed} 行` : '代码没有变化';
   const els: unknown[] = [{ tag: 'markdown', content: `**与当前版本的差异**：${changed.length ? changed.join('、') + '有变化；' : ''}${codeLine}` }];
@@ -116,8 +118,11 @@ export function claimCard(c: CommandRow, trial?: { by?: string; blocks?: Block[]
     els.push(...renderBlocks(trial.blocks));
   }
   els.push({ tag: 'markdown', content: '<font color="grey">试运行就是以你的身份真实执行一次。</font>' });
+  if (c.script.secrets?.length) els.push({ tag: 'markdown', content: '<font color="grey">这条指令需要密钥：先点「设置密钥」，Amber 会私聊你填写，再试运行。</font>' });
   const buttons: unknown[] = [];
   if (trial?.blocks) buttons.push(btn('提交审核', { a: 'claim_submit', c: c.id }, 'primary'));
+  // Secrets are typed in the clicker's private chat with Amber, never on this card (D48).
+  if (c.script.secrets?.length) buttons.push(btn('设置密钥', { a: 'sec_form', c: c.id }));
   buttons.push(btn('丢弃', { a: 'claim_drop', c: c.id }, 'danger'));
   if (c.params.length) {
     // Commands with parameters: the trial run takes its inputs from a small form. The other buttons
@@ -334,6 +339,7 @@ export class Flow {
       await note(`**${new Date().toISOString().slice(0, 16).replace('T', ' ')} UTC：飞书审批通过，指令已生效。**`);
     } else if (inst.status === 'REJECTED' || inst.status === 'CANCELED' || inst.status === 'DELETED') {
       this.store.setStatus(c.id, 'rejected');
+      dropOrphanSecrets(this.store, c.chatId, c.name, null);
       const why = inst.status === 'REJECTED' ? `审核人驳回${inst.comments.length ? `：${inst.comments.join('；')}` : ''}` : '审批已撤回';
       this.store.audit(null, 'review.feishu_closed', { id: c.id, instanceCode, status: inst.status });
       if (meta.claimMessageId) await this.patch(meta.claimMessageId, shell(`未通过：${c.name}`, 'red', [{ tag: 'markdown', content: sanitizeMarkdown(why, 500) }]));
@@ -393,6 +399,7 @@ export class Flow {
     if (action === 'claim_drop') {
       this.store.setStatus(c.id, 'rejected');
       this.store.audit(caller.unionId, 'draft.drop', { id: c.id });
+      dropOrphanSecrets(this.store, c.chatId, c.name, caller.unionId);
       return shell(`已丢弃：${c.name}`, 'grey', [{ tag: 'markdown', content: `由 ${person(caller.openId)} 丢弃。` }]);
     }
     if (action !== 'claim_drop') this.checkOwnerForNewVersion(c, caller);
@@ -462,6 +469,7 @@ export class Flow {
     const meta = this.store.getMeta(c.id);
     if (decision === 'reject') {
       this.store.setStatus(c.id, 'rejected');
+      dropOrphanSecrets(this.store, c.chatId, c.name, caller.unionId);
       if (meta.claimMessageId) await this.patch(meta.claimMessageId, shell(`已驳回：${c.name}`, 'red', [{ tag: 'markdown', content: `审核人驳回：${sanitizeMarkdown(reason.trim(), 300)}` }]));
     } else if (approved >= this.reviewers.length) {
       await this.activate(c, { via: 'card_review' });

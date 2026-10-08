@@ -78,9 +78,10 @@ amber global 天气 --user user@example.com          # 设为全局 / amber loca
 - **输入**：从标准输入读一个 JSON：
   ```json
   {"params": {"city": "北京"}, "caller": {"unionId": "on_…", "chatId": "oc_…", "channel": "bot|agent|schedule", "city": "北京"}, "runId": "…",
-   "services": {"data-mcp": {"tokens": ["…", "…"], "tcpPort": 8765}}}
+   "services": {"data-mcp": {"tokens": ["…", "…"], "tcpPort": 8765}},
+   "secrets": {"API_TOKEN": "…"}}
   ```
-  `services` 只有声明了服务时才有。草稿里写 `"services": {"data-mcp": {"calls": 2}}`（每次执行最多调用几次，1–20），运行时就拿到 2 张凭证，**每次请求用一张、不能重复用**。参数一律从这里取，不要从命令行或环境变量读。
+  `services` 只有声明了服务时才有。草稿里写 `"services": {"data-mcp": {"calls": 2}}`（每次执行最多调用几次，1–20），运行时就拿到 2 张凭证，**每次请求用一张、不能重复用**。参数一律从这里取，不要从命令行或环境变量读。`secrets` 只有声明了密钥时才有，见下面「需要 token、密码时」。
 - **输出**：往标准输出打印 Markdown。可以用普通 Markdown 和表格，以及：
   - ` ```vega-lite `：图表（柱状图、折线图、饼图（mark: arc，theta=数值、color=类别）会转成飞书原生图表；其他图只在网站上显示）
   - ` ```table `：数据表，`{"columns":[{"name","label","type":"text|number"}],"rows":[…],"total":N}`
@@ -106,6 +107,7 @@ amber global 天气 --user user@example.com          # 设为全局 / amber loca
 - `options.confirm`：执行前必须确认（会改数据、有风险时打开）。
 - `options.schedulable`：允许定时执行。**不写时默认为 true**；不适合定时的（比如有副作用、或结果每次都需要人看着执行的）请显式写 `false`。
 - `script.kind` 只能用 `script`。`privileged` 已停用，提交会被拒绝。
+- **需要 token、密码时**：在 `script` 里写 `"secrets": ["API_TOKEN"]`（只写名字：大写字母、数字、下划线，最多 10 个），脚本从输入的 `secrets` 里取值。**不要向用户要密钥的值，也不要把值写进代码或草稿**；告诉用户：认领卡上点「设置密钥」（或私聊 Amber 发「设置密钥 指令名」），在私聊卡片上填写，然后再试运行。不要打印密钥（打印出来也会被遮成 `***`）。群指令的密钥由所有执行人共用；只给一个人用的凭证，指令要提交到私聊（`p2p`）。需要密钥的指令总是要人点确认卡才能执行，`amber show` 会列出还没设置的密钥。
 
 ### 修改已有指令
 

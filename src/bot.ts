@@ -1,8 +1,8 @@
 import * as lark from '@larksuiteoapi/node-sdk';
 import type { Store, CommandRow } from './db.ts';
 import type { Caller } from './engine.ts';
-import { visibleCommands, findVisible, runCommand, AmberError } from './engine.ts';
-import { listCard, formCard, runningCard, resultCard, errorCard, infoCard, retireConfirmCard, closedCard } from './cards.ts';
+import { visibleCommands, findVisible, runCommand, AmberError, secretVault, dropOrphanSecrets } from './engine.ts';
+import { listCard, formCard, runningCard, resultCard, errorCard, infoCard, retireConfirmCard, closedCard, secretFormCard, secretPickCard } from './cards.ts';
 import type { AmberConfig } from './config.ts';
 import { Flow } from './flow.ts';
 import { Signer } from './identity.ts';
@@ -83,11 +83,84 @@ export class AmberBot {
     this.store.setStatus(c.id, 'retired');
     this.store.audit(actor.unionId, 'command.retire', { id: c.id, name: c.name, specHash: c.specHash });
     log('command retired', c.id, c.name);
+    dropOrphanSecrets(this.store, c.chatId, c.name, actor.unionId);
     const schedules = await this.scheduler.onCommandRetired(c, byLabel);
     return { name: c.name, schedules };
   }
 
   isAdminPublic(unionId: string): boolean { return this.isAdmin(unionId); }
+
+  /** Who may set a command's secrets (D48): its creator or an admin; for a new draft, whoever may claim it. */
+  async checkSecretEditor(c: CommandRow, unionId: string): Promise<void> {
+    if (!c.script.secrets?.length) throw new AmberError('no_secrets', `「${c.name}」没有声明需要密钥`);
+    if (this.isAdmin(unionId)) return;
+    if (c.status === 'active' || c.status === 'pending') {
+      if (c.ownerUnionId === unionId) return;
+      throw new AmberError('forbidden', '只有指令的创建人或管理员可以设置密钥');
+    }
+    if (c.status === 'draft') {
+      const prev = this.flow.prevOf(c.id);
+      if (prev) { if (prev.ownerUnionId === unionId) return; throw new AmberError('forbidden', `这是「${c.name}」的新版本，只有原创建人或管理员可以设置密钥`); }
+      const meta = this.store.getMeta(c.id);
+      if (meta.expectedClaimer) { if (meta.expectedClaimer === unionId) return; throw new AmberError('forbidden', '只有指定的认领人可以设置密钥'); }
+      if (c.scopeType === 'group' && (await this.isMember(c.chatId, unionId)) === true) return;
+      throw new AmberError('forbidden', '只有草稿所在群的成员可以设置密钥');
+    }
+    throw new AmberError('stale', '这条指令已下线或没有通过审核，不能设置密钥');
+  }
+
+  private secretCard(c: CommandRow, note?: string): object {
+    return secretFormCard(c, secretVault()!.info(c, c.script.secrets ?? []), note);
+  }
+
+  /** Commands named `name` whose secrets this person may set. */
+  private async secretTargets(name: string, unionId: string): Promise<CommandRow[]> {
+    const out: CommandRow[] = [];
+    for (const c of this.store.listAll()) {
+      if (c.name !== name || !c.script.secrets?.length || !['draft', 'pending', 'active'].includes(c.status)) continue;
+      try { await this.checkSecretEditor(c, unionId); out.push(c); } catch { /* not theirs */ }
+    }
+    return out;
+  }
+
+  /** Secrets are only ever typed in the person's private chat with Amber. */
+  private async secretEntry(text: string, caller: Caller, messageId: string, inThread: boolean): Promise<void> {
+    const targets = await this.secretTargets(text, caller.unionId);
+    if (!targets.length) {
+      await this.replyCard(messageId, inThread, errorCard('Amber', `没有找到你可以设置密钥的指令「${text}」（需要指令声明了密钥，并且你是创建人或管理员）`));
+      return;
+    }
+    let card: object;
+    if (targets.length === 1) card = this.secretCard(targets[0]);
+    else card = secretPickCard(await Promise.all(targets.map(async c => ({ c, where: c.scopeType === 'p2p' ? '私聊' : `群：${(await this.chatName(c.chatId)) ?? c.chatId}` }))));
+    if (caller.chatType === 'p2p') { await this.replyCard(messageId, inThread, card); return; }
+    await this.flow.send({ unionId: caller.unionId }, card);
+    await this.replyCard(messageId, inThread, infoCard('设置密钥', '密钥只能在私聊里填写，已私聊发给你。'));
+  }
+
+  private async onSecretAction(a: string, cmdId: string, caller: Caller, form: Record<string, string>): Promise<object> {
+    const c = this.store.getCommand(cmdId);
+    if (!c) throw new AmberError('not_found', '指令不存在');
+    await this.checkSecretEditor(c, caller.unionId);
+    if (a === 'sec_form') {
+      if (caller.chatType === 'p2p') return { card: { type: 'raw', data: this.secretCard(c) } };
+      await this.flow.send({ unionId: caller.unionId }, this.secretCard(c));
+      return { toast: { type: 'info', content: '已私聊你填写密钥' } };
+    }
+    // sec_save: only from the private chat, only declared names, empty = unchanged.
+    if (caller.chatType !== 'p2p') throw new AmberError('p2p_only', '密钥只能在和 Amber 的私聊里填写');
+    const saved: string[] = [];
+    for (const n of c.script.secrets ?? []) {
+      const v = (form[n] ?? '').trim();
+      if (!v) continue;
+      try { secretVault()!.set(c, n, v, caller.unionId); } catch (e) { throw new AmberError('bad_secret', `${n}：${(e as Error).message}`); }
+      saved.push(n);
+    }
+    if (!saved.length) throw new AmberError('empty', '没有填写任何值');
+    this.store.audit(caller.unionId, 'secret.set', { commandId: c.id, chatId: c.chatId, name: c.name, secrets: saved, via: 'bot' });
+    log('secrets set', c.id, saved.join(','));
+    return { card: { type: 'raw', data: this.secretCard(c, `已保存：${saved.join('、')}`) } };
+  }
 
   /** Email → ids as seen by Amber's app. */
   async resolveUser(email: string): Promise<{ unionId: string; openId?: string } | undefined> {
@@ -232,7 +305,7 @@ export class AmberBot {
     this.store.audit(caller.unionId, toGlobal ? 'scope.promote' : 'scope.demote', { id: cmd.id, name: cmd.name });
     log('scope', toGlobal ? 'promote' : 'demote', cmd.id, cmd.name);
     await this.replyCard(messageId, inThread, infoCard('执行范围已修改', toGlobal
-      ? `「${cmd.name}」（${cmd.id}）已设为**全局**：Amber 所在的任何群和私聊都能使用。`
+      ? `「${cmd.name}」（${cmd.id}）已设为**全局**：Amber 所在的任何群和私聊都能使用。${cmd.script.secrets?.length ? `\n\n⚠️ 这条指令使用密钥（${cmd.script.secrets.join('、')}）：设为全局后，任何地方执行都会用到同一份密钥。` : ''}`
       : `「${cmd.name}」（${cmd.id}）已改回**只在创建处可用**。`));
     return true;
   }
@@ -307,6 +380,11 @@ export class AmberBot {
       } catch (e) {
         await this.replyCard(msg.message_id, inThread, errorCard('Amber', e instanceof AmberError ? e.message : '出错了'));
       }
+      return;
+    }
+    if (parts.length === 2 && ['设置密钥', '密钥', 'secrets'].includes(parts[0].toLowerCase())) {
+      try { await this.secretEntry(parts[1], caller, msg.message_id, inThread); }
+      catch (e) { await this.replyCard(msg.message_id, inThread, errorCard('Amber', e instanceof AmberError ? e.message : '出错了')); }
       return;
     }
     if (parts.length === 1 && ['定时任务', '定时', 'schedules'].includes(parts[0].toLowerCase())) {
@@ -423,7 +501,7 @@ export class AmberBot {
     try {
       const r = await runCommand(this.store, cmd, raw, caller, { city: () => this.cityOf(caller.unionId), signer: this.signer }, { viaForm });
       if (!r.ok) return errorCard(cmd.name, `执行失败：${r.error}`, cmd.id);
-      return resultCard(cmd.name, caller.openId, r.blocks, r.runId, r.elapsedMs, cmd.id);
+      return resultCard(cmd.name, caller.openId, r.blocks, r.runId, r.elapsedMs, cmd.id, cmd.scopeType !== 'p2p' && !!cmd.script.secrets?.length);
     } catch (e) {
       return errorCard(cmd.name, e instanceof AmberError ? e.message : `出错了：${(e as Error).message}`, cmd.id);
     }
@@ -492,6 +570,9 @@ export class AmberBot {
       }
       if (typeof value.a === 'string' && value.a.startsWith('claim_')) {
         return raw(await this.flow.onClaimAction(value.a, String(value.c), caller, { city: () => this.cityOf(caller.unionId), signer: this.signer }));
+      }
+      if (value.a === 'sec_form' || value.a === 'sec_save') {
+        return await this.onSecretAction(value.a, String(value.c), caller, d.action?.form_value ?? {});
       }
       if (value.a === 'review_ok' || value.a === 'review_no') {
         const reason = String(d.action?.form_value?.reason ?? '');

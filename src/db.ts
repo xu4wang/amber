@@ -144,6 +144,17 @@ export class Store {
       ['review_doc_id', 'TEXT'],
       ['replaces', 'TEXT'],              // id of the active command this draft is a new version of (D38)
     ] as const) if (!cols.includes(col)) this.db.exec(`ALTER TABLE commands ADD COLUMN ${col} ${ddl}`);
+    // Command secrets (D48): encrypted values, keyed by the command's lineage (chat + name) so a new version keeps them.
+    this.db.exec(`CREATE TABLE IF NOT EXISTS command_secrets (
+      chat_id TEXT NOT NULL,
+      cmd_name TEXT NOT NULL,
+      name TEXT NOT NULL,
+      cipher TEXT NOT NULL,
+      last4 TEXT NOT NULL DEFAULT '',
+      set_by TEXT NOT NULL,
+      updated_at INTEGER NOT NULL,
+      PRIMARY KEY (chat_id, cmd_name, name)
+    )`);
     this.db.exec(`CREATE TABLE IF NOT EXISTS reviews (
       command_id TEXT NOT NULL,
       spec_hash TEXT NOT NULL,
@@ -589,6 +600,25 @@ export class Store {
   groupChatsWithContent(): string[] {
     return (this.db.prepare(`SELECT DISTINCT chat_id FROM commands WHERE status = 'active' AND scope_type = 'group'
       UNION SELECT DISTINCT chat_id FROM schedules WHERE status != 'deleted' AND chat_type = 'group'`).all() as { chat_id: string }[]).map(r => r.chat_id);
+  }
+
+  putSecret(chatId: string, cmdName: string, name: string, cipher: string, last4: string, by: string): void {
+    this.db.prepare(`INSERT INTO command_secrets (chat_id, cmd_name, name, cipher, last4, set_by, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT (chat_id, cmd_name, name) DO UPDATE SET cipher = excluded.cipher, last4 = excluded.last4, set_by = excluded.set_by, updated_at = excluded.updated_at`)
+      .run(chatId, cmdName, name, cipher, last4, by, Date.now());
+  }
+
+  secretRows(chatId: string, cmdName: string): { name: string; cipher: string; last4: string; setBy: string; updatedAt: number }[] {
+    return (this.db.prepare(`SELECT name, cipher, last4, set_by, updated_at FROM command_secrets WHERE chat_id = ? AND cmd_name = ? ORDER BY name`).all(chatId, cmdName) as Record<string, unknown>[])
+      .map(r => ({ name: String(r.name), cipher: String(r.cipher), last4: String(r.last4), setBy: String(r.set_by), updatedAt: Number(r.updated_at) }));
+  }
+
+  deleteSecret(chatId: string, cmdName: string, name: string): boolean {
+    return Number(this.db.prepare(`DELETE FROM command_secrets WHERE chat_id = ? AND cmd_name = ? AND name = ?`).run(chatId, cmdName, name).changes) > 0;
+  }
+
+  deleteSecretsOf(chatId: string, cmdName: string): number {
+    return Number(this.db.prepare(`DELETE FROM command_secrets WHERE chat_id = ? AND cmd_name = ?`).run(chatId, cmdName).changes);
   }
 
   audit(actorUnionId: string | null, action: string, detail: Record<string, unknown>): void {

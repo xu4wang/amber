@@ -206,8 +206,12 @@ def main(argv):
         r = call("POST", "/v1/commands/show", dict(ctx, command=pos[1]))
         c = r.get("command") or {}
         how = "直接执行，结果返回给你" if c.get("run") == "direct" else "需要人在飞书确认卡片上点一下（以点击人的身份执行）"
-        return out(r, opts, "%s（%s）\n%s\n参数：\n%s\n执行方式：%s\n允许定时：%s" % (
-            c.get("name"), c.get("id"), c.get("description") or "", fmt_params(c), how, "是" if c.get("options", {}).get("schedulable") else "否"))
+        sec = ""
+        if c.get("secrets"):
+            miss = c.get("secretsMissing") or []
+            sec = "\n密钥：%s%s" % ("、".join(c["secrets"]), "（还没设置：%s，请创建人私聊 Amber 发「设置密钥 %s」）" % ("、".join(miss), c.get("name")) if miss else "（已设置）")
+        return out(r, opts, "%s（%s）\n%s\n参数：\n%s\n执行方式：%s\n允许定时：%s%s" % (
+            c.get("name"), c.get("id"), c.get("description") or "", fmt_params(c), how, "是" if c.get("options", {}).get("schedulable") else "否", sec))
     if cmd == "run":
         if len(pos) < 2:
             raise Usage()

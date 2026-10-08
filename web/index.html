@@ -400,6 +400,10 @@ function cmdPane(key, { c, scope }) {
     </div>
     <div class="result-area"><h3 class="note" style="margin:0 0 8px">执行结果</h3>
     <div class="output wait" id="out">${last ? '' : '还没有在这里执行过。'}</div></div>
+    ${(c.secrets || []).length ? `<div class="manage"><h3 class="note">密钥</h3>
+      <p class="note">这条指令运行时需要下面的密钥。值加密保存在 Amber 里，只交给这条指令使用，设置后不能再查看。${scope.startsWith('group:') || scope === 'global' ? '<br><b>群里（或全局）每个执行它的人都会用到同一份密钥</b>，请只填权限够用的凭证。' : ''}${c.canManage ? '' : '<br>只有创建人或管理员可以设置。'}</p>
+      ${c.secrets.map(x => `<div class="field"><label>${esc(x.name)}</label><span class="examples">${c.canManage ? `<input type="password" autocomplete="new-password" data-secret-input="${esc(x.name)}" placeholder="${x.set ? '留空不修改' : '填写值（至少 6 个字符）'}"> <button type="button" class="btn small" data-secret="${esc(x.name)}:set">保存</button>${x.set ? ` <button type="button" class="btn small" data-secret="${esc(x.name)}:delete">删除</button>` : ''}<br>` : ''}<span class="note">${x.set ? `已设置${x.last4 ? ' · 末尾 ' + esc(x.last4) : ''}` : '<span style="color:var(--warn)">未设置</span>'}</span></span></div>`).join('')}
+    </div>` : ''}
     ${c.canManage ? `<div class="manage"><h3 class="note">管理</h3>
       <p class="note">要修改这条指令，跟你的 agent 说改什么，它会提交新版本，审核通过后自动替换。不再需要时可以下线：下线后不能再执行，它的定时任务会暂停。</p>
       <button class="btn" data-retire="1">下线这条指令</button></div>` : ''}`;
@@ -454,7 +458,8 @@ async function loadSource() {
   const gutter = code.split('\n').map((_, i) => i + 1).join('\n');
   el.className = '';
   el.innerHTML = `<dl class="kv">
-      <dt>运行方式</dt><dd>${esc(how)}，${esc(net)}，超时 ${sc.timeoutMs / 1000} 秒</dd>
+      <dt>运行方式</dt><dd>${esc(how)}，${esc(net)}，超时 ${sc.timeoutMs / 1000} 秒</dd>${(sc.secrets || []).length ? `
+      <dt>密钥</dt><dd>${esc(sc.secrets.join('、'))}（值不在代码里，运行时由 Amber 交给脚本）</dd>` : ''}
       <dt>语言</dt><dd>${esc(sc.lang)}</dd>
       <dt>版本</dt><dd>第 ${x.history.length + 1} 版 · <code>${esc(x.specHash)}</code></dd>
       <dt>生效时间</dt><dd>${fmtTime(x.createdAt)}</dd>
@@ -556,6 +561,20 @@ document.addEventListener('click', async ev => {
     history.replaceState(null, '', '#');
     await reload(null);
     welcome();
+    return;
+  }
+  const sec = ev.target.closest('[data-secret]');
+  if (sec) {
+    const { c, scope } = ITEMS.get(SEL);
+    const [name, op] = sec.dataset.secret.split(':');
+    const input = document.querySelector(`[data-secret-input="${CSS.escape(name)}"]`);
+    if (op === 'set' && !(input && input.value)) { alert('请先填写值'); return; }
+    if (op === 'delete' && !confirm(`删除密钥 ${name}？删除后这条指令不能运行，直到重新设置。`)) return;
+    sec.disabled = true;
+    const r = await post(`/web/api/commands/${encodeURIComponent(c.id)}/secrets`, op === 'set' ? { scope, name, value: input.value } : { scope, name, delete: true });
+    if (input) input.value = '';
+    if (!r.ok) { alert(r.message || r.error); sec.disabled = false; return; }
+    await reload(SEL);
     return;
   }
   const sch = ev.target.closest('[data-sch]');
