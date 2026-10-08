@@ -19,8 +19,23 @@ Amber 是一个常驻服务，需要 macOS 和 Node.js 24 及以上版本。一�
 ```sh
 git clone https://github.com/xu4wang/amber.git ~/amber
 cd ~/amber
-npm install          # 唯一的依赖是 @larksuiteoapi/node-sdk
+npm ci               # 按 package-lock.json 安装，结果可复现；唯一的直接依赖是 @larksuiteoapi/node-sdk
+git rev-parse HEAD   # 记下部署的是哪个提交
 ```
+
+**连不上 GitHub 的机器**（比如只能访问 raw.githubusercontent.com）：在一台能访问的机器上打一个 git bundle 传过去，带完整历史，比打压缩包好核对：
+
+```sh
+# 能访问 GitHub 的机器上（本地 main 与 origin/main 一致时）
+git bundle create amber.bundle main
+shasum -a 256 amber.bundle; git rev-parse main main^{tree}
+# 目标机器上
+shasum -a 256 amber.bundle            # 对上面的哈希
+git clone -b main amber.bundle ~/amber
+cd ~/amber && git rev-parse HEAD HEAD^{tree}    # 对上面的 commit 和 tree
+```
+
+打包时要用本地分支名（`main`），不要用 `origin/main`：后者打出来的分支名是 `refs/remotes/origin/main`，`git clone -b main` 会找不到。如果目标机器能访问 raw.githubusercontent.com，再按同一个 commit 下载一个源码文件比对哈希，就能独立证明 bundle 和 GitHub 上的一致。
 
 ## 3. 配置
 
@@ -93,7 +108,16 @@ AMBER_LARK_APP_SECRET=xxxxxxxxxxxxxxxx
 cd ~/amber && node --no-warnings src/main.ts
 ```
 
-日志里依次出现 `long connection started`、`scheduler started`、`api listening on 127.0.0.1:7341`、`web listening on 127.0.0.1:7342`，就说明启动成功。
+**进程起来不等于功能可用。** 以下几条都满足，才算启动成功：
+
+| 检查 | 期望 |
+|---|---|
+| 启动标志 | 日志里依次出现 `long connection started`、`scheduler started`、`api listening on 127.0.0.1:7341`、`web listening on 127.0.0.1:7342` |
+| 管理员解析 | `admins resolved N of N entries`，两个 N 相等 |
+| 审核人解析 | `reviewers resolved N open_ids N`，两个 N 相等 |
+| 不能出现 | `REVIEW DISABLED`、`admin email lookup failed`、错误码 `99991672` |
+
+四个启动标志都出现、但有下面这几行时，进程是活的，**审核和管理员功能却是关着的**，原因通常是缺 `contact:user.id:readonly` 权限或者没重新发布，见 [feishu-setup.md](feishu-setup.md#7-检查清单)。
 
 | 端口 | 用途 | 绑定地址 |
 |---|---|---|
@@ -137,6 +161,15 @@ cd ~/amber && node --no-warnings src/main.ts
 launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.example.amber.plist   # 加载并启动
 launchctl kickstart -k gui/$(id -u)/com.example.amber                              # 重启（更新代码后）
 launchctl bootout gui/$(id -u)/com.example.amber                                   # 停止并卸载
+```
+
+装完后自检：
+
+```sh
+command -v node                                        # plist 里的 node 路径要和这里一致，版本 ≥ 24
+plutil -lint ~/Library/LaunchAgents/com.example.amber.plist
+launchctl print gui/$(id -u)/com.example.amber | grep -E 'state|pid|last exit'   # state = running
+lsof -nP -iTCP:7341 -iTCP:7342 -sTCP:LISTEN            # 两个端口都在监听
 ```
 
 ## 5. 反向代理（nginx）
@@ -199,3 +232,29 @@ server {
 | 回归测试 | `npm test`：起一个隔离的 Amber（临时数据库 + 假飞书），覆盖认领、审核、新版本、下线、agent 三档、定时任务、网站、可信身份和沙盒，几秒跑完，不碰真实飞书和线上数据。改代码后先跑它 |
 | 冒烟测试 | `npm run smoke`：在 Amber 所在机器上检查真实部署（接口、网站、前端库完整性）。在 `~/.config/amber/smoke.json` 写 `{"testChat": "oc_…"}`（一个拉了 Amber 的测试群）后，还会把每种卡片真实发到飞书验证格式，发完立即撤回 |
 | 审计 | 数据库 `audit` 表，记录提交、认领、审核、执行、签发凭证、定时任务、登录等所有动作 |
+
+## 8. 本机隔离测试部署（最小方案）
+
+只想在自己机器上试用 Amber、不和别人共用时，可以按下面的最小方案部署。它和正式部署的区别是：**接口只给本机用、不需要 nginx、不接飞书审批和知识库**，审核改用卡片上的「通过 / 驳回」按钮。
+
+1. **新建一个飞书应用**，不要复用已有 Amber 的应用（原因见 [feishu-setup.md](feishu-setup.md#1-创建应用) 的警告）。权限只需要第 2 节表里除「审批」「知识库」「文档」以外的几项；事件和回调按第 3 节配好，并确认「已订阅的回调」里有 `card.action.trigger`；然后发布。
+2. 确认环境：`node -v` ≥ 24；7341、7342 两个端口没有被占用（`lsof -nP -iTCP:7341 -iTCP:7342 -sTCP:LISTEN` 没有输出）。
+3. 按第 2 节拉代码、执行 `npm ci`。
+4. 写配置，目录权限 700，两个文件权限 600：
+   - `lark-app.env`：填新应用的 App ID 和 Secret；
+   - `config.json`：
+     ```json
+     {
+       "admins": ["你的邮箱"],
+       "reviewers": ["你的邮箱"],
+       "machines": { "127.0.0.1": "<本机名>" },
+       "webBaseUrl": "http://127.0.0.1:7342"
+     }
+     ```
+     `machines` 只放 `127.0.0.1`：只有本机的 agent 能调用接口，外部访问不到。
+5. 前台启动，按第 4 节的表逐项确认，然后按第 4 节改成 launchd 常驻并做自检。
+6. 本机的客户端指向这套：`amber config set-url http://127.0.0.1:7341`，`amber info` 显示的本机名应和 `machines` 里填的一致。
+7. 冒烟：把新应用拉进一个测试群，**同时拉进要用它的 agent**，@它发「帮助」；再让 agent 提交一个没有副作用的草稿（比如只打印一行文字），走一遍认领 → 试运行 → 审核。
+8. 重试前先在旧认领卡上点「丢弃」，避免留下多份草稿；测试指令不用了就下线（让 agent 执行 `amber retire <指令>`，再点确认卡）。
+
+这套和组织里的正式 Amber 是**完全独立**的：指令、审核、定时任务、运行记录都不互通。

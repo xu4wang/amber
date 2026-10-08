@@ -9,9 +9,20 @@
 在每台跑 agent 的机器上执行：
 
 ```sh
+mkdir -p ~/.local/bin
 curl -fsSL https://raw.githubusercontent.com/xu4wang/amber/main/client/amber -o ~/.local/bin/amber
 chmod 755 ~/.local/bin/amber
 ```
+
+**要确认装的是哪一版**（比如多台机器要保持一致）：把上面地址里的 `main` 换成具体的 commit，按 commit 下载，再算哈希：
+
+```sh
+C=<commit>
+curl -fsSL https://raw.githubusercontent.com/xu4wang/amber/$C/client/amber -o /tmp/amber.new
+shasum -a 256 /tmp/amber.new     # 和在仓库里对同一个 commit 算出的结果比对：git show $C:client/amber | shasum -a 256
+```
+
+升级时也照这个办法：先下载到临时文件、核对哈希，再覆盖。
 
 如果机器上网要走代理，也可以从 Amber 所在的机器用 scp 拷过去。有的机器 `~/.local/bin` 不在 PATH 里，这时用完整路径调用。
 
@@ -20,7 +31,11 @@ chmod 755 ~/.local/bin/amber
 | agent | 位置 |
 |---|---|
 | Claude Code（默认配置） | `~/.claude/skills/amber/SKILL.md` |
+| Codex（默认配置） | `~/.codex/skills/amber/SKILL.md` |
 | botmux 里每个 bot 自己的 Claude 配置 | `~/.botmux/bots/<appId>/claude/skills/amber/SKILL.md` |
+| botmux 里每个 bot 自己的 Codex 配置 | `~/.botmux/bots/<appId>/codex/skills/amber/SKILL.md` |
+
+**先确认 bot 实际用的是哪个配置目录，再决定装到哪里。** botmux 里每个 bot 可能是 Claude 也可能是 Codex（看 `~/.botmux/bots.json` 里该 bot 的 `cliId`），也可能没有自己的配置目录、直接用全局配置。判断办法：`~/.botmux/bots/<appId>/claude` 或 `…/codex` 存在并且有配置文件（Codex 是 `config.toml` 或 `auth.json`），才说明这个 bot 用它自己的目录；否则装到全局目录就行，**不要凭空新建一个 bot 专属目录**，建了也不会被加载。
 
 skill 在 agent 开新会话时加载，已经在跑的会话看不到。
 
