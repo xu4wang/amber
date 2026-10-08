@@ -1,0 +1,44 @@
+# Publishes docs/ to the documentation site https://xu4wang.github.io/amber-manual/docs/
+# (repo xu4wang/amber-manual, which also hosts the video manual).
+# Needs secret AMBER_MANUAL_DEPLOY_KEY: the private half of a deploy key with write access on xu4wang/amber-manual.
+name: docs-site
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'docs/**'
+      - 'web/docs.html'
+      - 'web/vendor/**'
+      - 'web/logo.svg'
+      - 'src/web.ts'
+      - 'scripts/build-docs-site.mjs'
+      - '.github/workflows/docs-site.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: docs-site
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: xu4wang/amber-manual
+          ssh-key: ${{ secrets.AMBER_MANUAL_DEPLOY_KEY }}
+          path: site
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: node scripts/build-docs-site.mjs site
+      - name: Commit and push if anything changed
+        working-directory: site
+        run: |
+          git add -A docs vendor logo.svg
+          if git diff --cached --quiet; then echo "docs site already up to date"; exit 0; fi
+          git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+            commit -m "文档：同步 xu4wang/amber@${GITHUB_SHA::7}"
+          git push
