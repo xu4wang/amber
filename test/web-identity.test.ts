@@ -106,8 +106,12 @@ test('identity token: the service receives a token for the person who clicked, t
     const card = env.fake.sent.at(-1)!;
     await env.click(env.bob, card.id, { a: 'req_ok', r: r.body.requestId });
     const w = await env.api('GET', `/v1/requests/${r.body.requestId}?wait=15`);
-    assert.match(w.body.markdown, new RegExp(`user=${env.bob.unionId}`));
-    assert.match(w.body.markdown, /other port blocked/);
+    assert.equal(w.body.status, 'done');
+    // The output (with the clicker's identity) is on the card, not returned to the agent.
+    assert.equal(w.body.markdown, undefined);
+    const out = env.amber.store.getRun(env.amber.store.getRequest(r.body.requestId)!.runId!)!.result ?? '';
+    assert.match(out, new RegExp(`user=${env.bob.unionId}`));
+    assert.match(out, /other port blocked/);
     const last = seen.at(-1);
     assert.equal(last.good, true);
     assert.equal(last.payload.sub, env.bob.unionId);

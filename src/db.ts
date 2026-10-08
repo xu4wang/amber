@@ -409,7 +409,8 @@ export class Store {
   }
 
   startRun(r: { commandId: string; specHash: string; channel: string; callerUnionId: string; chatId: string; args: Record<string, string> }): string {
-    const id = randomUUID().slice(0, 8);
+    // Full random id: run and request ids are printed on cards, and must not be enumerable.
+    const id = randomUUID();
     this.db.prepare(`INSERT INTO runs (id, command_id, spec_hash, channel, caller_union_id, chat_id, args_json, status, started_at) VALUES (?,?,?,?,?,?,?,?,?)`)
       .run(id, r.commandId, r.specHash, r.channel, r.callerUnionId, r.chatId, JSON.stringify(r.args), 'running', Date.now());
     return id;
@@ -449,7 +450,7 @@ export class Store {
   // ---------- requests (D33)
 
   insertRequest(r: Omit<RequestRow, 'id' | 'status' | 'createdAt' | 'messageId' | 'runId' | 'actorUnionId' | 'error' | 'finishedAt'>): RequestRow {
-    const row: RequestRow = { ...r, id: randomUUID().slice(0, 8), status: 'awaiting', createdAt: Date.now(), messageId: null, runId: null, actorUnionId: null, error: null, finishedAt: null };
+    const row: RequestRow = { ...r, id: randomUUID(), status: 'awaiting', createdAt: Date.now(), messageId: null, runId: null, actorUnionId: null, error: null, finishedAt: null };
     this.db.prepare(`INSERT INTO requests (id, kind, command_id, spec_hash, chat_id, chat_type, target_union_id, args_json, rule_json, schedule_id, requested_by, reply_to, in_thread, status, created_at)
       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(row.id, row.kind, row.commandId, row.specHash, row.chatId, row.chatType, row.targetUnionId,
       JSON.stringify(row.args), row.rule ? JSON.stringify(row.rule) : null, row.scheduleId, row.requestedBy, row.replyTo, row.inThread ? 1 : 0, row.status, row.createdAt);

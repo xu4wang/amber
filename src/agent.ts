@@ -119,7 +119,7 @@ export class AgentGate {
     // Check the arguments now, so the person is not asked to confirm something that cannot run.
     await precheck(cmd, cleanArgs);
     const req = await this.post(ctx, 'run', cmd, cleanArgs, {});
-    return { mode: 'confirm_card', requestId: req.id, status: 'awaiting', message: `已在飞书发出确认卡片，等${ctx.user ? ` ${ctx.user.email} ` : '群里有人'}点「执行」。用 amber wait ${req.id} 取结果。` };
+    return { mode: 'confirm_card', requestId: req.id, status: 'awaiting', message: `已在飞书发出确认卡片，等${ctx.user ? ` ${ctx.user.email} ` : '群里有人'}点「执行」。用 amber wait ${req.id} 查看是否完成；结果只显示在飞书卡片上，不返回给 agent。` };
   }
 
   async scheduleAdd(ctx: Ctx, name: string, args: Record<string, string>, at: string, tz?: string): Promise<object> {
@@ -271,7 +271,11 @@ export class AgentGate {
       await new Promise(res => setTimeout(res, 1000));
       r = this.store.getRequest(id);
     }
-    if (!r) throw new AmberError('not_found', `没有请求 ${id}`);
+    if (!r) {
+      // Unknown ids are logged: repeated misses from one machine look like enumeration.
+      log('request lookup miss', id.slice(0, 40));
+      throw new AmberError('not_found', `没有请求 ${id}`);
+    }
     if (r.status === 'awaiting' && Date.now() - r.createdAt > REQUEST_TTL_MS) {
       this.store.transitionRequest(r.id, 'awaiting', 'expired');
       r = this.store.getRequest(id)!;
@@ -279,15 +283,12 @@ export class AgentGate {
     const run = r.runId ? this.store.getRun(r.runId) : undefined;
     return {
       requestId: r.id, kind: r.kind, status: r.status, scheduleId: r.scheduleId, error: r.error,
-      ...(run ? { runId: run.id, runStatus: run.status, markdown: run.result ?? '', runError: run.error } : {}),
+      // The output of a confirmed run belongs to the person who clicked: it is shown on the card in
+      // Feishu (and on the website), never handed back to the agent. Only the outcome is.
+      ...(run ? { runStatus: run.status, resultIn: 'feishu_card' } : {}),
     };
   }
 
-  runResult(id: string): object {
-    const run = this.store.getRun(id);
-    if (!run) throw new AmberError('not_found', `没有运行记录 ${id}`);
-    return { runId: run.id, status: run.status, markdown: run.result ?? '', error: run.error, startedAt: run.startedAt, finishedAt: run.finishedAt };
-  }
 
   /**
    * A person clicked 确认 / 取消 on a request card. Returns the card to show right away; long work

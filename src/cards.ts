@@ -268,7 +268,7 @@ export function requestCard(o: {
     if (o.cmd.description) els.push({ tag: 'markdown', content: `<font color="grey">${sanitizeMarkdown(o.cmd.description, 200)}</font>` });
     els.push({ tag: 'markdown', content: `**参数**\n${argLines(o.cmd, o.args)}` });
     els.push({ tag: 'markdown', content: o.kind === 'run'
-      ? '<font color="grey">点「执行」即以你本人的身份执行一次；结果显示在这张卡片上，同时返回给发起请求的 agent。</font>'
+      ? '<font color="grey">点「执行」即以你本人的身份执行一次；结果只显示在这张卡片上（完整内容在网站上），不会交给发起请求的 agent。</font>'
       : '<font color="grey">创建后，每次都以你本人的身份自动执行，结果发到这里（没有输出时不发）。运行失败会私聊通知你，连续失败 3 次自动暂停。</font>' });
     if (o.cmd.options.confirm) els.push({ tag: 'markdown', content: '<font color="red">⚠️ 这条指令要求执行前确认，请核对参数。</font>' });
   }

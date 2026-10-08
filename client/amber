@@ -3,14 +3,13 @@
 
 Commands that need no one's identity run directly. Anything else (the command calls a service as a
 person, needs confirmation, or creates a schedule) makes Amber post a confirmation card in the chat;
-the person who clicks it is who it runs as. Then use `amber wait <request>` for the result.
+the person who clicks it is who it runs as. Then use `amber wait <request>` to learn the outcome; the output itself stays on the Feishu card.
 
 usage:
   amber list                                   commands usable in this chat
   amber show <command>                         parameters and how `run` behaves
   amber run <command> [name=value ...]         run (or ask for confirmation)
   amber wait <request> [--timeout SECONDS]     wait for a confirmation request (default 600 s)
-  amber result <run>                           output of a run
   amber schedule add <command> --at "每天 09:00" [--tz <时区>] [name=value ...]
                                                (also: 工作日 09:00, 每周一 09:00, 每 2 小时, 每 15 分钟; min 5 minutes)
   amber schedule list
@@ -187,19 +186,14 @@ def main(argv):
         if st in ("awaiting", "running"):
             return out(r, opts, "还在等（%s）。稍后再运行 amber wait %s。" % ("等人点确认" if st == "awaiting" else "执行中", pos[1]))
         if st == "done" and r.get("kind") == "run":
-            return out(r, opts, r.get("markdown") or "（没有输出）")
+            return out(r, opts, "已执行（以点确认的人的身份）。结果只显示在飞书的确认卡片上（完整内容在 Amber 网站），不会返回给 agent。")
         if st == "done":
             done = {"retire": "指令已下线。", "scope_global": "已设为全局指令。", "scope_local": "已改回只在创建处可用。",
                     "schedule_resume": "定时任务已恢复。", "schedule_delete": "定时任务已删除。"}.get(r.get("kind"))
             return out(r, opts, done or "已完成（%s）%s" % (r.get("kind"), "，定时任务 %s" % r["scheduleId"] if r.get("scheduleId") else ""))
-        msg = {"canceled": "对方取消了。", "expired": "请求已过期（24 小时没人点）。"}.get(st, "失败：%s" % (r.get("runError") or r.get("error")))
+        msg = {"canceled": "对方取消了。", "expired": "请求已过期（24 小时没人点）。"}.get(st, "失败：%s" % (r.get("error") or "详情见飞书卡片"))
         print(json.dumps(r, ensure_ascii=False, indent=2) if opts.get("json") else msg)
         return 1
-    if cmd == "result":
-        if len(pos) < 2:
-            raise Usage()
-        r = call("GET", "/v1/runs/%s" % pos[1])
-        return out(r, opts, r.get("markdown") or "（没有输出）" if r.get("status") == "ok" else "状态 %s：%s" % (r.get("status"), r.get("error")))
     ctx = context(opts)
     if cmd == "list":
         r = call("POST", "/v1/commands/list", ctx)

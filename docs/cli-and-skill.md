@@ -40,7 +40,6 @@ amber list                                   这个会话里能用的指令
 amber show <指令>                            参数，以及 run 会直接执行还是要确认
 amber run <指令> [参数名=值 ...]             执行（或者发确认卡片）
 amber wait <请求编号> [--timeout 秒]         等确认卡片的结果（默认最多 600 秒）
-amber result <运行编号>                      查看某次运行的输出
 amber schedule add <指令> --at "每天 09:00" [--tz <时区>] [参数名=值 ...]
 amber schedule list
 amber schedule pause <编号>                  立即暂停
@@ -73,21 +72,22 @@ amber config set-url <地址>                  设置本机的 Amber 服务地�
 
 | 档位 | 什么时候 | 怎么执行 | 身份 |
 |---|---|---|---|
-| ① 查询 | `list`、`show`、`schedule list`、`result`、`wait` | 直接返回 | 不涉及 |
+| ① 查询 | `list`、`show`、`schedule list`、`wait` | 直接返回 | 不涉及 |
 | ② 直接执行 | 指令不调用任何服务，也没开「执行前确认」 | `amber run` 当场执行，Markdown 直接打印出来 | 记为 `agent:<机器名>`，不签发任何凭证 |
-| ③ 确认卡片 | 指令要调用服务（需要某人的身份）、开了「执行前确认」，或者要创建、恢复、删除定时任务 | Amber 在原来的群或话题里发一张预填好的确认卡片；私聊则发到那个人和 Amber 的私聊 | **点卡片的人**，身份取自飞书的卡片事件 |
+| ③ 确认卡片 | 指令要调用服务（需要某人的身份）、开了「执行前确认」，或者要创建、恢复、删除定时任务 | Amber 在原来的群或话题里发一张预填好的确认卡片；私聊则发到那个人和 Amber 的私聊。**执行结果只显示在这张卡片上（完整内容在网站），不返回给 agent**：`amber wait` 只告诉你完成、取消还是失败 | **点卡片的人**，身份取自飞书的卡片事件 |
 
 第 ③ 档的典型流程：
 
 ```sh
 $ amber run 注册商户数 days=30 --user zhang@example.com
-已在飞书发出确认卡片，等 zhang@example.com 点「执行」。用 amber wait 1a2b3c4d 取结果。
-request: 1a2b3c4d
+已在飞书发出确认卡片，等 zhang@example.com 点「执行」。用 amber wait <request> 查看是否完成；结果只显示在飞书卡片上，不返回给 agent。
+request: 4f0c…（完整随机编号）
 # agent 先告诉用户：「请在卡片上点一下」
-$ amber wait 1a2b3c4d
-| 日期 | 新注册商户 |
-…
+$ amber wait 4f0c…
+已执行（以点确认的人的身份）。结果只显示在飞书的确认卡片上（完整内容在 Amber 网站），不会返回给 agent。
 ```
+
+为什么不把结果给 agent：这类指令是**以点卡片的人的身份**查数据的，结果属于这个人。确认卡片和请求编号对群里所有人可见，结果如果能通过接口取回，知道编号的人就能读到别人的数据。所以结果只留在飞书卡片和网站（网站只给本人看自己的运行记录）。 运行编号和请求编号都是完整的随机串；按运行编号读结果的接口 `/v1/runs/` 已关闭（返回 410）。
 
 确认卡片 24 小时内有效，只能处理一次，重复点击无效。点「取消」或过期时，`wait` 会说明原因。每个会话 10 分钟内最多发 10 张确认卡片，防止 agent 刷屏。
 
@@ -115,7 +115,6 @@ $ amber wait 1a2b3c4d
 | POST | `/v1/commands/list` | 无 |
 | POST | `/v1/commands/show` | `command` |
 | POST | `/v1/runs` | `command`、`args` |
-| GET | `/v1/runs/<运行编号>` | 无 |
 | GET | `/v1/requests/<请求编号>?wait=秒` | 无（最多等 50 秒） |
 | POST | `/v1/schedules` | `command`、`args`、`at`、`tz` |
 | POST | `/v1/schedules/list` | 无 |

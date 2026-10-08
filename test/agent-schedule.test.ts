@@ -30,12 +30,36 @@ test('agent: identity-free commands run directly; confirm commands need the name
     await env.click(env.bob, card.id, ok);
     const w = await env.api('GET', `/v1/requests/${r.body.requestId}?wait=10`);
     assert.equal(w.body.status, 'done');
-    assert.equal(w.body.markdown, 'n=7');
+    // The output stays in Feishu: the card shows it, the agent only learns the outcome.
+    assert.equal(w.body.markdown, undefined);
+    assert.equal(w.body.runId, undefined);
+    assert.equal(w.body.runStatus, 'ok');
+    assert.doesNotMatch(JSON.stringify(w.body), /n=7/);
+    await env.waitFor(() => /n=7/.test(FakeFeishu.text(env.fake.cardOf(card.id))) || undefined);
     // A second click does nothing.
     assert.match(JSON.stringify(await env.click(env.bob, card.id, ok)), /处理过/);
-    const run = env.amber.store.getRun(w.body.runId)!;
+    const run = env.amber.store.getRun(env.amber.store.getRequest(r.body.requestId)!.runId!)!;
     assert.equal(run.callerUnionId, env.bob.unionId);
     assert.equal(run.channel, 'agent');
+  } finally { await env.close(); }
+});
+
+test('agent: run output cannot be read back through the API; ids are long', async () => {
+  const env = await makeEnv();
+  try {
+    await activate(env, { chatId: GROUP, chatType: 'group', name: '确认', params: [], script: script('print("secret-42")'), options: { confirm: true } }, env.alice);
+    const r = await env.api('POST', '/v1/runs', { ...ctx(env, env.bob), command: '确认' });
+    assert.ok(r.body.requestId.length >= 32, 'request ids are full random ids');
+    const card = env.fake.sent.at(-1)!;
+    await env.click(env.bob, card.id, button(card.card, 'req_ok')!);
+    const w = await env.api('GET', `/v1/requests/${r.body.requestId}?wait=10`);
+    assert.equal(w.body.status, 'done');
+    assert.doesNotMatch(JSON.stringify(w.body), /secret-42/);
+    const runId = env.amber.store.getRequest(r.body.requestId)!.runId!;
+    assert.ok(runId.length >= 32, 'run ids are full random ids');
+    const g = await env.api('GET', `/v1/runs/${runId}`);
+    assert.equal(g.status, 410);
+    assert.doesNotMatch(JSON.stringify(g.body), /secret-42/);
   } finally { await env.close(); }
 });
 

@@ -13,7 +13,7 @@ Amber 的接口**分不清你背后是谁**（只按机器 IP 放行）。所以
 
 1. 发起请求；
 2. 告诉用户「请在卡片上点一下」；
-3. 用 `amber wait <request>` 等结果，再接着回答用户。
+3. 用 `amber wait <request>` 确认完成。**执行结果只显示在飞书卡片上，你拿不到**（这是以点卡片的人的身份查出来的数据）；告诉用户「结果在卡片上」，不要猜测或编造结果。
 
 不要替用户点卡片，也不要让用户把卡片转给别人。
 
@@ -35,7 +35,6 @@ amber list --user user@example.com                     # 这里能用的指令
 amber show 天气 --user user@example.com                # 参数，以及 run 会直接执行还是要确认
 amber run 天气 city=上海 --user user@example.com       # 执行
 amber wait <request>                              # 等确认卡片的结果（默认最多 10 分钟）
-amber result <run>                                # 某次运行的输出
 amber schedule add 天气 --at "工作日 09:00" city=上海 --user user@example.com
 amber schedule list
 amber schedule pause <id>                         # 立即暂停
@@ -49,7 +48,7 @@ amber global 天气 --user user@example.com          # 设为全局 / amber loca
 `amber run` 的两种结果：
 
 - **直接执行**（指令不需要任何人的身份，也没开 confirm）：结果的 Markdown 直接打印出来，你整理后回复用户即可。执行身份记为「agent@机器」。
-- **确认卡片**：打印 `request: <id>`。先告诉用户去点卡片，然后运行 `amber wait <id>`；输出就是执行结果。用户点了「取消」或者 24 小时没人点，wait 会说明情况。
+- **确认卡片**：打印 `request: <id>`。先告诉用户去点卡片，然后运行 `amber wait <id>`：它只告诉你完成、取消、过期还是失败，**不返回结果内容**，结果在卡片上（完整内容在网站）。不要编造结果；用户要就结果继续分析，请他把需要的数字告诉你。
 
 ## 下线指令、设为全局
 
@@ -58,7 +57,7 @@ amber global 天气 --user user@example.com          # 设为全局 / amber loca
 - `amber retire <指令> --user <邮箱>`：Amber 发确认卡，**指令创建人或管理员**点「确认下线」才生效。下线不需要审核、不能撤销，它的定时任务会暂停并通知创建人。
 - `amber global <指令> --user <邮箱>` / `amber local <指令> --user <邮箱>`：只有**管理员**能确认。
 - 带了 `--user` 而这个人没有权限时，Amber 当场拒绝、不发卡片，把原因告诉用户即可。
-- 发出后同样用 `amber wait <request>` 等结果。
+- 发出后同样用 `amber wait <request>` 确认是否完成。
 
 用户想**登录网站**时，让他自己私聊 Amber 发「登录」，这一步不能代办（登录链接只发在他的私聊里）。
 

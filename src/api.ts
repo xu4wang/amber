@@ -41,8 +41,9 @@ export function startApi(port: number, machines: Record<string, string>, flow: F
       }
       // Deployment facts agents need but should not hard-code (the website address).
       if (req.method === 'GET' && path === '/v1/info') return reply(200, { ok: true, service: 'amber', webUrl: info.webUrl, machine });
-      if (req.method === 'GET' && (m = /^\/v1\/runs\/([A-Za-z0-9-]{1,40})$/.exec(path))) {
-        return reply(200, { ok: true, ...agent.runResult(m[1]) });
+      // Closed: run output is read in Feishu or on the website, never through this API.
+      if (req.method === 'GET' && /^\/v1\/runs\//.test(path)) {
+        return reply(410, { ok: false, error: 'gone', message: '这个接口已关闭：运行结果只在飞书卡片和网站上查看' });
       }
       if (req.method !== 'POST') return reply(404, { ok: false, error: 'not_found' });
       const body = await readBody(req);
