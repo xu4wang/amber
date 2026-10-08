@@ -17,10 +17,14 @@ chmod 755 ~/.local/bin/amber
 **要确认装的是哪一版**（比如多台机器要保持一致）：把上面地址里的 `main` 换成具体的 commit，按 commit 下载，再算哈希：
 
 ```sh
-C=<commit>
-curl -fsSL https://raw.githubusercontent.com/xu4wang/amber/$C/client/amber -o /tmp/amber.new
-shasum -a 256 /tmp/amber.new     # 和在仓库里对同一个 commit 算出的结果比对：git show $C:client/amber | shasum -a 256
+C=345e22ab743c607e35d57a58c6fd952b101e6931     # 换成你要装的完整 commit
+curl -fsSL "https://raw.githubusercontent.com/xu4wang/amber/${C}/client/amber" -o /tmp/amber.new
+shasum -a 256 /tmp/amber.new
+# 和仓库里同一个 commit 的文件比对（在有仓库的机器上执行）：
+git show "${C}:client/amber" | shasum -a 256
 ```
+
+变量要写成 `"${C}"` 的形式：macOS 默认的 zsh 会把 `$C:client` 里的 `:c` 当成变量修饰符，得到错误的路径。
 
 升级时也照这个办法：先下载到临时文件、核对哈希，再覆盖。
 

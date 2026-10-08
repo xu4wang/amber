@@ -104,5 +104,7 @@ curl -s "https://open.feishu.cn/open-apis/approval/v4/approvals/<approval_code>"
 | 在任意卡片上点一个按钮（比如帮助卡片里的「选择」，或认领卡上的「试运行」；新装还没有指令时帮助卡片里没有按钮，就用认领卡） | 卡片有响应。提示「该应用尚未配置卡片回调」时，回到第 3 节检查「已订阅的回调」里有没有 `card.action.trigger`，然后重新发布 |
 | 提交一份草稿，认领、试运行、提交审核 | 知识库里出现文档，飞书审批里出现待办（没配审批时改为卡片上的「通过 / 驳回」按钮） |
 | 日志里有 `member check unavailable` | 说明缺 `im:chat.members:read`，或者 Amber 不在那个群里 |
-| 日志里有 `admin email lookup failed`、`admins resolved 0 of N`、`REVIEW DISABLED` 或 `reviewers resolved 0` | 邮箱查不到人，审核和管理员功能不可用：检查 `contact:user.id:readonly` 权限和可用范围，改完要重新发布 |
+| 日志里有 `admin email not resolved`、`admins resolved N of M`（N 小于 M） | 某个管理员的邮箱查不到人：核对邮箱拼写，以及这个人是否在应用的可用范围内 |
+| 日志里有 `admin email lookup failed` | 整批查询失败，通常是缺 `contact:user.id:readonly` 权限，或者加了权限还没重新发布 |
+| 日志里有 `REVIEW DISABLED`，或 `reviewers resolved 0` | 审核人有邮箱查不到（或者根本没配审核人），提交审核会被拒绝：原因和上面两条一样 |
 | 日志里有错误码 `99991672` | 应用缺权限。错误信息里会列出缺的是哪一项，按第 2 节补上并重新发布 |

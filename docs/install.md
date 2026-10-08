@@ -113,9 +113,9 @@ cd ~/amber && node --no-warnings src/main.ts
 | 检查 | 期望 |
 |---|---|
 | 启动标志 | 日志里依次出现 `long connection started`、`scheduler started`、`api listening on 127.0.0.1:7341`、`web listening on 127.0.0.1:7342` |
-| 管理员解析 | `admins resolved N of N entries`，两个 N 相等 |
-| 审核人解析 | `reviewers resolved N open_ids N`，两个 N 相等 |
-| 不能出现 | `REVIEW DISABLED`、`admin email lookup failed`、错误码 `99991672` |
+| 管理员解析 | `admins resolved N of M entries`，N 等于 M，M 是 `config.json` 里 `admins` 的条数 |
+| 审核人解析 | `reviewers resolved N open_ids K`，N 和 K 都等于 `config.json` 里 `reviewers` 的条数，**并且至少为 1**。`0 open_ids 0` 不算通过：说明没配审核人，提交审核会报 `no_reviewers` |
+| 不能出现 | `REVIEW DISABLED`（有审核人的邮箱查不到）、`admin email not resolved`（某个管理员邮箱查不到人）、`admin email lookup failed`（整批查询失败，通常是缺权限）、错误码 `99991672`（应用缺权限） |
 
 四个启动标志都出现、但有下面这几行时，进程是活的，**审核和管理员功能却是关着的**，原因通常是缺 `contact:user.id:readonly` 权限或者没重新发布，见 [feishu-setup.md](feishu-setup.md#7-检查清单)。
 
@@ -237,7 +237,7 @@ server {
 
 只想在自己机器上试用 Amber、不和别人共用时，可以按下面的最小方案部署。它和正式部署的区别是：**接口只给本机用、不需要 nginx、不接飞书审批和知识库**，审核改用卡片上的「通过 / 驳回」按钮。
 
-1. **新建一个飞书应用**，不要复用已有 Amber 的应用（原因见 [feishu-setup.md](feishu-setup.md#1-创建应用) 的警告）。权限只需要第 2 节表里除「审批」「知识库」「文档」以外的几项；事件和回调按第 3 节配好，并确认「已订阅的回调」里有 `card.action.trigger`；然后发布。
+1. **新建一个飞书应用**，不要复用已有 Amber 的应用（原因见 [feishu-setup.md](feishu-setup.md#1-创建应用) 的警告）。开启机器人能力，权限只需要第 2 节表里除「审批」「知识库」「文档」以外的几项，拿到 App ID 和 Secret，然后**先创建版本并发布一次**（权限要发布后才生效，否则第 5 步查不到管理员和审核人的邮箱）。**事件和回调这一步先不配**：保存长连接设置时飞书要求 Amber 已经在线，要等第 5 步启动以后再配，配完再发布一次。
 2. 确认环境：`node -v` ≥ 24；7341、7342 两个端口没有被占用（`lsof -nP -iTCP:7341 -iTCP:7342 -sTCP:LISTEN` 没有输出）。
 3. 按第 2 节拉代码、执行 `npm ci`。
 4. 写配置，目录权限 700，两个文件权限 600：
@@ -252,9 +252,11 @@ server {
      }
      ```
      `machines` 只放 `127.0.0.1`：只有本机的 agent 能调用接口，外部访问不到。
-5. 前台启动，按第 4 节的表逐项确认，然后按第 4 节改成 launchd 常驻并做自检。
-6. 本机的客户端指向这套：`amber config set-url http://127.0.0.1:7341`，`amber info` 显示的本机名应和 `machines` 里填的一致。
-7. 冒烟：把新应用拉进一个测试群，**同时拉进要用它的 agent**，@它发「帮助」；再让 agent 提交一个没有副作用的草稿（比如只打印一行文字），走一遍认领 → 试运行 → 审核。
-8. 重试前先在旧认领卡上点「丢弃」，避免留下多份草稿；测试指令不用了就下线（让 agent 执行 `amber retire <指令>`，再点确认卡）。
+5. 前台启动，按第 4 节的表逐项确认（长连接这时已经在线）。
+6. **保持 Amber 运行**，回到飞书开放平台按 [feishu-setup.md](feishu-setup.md#3-事件与回调) 第 3 节配事件和回调，确认「已订阅的回调」里有 `card.action.trigger`，然后创建版本并发布。发布生效后重启一次 Amber，再按第 4 节的表复核一遍日志。
+7. 按第 4 节改成 launchd 常驻并做自检。
+8. 本机的客户端指向这套：`amber config set-url http://127.0.0.1:7341`，`amber info` 显示的本机名应和 `machines` 里填的一致。
+9. 冒烟：把新应用拉进一个测试群，**同时拉进要用它的 agent**，@它发「帮助」；再让 agent 提交一个没有副作用的草稿（比如只打印一行文字），走一遍认领 → 试运行 → 审核。
+10. 重试前先在旧认领卡上点「丢弃」，避免留下多份草稿；测试指令不用了就下线（让 agent 执行 `amber retire <指令>`，再点确认卡）。
 
 这套和组织里的正式 Amber 是**完全独立**的：指令、审核、定时任务、运行记录都不互通。
