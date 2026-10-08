@@ -197,6 +197,19 @@ function tableHtml(src) {
   return `<table><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>${more}`;
 }
 
+/** Simple single-view line/bar charts get the value printed on each point/bar (same as the Feishu card). */
+function withValueLabels(spec) {
+  const mark = typeof spec.mark === 'string' ? spec.mark : spec.mark?.type;
+  const enc = spec.encoding || {};
+  if ((mark !== 'line' && mark !== 'bar') || spec.layer || !enc.x || !enc.y) return spec;
+  const horizontal = mark === 'bar' && enc.x.type === 'quantitative' && enc.y.type !== 'quantitative';
+  const value = horizontal ? enc.x : enc.y;
+  if (value.type !== 'quantitative' || !value.field) return spec;
+  const { mark: m, encoding, ...rest } = spec;
+  const label = { type: 'text', fontSize: 11, ...(horizontal ? { align: 'left', dx: 4 } : { baseline: 'bottom', dy: -4 }) };
+  return { ...rest, encoding: { x: enc.x, y: enc.y }, layer: [{ mark: m, encoding: { ...encoding } }, { mark: label, encoding: { text: { field: value.field, type: 'quantitative', format: ',.2~f' } } }] };
+}
+
 function renderOutput(el, md) {
   const charts = [];
   let html = '', last = 0, m;
@@ -205,7 +218,11 @@ function renderOutput(el, md) {
   while ((m = re.exec(md))) {
     text(md.slice(last, m.index));
     if (m[1] === 'table') html += tableHtml(m[2]);
-    else { html += `<div class="chart" data-chart="${charts.length}"></div>`; charts.push(m[2]); }
+    else {
+      // Remember the line printed right above the chart: if it is the chart's title, don't repeat it.
+      const above = md.slice(last, m.index).trim().split('\n').pop().replace(/\*\*/g, '').trim();
+      html += `<div class="chart" data-chart="${charts.length}"></div>`; charts.push({ src: m[2], above });
+    }
     last = m.index + m[0].length;
   }
   text(md.slice(last));
@@ -213,7 +230,11 @@ function renderOutput(el, md) {
   el.querySelectorAll('[data-chart]').forEach(div => {
     if (typeof vegaEmbed !== 'function') { div.innerHTML = '<p class="note">（图表组件没有加载成功，请刷新页面）</p>'; return; }
     let spec;
-    try { spec = JSON.parse(charts[Number(div.dataset.chart)]); } catch { div.innerHTML = '<p class="note">（图表格式不正确）</p>'; return; }
+    const c = charts[Number(div.dataset.chart)];
+    try { spec = JSON.parse(c.src); } catch { div.innerHTML = '<p class="note">（图表格式不正确）</p>'; return; }
+    const title = typeof spec.title === 'string' ? spec.title : spec.title?.text;
+    if (title && c.above && title.trim() === c.above) delete spec.title;
+    spec = withValueLabels(spec);
     // Only inline data: never let output make the browser fetch other URLs.
     const strip = o => { if (o && typeof o === 'object') { if (o.data && o.data.url) delete o.data.url; Object.values(o).forEach(strip); } };
     strip(spec);
