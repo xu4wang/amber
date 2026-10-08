@@ -210,10 +210,16 @@ export class Flow {
       return;
     }
     this.reviewers = ids;
-    try {
-      const r = await (this.client as any).contact.v3.user.batchGetId({ params: { user_id_type: 'open_id' }, data: { emails: this.reviewerEmails.filter(e => !e.startsWith('on_')) } });
-      this.reviewerOpenIds = (r?.data?.user_list ?? []).map((u: any) => u.user_id).filter(Boolean);
-    } catch { this.reviewerOpenIds = []; }
+    // Approval needs open_ids. Map every reviewer (configured by email or union_id) from its union_id,
+    // so a union_id entry works too; any failure leaves the list short and submitting stays blocked.
+    const openIds: string[] = [];
+    for (const u of ids) {
+      try {
+        const r = await (this.client as any).contact.v3.user.get({ path: { user_id: u }, params: { user_id_type: 'union_id' } });
+        if (r?.data?.user?.open_id) openIds.push(r.data.user.open_id);
+      } catch { /* left out: review stays blocked */ }
+    }
+    this.reviewerOpenIds = openIds;
     log('reviewers resolved', ids.length, 'open_ids', this.reviewerOpenIds.length);
   }
 

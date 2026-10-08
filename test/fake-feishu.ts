@@ -73,7 +73,7 @@ export class FakeFeishu {
         get: async ({ path }: any) => {
           const u = this.userByUnion(path.user_id);
           if (!u) this.fail(41050, 'no user');
-          return { data: { user: { name: u.name, city: u.city } } };
+          return { data: { user: { name: u.name, city: u.city, open_id: u.openId, union_id: u.unionId } } };
         },
       },
     },

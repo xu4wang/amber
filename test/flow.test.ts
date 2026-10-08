@@ -161,3 +161,12 @@ test('a command whose stored definition was changed after approval refuses to ru
     assert.match(r.body.message, /审核通过的版本不一致/);
   } finally { await env.close(); }
 });
+
+test('reviewers can be configured by email or union_id; the approval goes to all of them', async () => {
+  const env = await makeEnv({ reviewers: ['alice@example.com', 'on_bob'] });
+  try {
+    const flow: any = env.amber.bot.flow;
+    assert.deepEqual([...flow.reviewers].sort(), ['on_alice', 'on_bob']);
+    assert.deepEqual([...flow.reviewerOpenIds].sort(), ['ou_alice', 'ou_bob'], 'a union_id entry also resolves to an open_id');
+  } finally { await env.close(); }
+});
