@@ -201,16 +201,14 @@ function tableHtml(src) {
 function withValueLabels(spec) {
   const mark = typeof spec.mark === 'string' ? spec.mark : spec.mark?.type;
   const enc = spec.encoding || {};
-  // Pie: label each slice with its value and share of the total, outside the slice.
+  // Pie: values and shares go into the legend (labels on the slices overlap and take the slice colour).
   if (mark === 'arc' && !spec.layer && enc.theta?.field && enc.color?.field) {
-    const { mark: m, encoding, ...rest } = spec;
-    const v = enc.theta.field;
-    const base = typeof m === 'object' ? m : { type: 'arc' };
-    return { ...rest,
+    const v = enc.theta.field, c = enc.color.field;
+    return { ...spec, height: spec.height ?? 260,
       transform: [...(spec.transform || []), { joinaggregate: [{ op: 'sum', field: v, as: '__total' }] },
-        { calculate: `format(datum['${v}'], ',.2~f') + ' (' + format(datum['${v}'] / datum.__total, '.1%') + ')'`, as: '__label' }],
-      encoding: { theta: { ...enc.theta, stack: true }, color: enc.color },
-      layer: [{ mark: { ...base, outerRadius: 110 } }, { mark: { type: 'text', radius: 140, fontSize: 11 }, encoding: { text: { field: '__label', type: 'nominal' } } }] };
+        { calculate: `datum['${c}'] + '　' + format(datum['${v}'], ',.2~f') + '（' + format(datum['${v}'] / datum.__total, '.1%') + '）'`, as: '__legend' }],
+      encoding: { ...enc, color: { ...enc.color, field: '__legend', sort: null, legend: { labelLimit: 400, ...(enc.color.legend || {}) } },
+        tooltip: [{ field: c, type: 'nominal' }, { field: v, type: 'quantitative', format: ',.2~f' }] } };
   }
   if ((mark !== 'line' && mark !== 'bar') || spec.layer || !enc.x || !enc.y) return spec;
   const horizontal = mark === 'bar' && enc.x.type === 'quantitative' && enc.y.type !== 'quantitative';
