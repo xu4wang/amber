@@ -2,6 +2,8 @@
 
 日常使用时，人只跟自己的 agent（botmux、Claude Code、cc-connect 等）说话，agent 通过 `amber` 命令行调用 Amber。`amber` 是一个单文件脚本（[`client/amber`](../client/amber)），只依赖 Python 3 标准库。
 
+> **这篇装的是客户端**，每台跑 agent 的机器都要装，不需要部署服务端。Amber 服务端一个组织只部署一套，见 [安装与部署](install.md)。
+
 ## 安装
 
 在每台跑 agent 的机器上执行：
