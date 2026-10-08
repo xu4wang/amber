@@ -5,9 +5,27 @@ import { loadConfig } from './config.ts';
 import { Store } from './db.ts';
 import type { ParamDef, Script, ScopeType } from './db.ts';
 import { setServices, validateScript } from './runner.ts';
-import { Signer } from './identity.ts';
+import { exportPublicKeys } from './identity.ts';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 
 const [, , cmd, ...rest] = process.argv;
+
+// `keys` is read-only and handled before anything else: no config/Feishu credentials needed, no
+// database opened, no key generated (D42). It writes no audit row; the export is recorded in the
+// deployment record together with the kid.
+if (cmd === 'keys') {
+  try {
+    const { kid, jwks } = exportPublicKeys(process.env.AMBER_CONFIG_DIR ?? join(homedir(), '.config', 'amber'));
+    console.log(JSON.stringify(jwks));
+    console.error(`kid ${kid}`);
+    process.exit(0);
+  } catch (e) {
+    console.error((e as Error).message);
+    process.exit(1);
+  }
+}
+
 const cfg = loadConfig();
 const store = new Store(cfg.dataDir);
 setServices(cfg.services);
@@ -38,12 +56,6 @@ if (cmd === 'list') {
   store.setStatus(rest[0], 'retired');
   store.audit(null, 'operator.retire', { id: rest[0] });
   console.log('retired', rest[0]);
-} else if (cmd === 'keys') {
-  // Offline: derived from the private key file itself, never fetched from a port that another local
-  // process could be holding. Services pin this output (D42).
-  const s = new Signer(cfg.configDir);
-  console.log(JSON.stringify(s.jwks()));
-  console.error(`kid ${s.kid}`);
 } else if (cmd === 'submit') {
   const base = `http://127.0.0.1:${process.env.AMBER_API_PORT ?? 7341}`;
   const r = await fetch(`${base}/v1/drafts`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: readFileSync(rest[0] ?? usage(), 'utf8') });

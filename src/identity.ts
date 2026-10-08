@@ -9,10 +9,27 @@
 // A run gets call_count tokens per declared service (D41), each with its own jti, meant to be used once.
 import { generateKeyPairSync, createPrivateKey, createPublicKey, sign, randomUUID, createHash } from 'node:crypto';
 import type { KeyObject } from 'node:crypto';
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 const b64u = (b: Buffer | string) => Buffer.from(b).toString('base64url');
+
+function publicSet(publicKey: KeyObject): { kid: string; jwks: object } {
+  const jwk = publicKey.export({ format: 'jwk' }) as Record<string, string>;
+  const kid = createHash('sha256').update(jwk.x).digest('hex').slice(0, 16);
+  return { kid, jwks: { keys: [{ ...jwk, kid, alg: 'EdDSA', use: 'sig' }] } };
+}
+
+/** Read-only export for `amber cli keys` (D42): the existing signing key must already be there as a
+ *  regular 0600 file. Never generates a key and touches nothing else. */
+export function exportPublicKeys(configDir: string): { kid: string; jwks: object } {
+  const p = join(configDir, 'signing-key.pem');
+  let st;
+  try { st = lstatSync(p); } catch { throw new Error(`没有找到签名私钥 ${p}（不会自动生成；请确认配置目录）`); }
+  if (!st.isFile()) throw new Error(`${p} 不是普通文件`);
+  if ((st.mode & 0o077) !== 0) throw new Error(`${p} 的权限是 ${(st.mode & 0o777).toString(8)}，应为 600`);
+  return publicSet(createPublicKey(createPrivateKey(readFileSync(p))));
+}
 
 export class Signer {
   private key: KeyObject;
@@ -27,14 +44,12 @@ export class Signer {
     }
     this.key = createPrivateKey(readFileSync(p));
     this.publicKey = createPublicKey(this.key);
-    const raw = this.publicKey.export({ format: 'jwk' }) as { x: string };
-    this.kid = createHash('sha256').update(raw.x).digest('hex').slice(0, 16);
+    this.kid = publicSet(this.publicKey).kid;
   }
 
   /** JWKS document for verifiers. */
   jwks(): object {
-    const jwk = this.publicKey.export({ format: 'jwk' }) as Record<string, string>;
-    return { keys: [{ ...jwk, kid: this.kid, alg: 'EdDSA', use: 'sig' }] };
+    return publicSet(this.publicKey).jwks;
   }
 
   issue(c: { aud: string; sub: string; cmd: string; rev: string; run: string; chat: string; channel: string; callIndex: number; callCount: number; ttlSec?: number }): string {

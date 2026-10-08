@@ -109,3 +109,32 @@ test('run: stored definitions are re-validated before any run or token; startup 
     assert.deepEqual(found, [['net', 'invalid_script'], ['too-many', 'invalid_script']]);
   } finally { rmSync(dir, { recursive: true, force: true }); setServices({}); }
 });
+
+test('cli keys: read-only export — never generates a key, never opens the database (D42)', async () => {
+  const { spawnSync } = await import('node:child_process');
+  const { mkdtempSync, readdirSync, rmSync, chmodSync } = await import('node:fs');
+  const { join } = await import('node:path');
+  const { tmpdir } = await import('node:os');
+  const { Signer } = await import('../src/identity.ts');
+  const cli = join(import.meta.dirname, '..', 'src', 'cli.ts');
+  const keys = (dir: string) => spawnSync(process.execPath, ['--no-warnings', cli, 'keys'], { env: { PATH: process.env.PATH, HOME: dir, AMBER_CONFIG_DIR: dir }, encoding: 'utf8' });
+  const empty = mkdtempSync(join(tmpdir(), 'amber-keys-'));
+  const full = mkdtempSync(join(tmpdir(), 'amber-keys-'));
+  try {
+    const r = keys(empty);
+    assert.equal(r.status, 1);
+    assert.match(r.stderr, /没有找到签名私钥/);
+    assert.deepEqual(readdirSync(empty), [], 'nothing created');
+    const s = new Signer(full);
+    const before = readdirSync(full).sort();
+    const ok = keys(full);
+    assert.equal(ok.status, 0, ok.stderr);
+    assert.deepEqual(JSON.parse(ok.stdout), s.jwks());
+    assert.match(ok.stderr, new RegExp(`kid ${s.kid}`));
+    assert.deepEqual(readdirSync(full).sort(), before, 'no database or other file created');
+    chmodSync(join(full, 'signing-key.pem'), 0o644);
+    const loose = keys(full);
+    assert.equal(loose.status, 1);
+    assert.match(loose.stderr, /应为 600/);
+  } finally { rmSync(empty, { recursive: true, force: true }); rmSync(full, { recursive: true, force: true }); }
+});
