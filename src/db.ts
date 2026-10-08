@@ -415,6 +415,13 @@ export class Store {
     return id;
   }
 
+  /** Runs left 'running' by a previous process (it was stopped mid-run): mark them failed. */
+  failInterruptedRuns(): string[] {
+    const ids = (this.db.prepare(`SELECT id FROM runs WHERE status = 'running'`).all() as { id: string }[]).map(r => r.id);
+    for (const id of ids) this.finishRun(id, 'failed', null, 'Amber 重启，执行被中断，请重新执行');
+    return ids;
+  }
+
   finishRun(id: string, status: 'ok' | 'failed', result: string | null, error: string | null): void {
     this.db.prepare('UPDATE runs SET status = ?, result = ?, error = ?, finished_at = ? WHERE id = ?').run(status, result, error, Date.now(), id);
   }

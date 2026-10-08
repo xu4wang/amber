@@ -158,3 +158,18 @@ test('charts: a title printed right above the chart is not repeated; axis titles
   const alone = markdownWithCharts('```vega-lite\n' + JSON.stringify(spec) + '\n```') as any[];
   assert.equal(alone.filter(e => e.tag === 'markdown' && /每日金额/.test(e.content)).length, 1);
 });
+
+test('startup: runs left running by a stopped process are marked failed', async () => {
+  const { Store } = await import('../src/db.ts');
+  const { mkdtempSync, rmSync } = await import('node:fs');
+  const { join } = await import('node:path');
+  const { tmpdir } = await import('node:os');
+  const dir = mkdtempSync(join(tmpdir(), 'amber-unit-'));
+  try {
+    const st = new Store(dir);
+    const id = st.startRun({ commandId: 'c', specHash: 'h', channel: 'bot', callerUnionId: 'on_x', chatId: 'oc_x', args: {} });
+    assert.deepEqual(st.failInterruptedRuns(), [id]);
+    assert.equal(st.getRun(id)!.status, 'failed');
+    assert.deepEqual(st.failInterruptedRuns(), []);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
