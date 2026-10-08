@@ -94,7 +94,13 @@ export function markdownWithCharts(md: string): unknown[] {
   while ((m = re.exec(md))) {
     pushText(md.slice(last, m.index));
     last = m.index + m[0].length;
-    const converted = m[1] === 'table' ? tableToCard(m[2]) : vegaLiteToChart(m[2]);
+    let converted = m[1] === 'table' ? tableToCard(m[2]) : vegaLiteToChart(m[2]);
+    // The script often prints the chart's title right above it; don't show the same title twice.
+    const prev: any = els[els.length - 1];
+    if (converted && m[1] === 'vega-lite' && prev?.tag === 'markdown' && (converted[0] as any)?.tag === 'markdown') {
+      const lastLine = (s: string) => s.trim().split('\n').pop()!.replace(/\*\*/g, '').trim();
+      if (lastLine(prev.content) === lastLine((converted[0] as any).content)) converted = converted.slice(1);
+    }
     if (converted) els.push(...converted); else pushText(m[1] === 'table' ? '（表格格式不正确，无法显示）' : '（这个图表在飞书里无法显示，请在网站查看）');
   }
   pushText(md.slice(last));
@@ -164,6 +170,11 @@ function vegaLiteToChart(src: string): unknown[] | null {
       xField: ex,
       yField: ey,
       label: { visible: true },
+      // Axis titles carry the units (vega-lite encoding.*.title, falling back to the field name).
+      axes: [
+        { orient: horizontal ? 'bottom' : 'left', title: { visible: true, text: String(spec.encoding.y.title ?? ey) } },
+        { orient: horizontal ? 'left' : 'bottom', title: { visible: true, text: String(spec.encoding.x.title ?? ex) } },
+      ],
     },
   });
   return out;

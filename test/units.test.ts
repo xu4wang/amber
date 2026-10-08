@@ -147,3 +147,14 @@ test('charts: a vega-lite pie (mark arc) becomes a Feishu pie chart', () => {
   assert.equal(chart.chart_spec.valueField, 'v');
   assert.equal(chart.chart_spec.categoryField, 'd');
 });
+
+test('charts: a title printed right above the chart is not repeated; axis titles show the units', () => {
+  const spec = { title: '每日金额', mark: 'line', data: { values: [{ d: '10-01', v: 1 }] }, encoding: { x: { field: 'd', type: 'ordinal', title: '日期' }, y: { field: 'v', type: 'quantitative', title: '金额 USD' } } };
+  const els = markdownWithCharts('**每日金额**\n```vega-lite\n' + JSON.stringify(spec) + '\n```') as any[];
+  assert.equal(els.filter(e => e.tag === 'markdown' && /每日金额/.test(e.content)).length, 1, 'title once');
+  const axes = els.find(e => e.tag === 'chart').chart_spec.axes;
+  assert.deepEqual(axes.map((a: any) => a.title.text).sort(), ['日期', '金额 USD']);
+  // Without a printed heading, the spec title is still shown.
+  const alone = markdownWithCharts('```vega-lite\n' + JSON.stringify(spec) + '\n```') as any[];
+  assert.equal(alone.filter(e => e.tag === 'markdown' && /每日金额/.test(e.content)).length, 1);
+});
