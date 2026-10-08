@@ -135,6 +135,6 @@ test('cli keys: read-only export — never generates a key, never opens the data
     chmodSync(join(full, 'signing-key.pem'), 0o644);
     const loose = keys(full);
     assert.equal(loose.status, 1);
-    assert.match(loose.stderr, /应为 600/);
+    assert.match(loose.stderr, /不能对同组或其他用户开放/);
   } finally { rmSync(empty, { recursive: true, force: true }); rmSync(full, { recursive: true, force: true }); }
 });

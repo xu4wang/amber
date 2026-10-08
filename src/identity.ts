@@ -27,7 +27,7 @@ export function exportPublicKeys(configDir: string): { kid: string; jwks: object
   let st;
   try { st = lstatSync(p); } catch { throw new Error(`没有找到签名私钥 ${p}（不会自动生成；请确认配置目录）`); }
   if (!st.isFile()) throw new Error(`${p} 不是普通文件`);
-  if ((st.mode & 0o077) !== 0) throw new Error(`${p} 的权限是 ${(st.mode & 0o777).toString(8)}，应为 600`);
+  if ((st.mode & 0o077) !== 0) throw new Error(`${p} 的权限是 ${(st.mode & 0o777).toString(8)}，不能对同组或其他用户开放（建议 600）`);
   return publicSet(createPublicKey(createPrivateKey(readFileSync(p))));
 }
 

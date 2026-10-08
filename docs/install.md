@@ -193,7 +193,7 @@ server {
 | 数据 | `~/.config/amber/data/amber.db`（SQLite）：指令、运行记录、审计、请求、定时任务、网站登录 |
 | 备份 | 备份 `amber.db` 和 `signing-key.pem`。表结构升级时 Amber 会自动迁移，升级前建议手动复制一份数据库 |
 | 更新代码 | `git pull`，然后 `launchctl kickstart -k …`。定时任务只在 Amber 运行时触发，停机期间错过的不会补跑 |
-| 运维命令 | `node src/cli.ts list`（列出全部指令）、`node src/cli.ts retire <id>`（下线指令）。每次操作都写审计。`node src/cli.ts keys` 从现有私钥文件导出公钥给服务方固定用：只读，私钥不存在或权限不是 600 时直接报错、不会生成新密钥，也不写审计，导出由部署记录连同 kid 一起留档 |
+| 运维命令 | `node src/cli.ts list`（列出全部指令）、`node src/cli.ts retire <id>`（下线指令）。每次操作都写审计。`node src/cli.ts keys` 从现有私钥文件导出公钥给服务方固定用：只读，私钥不存在或权限对同组、其他用户开放时直接报错、不会生成新密钥，也不写审计，导出由部署记录连同 kid 一起留档 |
 | 回归测试 | `npm test`：起一个隔离的 Amber（临时数据库 + 假飞书），覆盖认领、审核、新版本、下线、agent 三档、定时任务、网站、可信身份和沙盒，几秒跑完，不碰真实飞书和线上数据。改代码后先跑它 |
 | 冒烟测试 | `npm run smoke`：在 Amber 所在机器上检查真实部署（接口、网站、前端库完整性）。在 `~/.config/amber/smoke.json` 写 `{"testChat": "oc_…"}`（一个拉了 Amber 的测试群）后，还会把每种卡片真实发到飞书验证格式，发完立即撤回 |
 | 审计 | 数据库 `audit` 表，记录提交、认领、审核、执行、签发凭证、定时任务、登录等所有动作 |
