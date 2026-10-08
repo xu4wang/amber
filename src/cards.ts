@@ -23,6 +23,11 @@ function btn(text: string, value: Record<string, string>, type: 'primary' | 'def
   return { tag: 'button', text: { tag: 'plain_text', content: text }, type, behaviors: [{ type: 'callback', value }], ...extra };
 }
 
+/** Buttons side by side on one line (wrapping only when the card is too narrow). */
+export function buttonRow(buttons: unknown[]): object {
+  return { tag: 'column_set', flex_mode: 'flow', columns: buttons.map(b => ({ tag: 'column', width: 'auto', elements: [b] })) };
+}
+
 export function listCard(cmds: CommandRow[], scopeLabel: string): object {
   if (cmds.length === 0) {
     return shell('Amber', 'orange', [{ tag: 'markdown', content: `${scopeLabel}还没有可用的指令。\n\n在这里和 agent 把一次操作跑通后，让它把操作提交给 Amber，经认领和审核后就会出现在这里。` }]);
@@ -50,8 +55,7 @@ export function formCard(c: CommandRow, prefill: Record<string, string> = {}): o
     return shell(`Amber · ${c.name}`, isWrite ? 'red' : 'orange', [
       { tag: 'markdown', content: sanitizeMarkdown(c.description || '') || '这条指令没有参数。' },
       ...warn,
-      btn(runText, { a: 'run', c: c.id }, runType),
-      btn('返回', { a: 'list' }),
+      buttonRow([btn(runText, { a: 'run', c: c.id }, runType), btn('返回', { a: 'list' })]),
     ]);
   }
   const inputs = c.params.map(p => ({
@@ -71,10 +75,13 @@ export function formCard(c: CommandRow, prefill: Record<string, string> = {}): o
       name: 'args',
       elements: [
         ...inputs,
-        btn(runText, { a: 'run', c: c.id }, runType, { form_action_type: 'submit', name: 'submit' }),
+        // Both are submit buttons so they can share a line inside the form; 返回 ignores the form values.
+        buttonRow([
+          btn(runText, { a: 'run', c: c.id }, runType, { form_action_type: 'submit', name: 'submit' }),
+          btn('返回', { a: 'list' }, 'default', { form_action_type: 'submit', name: 'back' }),
+        ]),
       ],
     },
-    btn('返回', { a: 'list' }),
   ]);
 }
 
@@ -305,7 +312,7 @@ export function scheduleListCard(items: ScheduleView[], scopeLabel: string): obj
     }
     els.push({ tag: 'hr' });
     els.push({ tag: 'markdown', content: `**${sanitizeMarkdown(s.name, 40)}** · ${sanitizeMarkdown(s.ruleText, 60)}\n${state}\n<font color="grey">创建人 ${person(s.creatorOpenId ?? undefined)} · ${sanitizeMarkdown(s.lastText, 80)} · ${s.id}</font>` });
-    if (buttons.length) els.push({ tag: 'column_set', flex_mode: 'none', columns: buttons.map(b => ({ tag: 'column', width: 'auto', elements: [b] })) });
+    if (buttons.length) els.push(buttonRow(buttons));
   }
   return shell('Amber · 定时任务', 'blue', els);
 }

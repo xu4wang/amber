@@ -11,7 +11,7 @@ import { validateScript, describeServices } from './runner.ts';
 import type { FeishuReview } from './feishu-review.ts';
 import type { Caller, CallerFacts, Block } from './engine.ts';
 import { runCommand, AmberError } from './engine.ts';
-import { sanitizeMarkdown, person, renderBlocks } from './cards.ts';
+import { sanitizeMarkdown, person, renderBlocks, buttonRow } from './cards.ts';
 import { lineDiff } from './diff.ts';
 
 function log(...a: unknown[]): void { console.log(new Date().toISOString(), ...a); }
@@ -117,8 +117,12 @@ export function claimCard(c: CommandRow, trial?: { by?: string; blocks?: Block[]
   }
   els.push({ tag: 'markdown', content: '<font color="grey">试运行就是以你的身份真实执行一次。</font>' });
   const buttons: unknown[] = [];
+  if (trial?.blocks) buttons.push(btn('提交审核', { a: 'claim_submit', c: c.id }, 'primary'));
+  buttons.push(btn('丢弃', { a: 'claim_drop', c: c.id }, 'danger'));
   if (c.params.length) {
-    // Commands with parameters: the trial run takes its inputs from a small form.
+    // Commands with parameters: the trial run takes its inputs from a small form. The other buttons
+    // become submit buttons too so all of them sit on one line inside the form.
+    const asSubmit = (b: any, name: string) => ({ ...b, form_action_type: 'submit', name });
     els.push({
       tag: 'form', name: 'trial', elements: [
         ...c.params.map(p => ({
@@ -126,15 +130,15 @@ export function claimCard(c: CommandRow, trial?: { by?: string; blocks?: Block[]
           placeholder: { tag: 'plain_text', content: p.defaultFrom === 'caller.city' ? '不填则用你的办公城市' : p.default !== undefined ? `默认：${p.default}` : (p.required ? '必填' : '可不填') },
           ...(p.default !== undefined && !p.defaultFrom ? { default_value: p.default } : {}),
         })),
-        btn('试运行', { a: 'claim_try', c: c.id }, trial?.blocks ? 'default' : 'primary', { form_action_type: 'submit', name: 'try' }),
+        buttonRow([
+          btn('试运行', { a: 'claim_try', c: c.id }, trial?.blocks ? 'default' : 'primary', { form_action_type: 'submit', name: 'try' }),
+          ...buttons.map((b, i) => asSubmit(b, `b${i}`)),
+        ]),
       ],
     });
   } else {
-    buttons.push(btn('试运行', { a: 'claim_try', c: c.id }, trial?.blocks ? 'default' : 'primary'));
+    els.push(buttonRow([btn('试运行', { a: 'claim_try', c: c.id }, trial?.blocks ? 'default' : 'primary'), ...buttons]));
   }
-  if (trial?.blocks) buttons.push(btn('提交审核', { a: 'claim_submit', c: c.id }, 'primary'));
-  buttons.push(btn('丢弃', { a: 'claim_drop', c: c.id }, 'danger'));
-  els.push({ tag: 'column_set', flex_mode: 'flow', columns: buttons.map(b => ({ tag: 'column', width: 'auto', elements: [b] })) });
   return shell(prev ? `待认领（新版本）：${c.name}` : `待认领：${c.name}`, 'orange', els);
 }
 
