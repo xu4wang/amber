@@ -47,3 +47,33 @@ test('script output cannot inject mentions, links or tags into cards', () => {
   assert.match(json, /共 5 行/);
   assert.match(json, /"tag":"chart"/);
 });
+
+test('scripts: privileged is disabled; services declare 1–20 calls (D40/D41)', async () => {
+  const { validateScript, setServices } = await import('../src/runner.ts');
+  setServices({ demo: { audience: 'demo', tcpPort: 9 } });
+  const base = { kind: 'script', lang: 'python', code: 'print(1)' };
+  assert.throws(() => validateScript({ ...base, kind: 'privileged' }), /已停用/);
+  for (const calls of [1, 20]) assert.deepEqual(validateScript({ ...base, services: { demo: { calls } } }).services, { demo: { calls } });
+  for (const calls of [0, 21, 1.5, '2', undefined, null]) assert.throws(() => validateScript({ ...base, services: { demo: { calls } } }), /calls/, String(calls));
+  assert.throws(() => validateScript({ ...base, services: ['demo'] }), /services 要写成/);
+  assert.throws(() => validateScript({ ...base, services: { nope: { calls: 1 } } }), /未知的服务/);
+  // calls is part of the reviewed definition: changing it changes the spec hash.
+  const { computeSpecHash } = await import('../src/db.ts');
+  const def = (calls: number) => ({ name: 'x', params: [], options: { confirm: false, schedulable: false }, script: validateScript({ ...base, services: { demo: { calls } } }) });
+  assert.notEqual(computeSpecHash(def(1) as any), computeSpecHash(def(2) as any));
+  setServices({});
+});
+
+test('run: privileged or old-form commands already in the database are refused (D40/D41)', async () => {
+  const { runCommand } = await import('../src/engine.ts');
+  const { computeSpecHash } = await import('../src/db.ts');
+  const caller = { unionId: 'on_x', chatId: 'oc_x', chatType: 'group' as const, channel: 'bot' as const };
+  const store = { startRun() { throw new Error('must not start'); }, audit() {} } as any;
+  for (const script of [{ kind: 'privileged', lang: 'python', code: 'print(1)' }, { kind: 'script', lang: 'python', code: 'print(1)', services: ['demo'] }]) {
+    const c: any = { id: 'c1', name: 'x', params: [], options: { confirm: false, schedulable: true }, script, status: 'active' };
+    c.specHash = computeSpecHash(c);
+    for (const opts of [{}, { trial: true }, { viaForm: true }]) {
+      await assert.rejects(runCommand(store, c, {}, caller, {}, opts), (e: any) => e.code === 'disabled', JSON.stringify([script.kind, opts]));
+    }
+  }
+});

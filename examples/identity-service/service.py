@@ -10,17 +10,19 @@
 环境变量：
     DEMO_PORT        监听端口，默认 18790
     DEMO_AUDIENCE    本服务的名字，必须和 Amber config.json 里 services.<名字>.audience 一致，默认 demo-profile
-    AMBER_KEYS_URL   Amber 公钥地址，默认 http://127.0.0.1:7341/v1/keys
+    AMBER_KEYS_FILE  Amber 公钥文件（JWKS），默认同目录下的 amber-keys.json。部署时取一次：
+                     curl -s --noproxy '*' http://127.0.0.1:7341/v1/keys > amber-keys.json
+                     运行时不再访问 7341：Amber 停掉时本机任何进程都能占用这个端口冒充 Amber。
     DEMO_DATA        权限数据文件，默认同目录下的 data.json
 """
-import base64, json, os, threading, time, urllib.request
+import base64, json, os, threading, time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
 PORT = int(os.environ.get("DEMO_PORT", "18790"))
 AUDIENCE = os.environ.get("DEMO_AUDIENCE", "demo-profile")
-KEYS_URL = os.environ.get("AMBER_KEYS_URL", "http://127.0.0.1:7341/v1/keys")
+KEYS_FILE = os.environ.get("AMBER_KEYS_FILE", os.path.join(os.path.dirname(os.path.abspath(__file__)), "amber-keys.json"))
 DATA = os.environ.get("DEMO_DATA", os.path.join(os.path.dirname(os.path.abspath(__file__)), "data.json"))
 CLOCK_SKEW = 30
 
@@ -29,28 +31,16 @@ def b64(s):
     return base64.urlsafe_b64decode(s + "=" * (-len(s) % 4))
 
 
-class Keys:
-    """Amber 的公钥。缓存起来；遇到不认识的 kid（Amber 换了密钥）时重新拉一次。"""
-
-    def __init__(self):
-        self.keys, self.lock = {}, threading.Lock()
-
-    def refresh(self):
-        # 只访问本机，不走任何代理
-        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
-        jwks = json.load(opener.open(KEYS_URL, timeout=5))
-        self.keys = {k["kid"]: Ed25519PublicKey.from_public_bytes(b64(k["x"]))
-                     for k in jwks["keys"] if k.get("kty") == "OKP" and k.get("crv") == "Ed25519"}
-
-    def get(self, kid):
-        with self.lock:
-            if kid not in self.keys:
-                self.refresh()
-            return self.keys.get(kid)
+def load_keys():
+    """Amber 的公钥，启动时从固定文件读入。不认识的 kid 一律拒绝；换密钥时由部署方更新文件并重启。"""
+    with open(KEYS_FILE, encoding="utf-8") as f:
+        jwks = json.load(f)
+    return {k["kid"]: Ed25519PublicKey.from_public_bytes(b64(k["x"]))
+            for k in jwks["keys"] if k.get("kty") == "OKP" and k.get("crv") == "Ed25519"}
 
 
-KEYS = Keys()
-USED = {}  # jti -> exp，防重放：同一张凭证只能用一次
+KEYS = load_keys()
+USED = {}  # jti -> exp，防重放：同一张凭证只能用一次（示例放内存；正式服务要持久化，否则重启后可重放）
 USED_LOCK = threading.Lock()
 
 

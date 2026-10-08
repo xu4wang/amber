@@ -63,6 +63,8 @@ payload {
   "run": "85df3e7f",          本次执行 id
   "chat": "oc_…",             指令所属的群或私聊
   "channel": "bot",           bot / web / agent / schedule；试运行时加 .trial，例如 bot.trial
+  "call_index": 1,            这是本次执行的第几张凭证（从 1 开始）
+  "call_count": 2,            本次执行对这个服务一共签了几张，等于脚本声明的 calls
   "iat": 1791389686, "exp": 1791389986,
   "jti": "uuid"
 }
@@ -78,20 +80,20 @@ payload {
 }
 ```
 
-`tcpPort` 也可以换成 `"unixSocket": "/path/to/service.sock"`。指令脚本声明 `"services": ["data-mcp"]` 后，运行时会从标准输入收到：
+`tcpPort` 也可以换成 `"unixSocket": "/path/to/service.sock"`。指令脚本声明 `"services": {"data-mcp": {"calls": 2}}` 后（`calls` = 每次执行最多调用几次，1–20 的整数，随代码一起审核、计入版本哈希），运行时会从标准输入收到：
 
 ```json
-{"services": {"data-mcp": {"token": "eyJhbGciOiJFZERTQSIs…", "tcpPort": 8765}}}
+{"services": {"data-mcp": {"tokens": ["eyJhbGciOiJFZERTQSIs…", "eyJhbGciOiJFZERTQSIs…"], "tcpPort": 8765}}}
 ```
 
-脚本调用服务时带上这个凭证，例如 `Authorization: Amber <token>`，具体怎么带由服务方决定。
+`tokens` 按 `call_index` 排好序。脚本每次请求用一张，例如 `Authorization: Amber <token>`，具体怎么带由服务方决定。每张都有独立的 `jti`，服务方应当**每张只接受一次**；用完就没有了，Amber 不会在运行中补签。旧写法 `"services": ["data-mcp"]` 提交时会被拒绝。
 
 ### 3.4 服务方怎么验证
 
-1. **取公钥**：在 Amber 所在的机器上请求 `GET http://127.0.0.1:7341/v1/keys`，返回 JWKS。可以缓存，遇到不认识的 `kid` 再刷新一次。
+1. **取公钥**：部署时从 Amber 所在的机器上请求一次 `GET http://127.0.0.1:7341/v1/keys`（返回 JWKS），核对指纹后把公钥**整份写进服务自己的配置**。运行时不要再去这个地址取：Amber 停掉时，本机任何进程都能占用 7341 端口，冒充 Amber 发布公钥。遇到配置里没有的 `kid` 直接拒绝。
 2. **验签**：用 `kid` 对应的 Ed25519 公钥验证签名。
 3. **检查声明**：`iss == "amber"`，`aud ==` 本服务名，`exp` 没过期（建议允许 30 秒时钟误差）。
-4. **防重放**（建议）：记录用过的 `jti`，5 分钟内拒绝重复。
+4. **防重放**：持久化记录用过的 `jti`（保留到 `exp` 之后），重复的拒绝；只放内存在服务重启后会失效。`call_index`、`call_count` 以签名里的为准，请求体里的同名字段一律忽略。
 5. **以 `sub`（union_id）作为调用人**，走和其他入口完全相同的权限判断；请求体里自称的任何身份字段一律忽略。
 6. **审计**：记录 `caller_source = "amber"`，以及 `cmd`、`rev`、`run`、`channel`。
 

@@ -4,6 +4,7 @@
 import type * as lark from '@larksuiteoapi/node-sdk';
 import type { CommandRow } from './db.ts';
 import { lineDiff } from './diff.ts';
+import { describeServices } from './runner.ts';
 
 function log(...a: unknown[]): void { console.log(new Date().toISOString(), ...a); }
 
@@ -21,7 +22,7 @@ function docMarkdown(c: CommandRow, opts: { creator: string; submittedBy?: strin
     : '无参数。';
   const s = c.script;
   const how = s.kind === 'privileged' ? '**特权脚本**：不在沙盒里运行，可读本机文件' : '沙盒脚本';
-  const net = s.network ? '，可访问外网' : s.services?.length ? `，以执行人身份调用：${s.services.join('、')}（不能访问外网）` : '，不联网';
+  const net = s.network ? '，可访问外网' : s.services && Object.keys(s.services).length ? `，以执行人身份调用：${describeServices(s)}（不能访问外网）` : '，不联网';
   const code = `## 代码\n\n${how}${net}；超时 ${(s.timeoutMs ?? 30000) / 1000} 秒。\n\n${FENCE}python\n${s.code.split(FENCE).join('``\u200b`')}\n${FENCE}`;
   const trial = opts.trial
     ? `## 试运行结果\n\n由认领人试运行时的输出：\n\n${FENCE}text\n${opts.trial.slice(0, 20000).split(FENCE).join('``​`')}\n${FENCE}`

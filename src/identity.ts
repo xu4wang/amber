@@ -4,7 +4,9 @@
 //
 // Format: JWS compact, alg EdDSA (Ed25519).
 //   header  { alg: "EdDSA", typ: "JWT", kid }
-//   payload { iss: "amber", aud, sub: <caller union_id>, cmd, rev: <spec_hash>, run, chat, channel, iat, exp, jti }
+//   payload { iss: "amber", aud, sub: <caller union_id>, cmd, rev: <spec_hash>, run, chat, channel,
+//             call_index, call_count, iat, exp, jti }
+// A run gets call_count tokens per declared service (D41), each with its own jti, meant to be used once.
 import { generateKeyPairSync, createPrivateKey, createPublicKey, sign, randomUUID, createHash } from 'node:crypto';
 import type { KeyObject } from 'node:crypto';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
@@ -35,10 +37,10 @@ export class Signer {
     return { keys: [{ ...jwk, kid: this.kid, alg: 'EdDSA', use: 'sig' }] };
   }
 
-  issue(c: { aud: string; sub: string; cmd: string; rev: string; run: string; chat: string; channel: string; ttlSec?: number }): string {
+  issue(c: { aud: string; sub: string; cmd: string; rev: string; run: string; chat: string; channel: string; callIndex: number; callCount: number; ttlSec?: number }): string {
     const now = Math.floor(Date.now() / 1000);
     const header = { alg: 'EdDSA', typ: 'JWT', kid: this.kid };
-    const payload = { iss: 'amber', aud: c.aud, sub: c.sub, cmd: c.cmd, rev: c.rev, run: c.run, chat: c.chat, channel: c.channel, iat: now, exp: now + (c.ttlSec ?? 300), jti: randomUUID() };
+    const payload = { iss: 'amber', aud: c.aud, sub: c.sub, cmd: c.cmd, rev: c.rev, run: c.run, chat: c.chat, channel: c.channel, call_index: c.callIndex, call_count: c.callCount, iat: now, exp: now + (c.ttlSec ?? 300), jti: randomUUID() };
     const input = `${b64u(JSON.stringify(header))}.${b64u(JSON.stringify(payload))}`;
     return `${input}.${b64u(sign(null, Buffer.from(input), this.key))}`;
   }

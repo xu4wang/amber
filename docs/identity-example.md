@@ -46,7 +46,7 @@ def verify(token):
     header, payload = json.loads(b64(h)), json.loads(b64(p))
     if header.get("alg") != "EdDSA":
         raise Rejected("算法不对")
-    key = KEYS.get(header.get("kid"))            # Amber 公钥，来自 /v1/keys，按 kid 缓存
+    key = KEYS.get(header.get("kid"))            # Amber 公钥，启动时从固定文件读入；不认识的 kid 直接拒绝
     key.verify(b64(s), f"{h}.{p}".encode())       # 签名不对会抛异常
     if payload["iss"] != "amber":                 raise Rejected("签发方不对")
     if payload["aud"] != AUDIENCE:                raise Rejected("这张凭证不是发给本服务的")
@@ -66,6 +66,8 @@ rows = [r for r in data["sales"] if r["region"] in data["permissions"].get(user,
 python3 -m venv ~/demo-service-venv
 ~/demo-service-venv/bin/pip install cryptography
 cd examples/identity-service
+# 部署时取一次 Amber 公钥并核对指纹（kid），之后服务只读这个文件
+curl -s --noproxy '*' http://127.0.0.1:7341/v1/keys > amber-keys.json
 DEMO_PORT=18790 DEMO_AUDIENCE=demo-profile ~/demo-service-venv/bin/python service.py
 # 输出：demo service on 127.0.0.1:18790, audience=demo-profile, keys=[...]
 ```
@@ -75,7 +77,8 @@ DEMO_PORT=18790 DEMO_AUDIENCE=demo-profile ~/demo-service-venv/bin/python servic
 - 服务**只监听 127.0.0.1**，和 Amber 在同一台机器上。
 - 端口要选一个没被占用的。先用 `lsof -nP -iTCP:<端口> -sTCP:LISTEN` 检查。如果端口上其实是别的程序，凭证就会被发给那个程序。
 - 正式使用时，用 launchd 之类的工具让服务常驻，写法参照 [安装与部署](install.md#常驻运行launchd) 里 Amber 自己的 plist。
-- 服务启动时就会去拉 Amber 的公钥，所以要先启动 Amber。
+- 服务**运行时不访问** Amber 的 7341 端口，只认 `amber-keys.json` 里的公钥：Amber 停掉时，本机任何进程都能占用这个端口冒充 Amber 发布公钥。Amber 换密钥时，先把新旧两把都写进文件、重启服务，等旧凭证全部过期（最长 5 分钟）后再删掉旧的。
+- 示例把用过的 `jti` 放在内存里，服务重启后就忘了；正式服务要持久化保存到 `exp` 之后。
 
 ## 3. 在 Amber 里登记服务
 
@@ -104,7 +107,7 @@ inp = json.load(sys.stdin)
 svc = inp["services"]["demo-profile"]          # Amber 为本次执行签发的凭证和服务地址
 req = urllib.request.Request(
     f"http://127.0.0.1:{svc['tcpPort']}/sales",
-    headers={"Authorization": "Amber " + svc["token"]},
+    headers={"Authorization": "Amber " + svc["tokens"][0]},   # 每次请求用一张，每张只能用一次
 )
 opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))  # 本机服务，不走代理
 try:
@@ -145,7 +148,7 @@ print("```")
   "script": {
     "kind": "script", "lang": "python",
     "network": false,
-    "services": ["demo-profile"],
+    "services": {"demo-profile": {"calls": 1}},
     "timeoutMs": 15000,
     "code": "……command_script.py 的内容……"
   },
@@ -153,7 +156,7 @@ print("```")
 }
 ```
 
-- `services` 声明要用哪些已登记的服务。声明了服务就**不能**再设 `network: true`，提交时会被拒绝，这样查到的数据无法外传。
+- `services` 声明要用哪些已登记的服务，以及每次执行最多调用几次（`calls`，1–20）。运行时拿到同样多张凭证，每张只能用一次。声明了服务就**不能**再设 `network: true`，提交时会被拒绝，这样查到的数据无法外传。
 - 实际使用时，由 agent 填好 `chatId`、`chatType`、`claimer`，再运行 `amber submit draft.json --label <bot 名>`。
 
 之后的流程和普通指令一样：

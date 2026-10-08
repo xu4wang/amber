@@ -69,7 +69,7 @@ AMBER_LARK_APP_SECRET=xxxxxxxxxxxxxxxx
 
 | 字段 | 说明 |
 |---|---|
-| `admins` | 管理员，填邮箱或 union_id。管理员可以把指令设为全局或改回本地；含特权脚本的指令必须有管理员同意 |
+| `admins` | 管理员，填邮箱或 union_id。管理员可以把指令设为全局或改回本地 |
 | `reviewers` | 审核人邮箱。**所有人都同意**指令才生效。只要有一个邮箱查不到，Amber 就拒绝发起审核，不会悄悄少一个人 |
 | `machines` | 允许访问接口的机器，格式是 IP → 机器名。机器名只记在审计日志里，不给用户看：用户只知道是自己的 agent 提交或发起的（卡片上显示 agent 的 `--label`） |
 | `approval` | 飞书审批配置，取值方法见 [feishu-setup.md](feishu-setup.md#4-审批定义)。不配就退回到用卡片按钮审核 |

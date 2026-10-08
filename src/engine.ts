@@ -82,6 +82,10 @@ export interface RunOutcome { runId: string; ok: boolean; blocks: Block[]; markd
 export async function runCommand(store: Store, cmd: CommandRow, rawArgs: Record<string, string | undefined>, caller: Caller, facts: CallerFacts = {}, opts: { trial?: boolean; viaForm?: boolean } = {}): Promise<RunOutcome> {
   if (cmd.status !== 'active' && !(opts.trial && cmd.status === 'draft')) throw new AmberError('not_active', '指令未生效');
   if (computeSpecHash(cmd) !== cmd.specHash) throw new AmberError('spec_mismatch', '指令定义与审核通过的版本不一致，已拒绝执行');
+  // D40: privileged scripts are disabled, including ones approved before the switch.
+  if (cmd.script.kind !== 'script') throw new AmberError('disabled', '特权脚本已停用，这条指令不能执行');
+  // D41: services must be the { name: { calls } } form; the old list form is refused, not guessed.
+  if (Array.isArray(cmd.script.services)) throw new AmberError('disabled', '指令使用旧的 services 写法，需要重新提交');
   // confirm = true: only runnable from the confirmation form, never from a one-line shortcut (D30).
   if (cmd.options.confirm && !opts.trial && !opts.viaForm) throw new AmberError('needs_confirm', '这条指令需要在表单卡片上确认后执行');
   const args = await validateArgs(cmd.params, rawArgs, facts);
@@ -90,15 +94,17 @@ export async function runCommand(store: Store, cmd: CommandRow, rawArgs: Record<
   const runId = store.startRun({ commandId: cmd.id, specHash: cmd.specHash, channel: opts.trial ? `${caller.channel}.trial` : caller.channel, callerUnionId: caller.unionId, chatId: caller.chatId, args });
   store.audit(caller.unionId, 'run.start', { runId, commandId: cmd.id, name: cmd.name, channel: caller.channel, chatId: caller.chatId });
   const script = cmd.script;
-  const services: Record<string, { token: string; tcpPort?: number; unixSocket?: string }> = {};
-  for (const name of script.services ?? []) {
+  const services: Record<string, { tokens: string[]; tcpPort?: number; unixSocket?: string }> = {};
+  const channel = opts.trial ? `${caller.channel}.trial` : caller.channel;
+  for (const [name, use] of Object.entries(script.services ?? {})) {
     const d = serviceDef(name);
     if (!d || !facts.signer) continue;
-    const token = facts.signer.issue({ aud: d.audience, sub: caller.unionId, cmd: cmd.id, rev: cmd.specHash, run: runId, chat: caller.chatId, channel: opts.trial ? `${caller.channel}.trial` : caller.channel });
-    store.audit(caller.unionId, 'identity.issue', { runId, service: name, aud: d.audience });
-    services[name] = { token, ...(d.tcpPort ? { tcpPort: d.tcpPort } : {}), ...(d.unixSocket ? { unixSocket: d.unixSocket } : {}) };
+    // One single-use token per declared call (D41); no refills while the script runs.
+    const tokens = Array.from({ length: use.calls }, (_, i) => facts.signer!.issue({ aud: d.audience, sub: caller.unionId, cmd: cmd.id, rev: cmd.specHash, run: runId, chat: caller.chatId, channel, callIndex: i + 1, callCount: use.calls }));
+    store.audit(caller.unionId, 'identity.issue', { runId, service: name, aud: d.audience, count: use.calls });
+    services[name] = { tokens, ...(d.tcpPort ? { tcpPort: d.tcpPort } : {}), ...(d.unixSocket ? { unixSocket: d.unixSocket } : {}) };
   }
-  const r = await runScript(script, { params: args, caller: { unionId: caller.unionId, chatId: caller.chatId, channel: caller.channel, city }, runId, ...(Object.keys(services).length ? { services } : {}) }, { forceSandbox: !!opts.trial });
+  const r = await runScript(script, { params: args, caller: { unionId: caller.unionId, chatId: caller.chatId, channel: caller.channel, city }, runId, ...(Object.keys(services).length ? { services } : {}) });
   if (!r.ok) {
     store.finishRun(runId, 'failed', null, r.error ?? 'failed');
     store.audit(caller.unionId, 'run.failed', { runId, error: r.error });

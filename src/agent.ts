@@ -46,7 +46,7 @@ const REQUEST_TTL_MS = 24 * 3600_000;
 const REQUESTS_PER_CHAT_10MIN = 10;
 
 export function needsPerson(c: CommandRow): boolean {
-  return c.options.confirm || (c.script.services?.length ?? 0) > 0;
+  return c.options.confirm || Object.keys(c.script.services ?? {}).length > 0;
 }
 
 /** Checks the given arguments before asking a person; values taken from the clicker (city) are filled in later. */

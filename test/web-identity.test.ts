@@ -79,15 +79,16 @@ test('identity token: the service receives a token for the person who clicked, t
       'import json,sys,urllib.request',
       'inp=json.load(sys.stdin); s=inp["services"]["demo"]',
       'op=urllib.request.build_opener(urllib.request.ProxyHandler({}))',
-      'r=op.open(urllib.request.Request("http://127.0.0.1:%d/" % s["tcpPort"], headers={"Authorization":"Amber "+s["token"]}), timeout=5)',
-      'print("user=" + json.load(r)["user"])',
+      'for t in s["tokens"]:',
+      '  r=op.open(urllib.request.Request("http://127.0.0.1:%d/" % s["tcpPort"], headers={"Authorization":"Amber "+t}), timeout=5)',
+      '  print("user=" + json.load(r)["user"])',
       'try:',
       '  op.open("http://127.0.0.1:%d/v1/keys" % ' + env.apiPort + ', timeout=3); print("LEAK")',
       'except Exception: print("other port blocked")',
     ].join('\n');
     // Declaring a service and internet access together is refused.
-    assert.equal((await env.submit({ chatId: GROUP, chatType: 'group', name: '查', params: [], script: script(code, { services: ['demo'], network: true }) })).ok, false);
-    await activate(env, { chatId: GROUP, chatType: 'group', name: '查', params: [], script: script(code, { services: ['demo'] }) }, env.alice);
+    assert.equal((await env.submit({ chatId: GROUP, chatType: 'group', name: '查', params: [], script: script(code, { services: { demo: { calls: 2 } }, network: true }) })).ok, false);
+    await activate(env, { chatId: GROUP, chatType: 'group', name: '查', params: [], script: script(code, { services: { demo: { calls: 2 } } }) }, env.alice);
     // A command that uses a service always needs a person: the agent cannot run it directly.
     const r = await env.api('POST', '/v1/runs', { chatId: GROUP, chatType: 'group', user: env.bob.email, command: '查' });
     assert.equal(r.body.mode, 'confirm_card');
@@ -102,5 +103,12 @@ test('identity token: the service receives a token for the person who clicked, t
     assert.equal(last.payload.channel, 'agent');
     assert.ok(last.payload.exp - last.payload.iat <= 300);
     assert.equal(seen[0].payload.channel, 'bot.trial', 'the trial run is marked as a trial');
+    // calls: 2 => exactly two tokens per run, numbered 1..2 under the signature, each with its own jti (D41).
+    assert.equal(seen.length, 4, 'trial run + agent run, two calls each');
+    const run = seen.slice(-2).map(x => x.payload);
+    assert.deepEqual(run.map(p => [p.call_index, p.call_count]), [[1, 2], [2, 2]]);
+    assert.equal(run[0].run, run[1].run);
+    assert.notEqual(run[0].jti, run[1].jti);
+    assert.ok(seen.every(x => x.good));
   } finally { await env.close(); svc.close(); }
 });

@@ -66,9 +66,9 @@ amber schedule resume <id> / delete <id>          # 要创建人在卡片上确�
 - **输入**：从标准输入读一个 JSON：
   ```json
   {"params": {"city": "北京"}, "caller": {"unionId": "on_…", "chatId": "oc_…", "channel": "bot|agent|schedule", "city": "北京"}, "runId": "…",
-   "services": {"data-mcp": {"token": "…", "tcpPort": 8765}}}
+   "services": {"data-mcp": {"tokens": ["…", "…"], "tcpPort": 8765}}}
   ```
-  `services` 只有声明了服务时才有。参数一律从这里取，不要从命令行或环境变量读。
+  `services` 只有声明了服务时才有。草稿里写 `"services": {"data-mcp": {"calls": 2}}`（每次执行最多调用几次，1–20），运行时就拿到 2 张凭证，**每次请求用一张、不能重复用**。参数一律从这里取，不要从命令行或环境变量读。
 - **输出**：往标准输出打印 Markdown。可以用普通 Markdown 和表格，以及：
   - ` ```vega-lite `：图表（柱状图、折线图会转成飞书原生图表）
   - ` ```table `：数据表，`{"columns":[{"name","label","type":"text|number"}],"rows":[…],"total":N}`
@@ -91,7 +91,7 @@ amber schedule resume <id> / delete <id>          # 要创建人在卡片上确�
 - 参数类型：`string`（可加 `maxLength`、`pattern`）或 `integer`（可加 `min`、`max`）；`"defaultFrom": "caller.city"` 表示不填时用执行人的办公城市。
 - `options.confirm`：执行前必须确认（会改数据、有风险时打开）。
 - `options.schedulable`：允许定时执行。
-- `script.kind` 用 `script`。`privileged`（不进沙盒）只有管理员能批准，非必要不用。
+- `script.kind` 只能用 `script`。`privileged` 已停用，提交会被拒绝。
 
 ### 修改已有指令
 

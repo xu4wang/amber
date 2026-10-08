@@ -70,7 +70,7 @@ curl -s "https://open.feishu.cn/open-apis/approval/v4/approvals/<approval_code>"
 - `reviewNodeId`：审批节点的 `node_id`。不要填「提交」和「结束」节点。
 - `formFieldId`：多行文本控件（`textarea`）的 `id`。
 
-审批结果以接口查询为准：Amber 会重新读取审批实例，确认**每一位审核人都同意**、指令定义的哈希也没有变化，才让指令生效。含特权脚本的指令还要求管理员也在同意的人里。
+审批结果以接口查询为准：Amber 会重新读取审批实例，确认**每一位审核人都同意**、指令定义的哈希也没有变化，才让指令生效。（特权脚本已停用。）
 
 ## 5. 知识库
 

@@ -7,7 +7,7 @@ import type * as lark from '@larksuiteoapi/node-sdk';
 import type { Store, CommandRow, ParamDef, Script, CommandOptions } from './db.ts';
 import { normalizeOptions } from './db.ts';
 import { computeSpecHash } from './db.ts';
-import { validateScript } from './runner.ts';
+import { validateScript, describeServices } from './runner.ts';
 import type { FeishuReview } from './feishu-review.ts';
 import type { Caller, CallerFacts, Block } from './engine.ts';
 import { runCommand, AmberError } from './engine.ts';
@@ -52,7 +52,7 @@ function specSummary(c: CommandRow): string {
     ? c.params.map(p => `${p.label ?? p.name}（${p.type === 'integer' ? '整数' : '文本'}${p.defaultFrom === 'caller.city' ? '，默认办公城市' : p.default !== undefined ? `，默认 ${p.default}` : ''}${p.required ? '，必填' : ''}）`).join('、')
     : '无';
   const s = c.script;
-  const how = `${scriptLabel(s.kind)}${s.network ? '，可访问外网' : ''}${s.services?.length ? `，以执行人身份调用：${s.services.join('、')}（不能访问外网）` : ''}`;
+  const how = `${scriptLabel(s.kind)}${s.network ? '，可访问外网' : ''}${s.services && Object.keys(s.services).length ? `，以执行人身份调用：${describeServices(s)}（不能访问外网）` : ''}`;
   return [
     `**名称**：${sanitizeMarkdown(c.name, 40)}`,
     `**说明**：${sanitizeMarkdown(c.description || '（无）', 200)}`,

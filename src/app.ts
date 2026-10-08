@@ -14,6 +14,11 @@ export async function startAmber(cfg: AmberConfig, opts: { apiPort: number; webP
   setServices(cfg.services);
   setTimezones(cfg.timezones);
   const store = new Store(cfg.dataDir);
+  // Fail closed and say so: these commands stay in the database but every run is refused (D40/D41).
+  for (const u of store.listUnrunnable()) {
+    console.warn(new Date().toISOString(), 'command cannot run', u);
+    store.audit(null, 'startup.unrunnable', u);
+  }
   const bot = new AmberBot(cfg, store, { client: opts.client, ws: opts.ws, timers: opts.timers });
   await bot.start();
   const api = startApi(opts.apiPort, cfg.machines, bot.flow, bot.agent, () => bot.signer.jwks(), { webUrl: cfg.webBaseUrl });

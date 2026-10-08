@@ -6,7 +6,7 @@ inp = json.load(sys.stdin)
 svc = inp["services"]["demo-profile"]          # Amber 为本次执行签发的凭证和服务地址
 req = urllib.request.Request(
     f"http://127.0.0.1:{svc['tcpPort']}/sales",
-    headers={"Authorization": "Amber " + svc["token"]},
+    headers={"Authorization": "Amber " + svc["tokens"][0]},   # 每次请求用一张，每张只能用一次
 )
 opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))  # 本机服务，不走代理
 try:
