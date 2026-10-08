@@ -225,10 +225,10 @@ function argLines(c: CommandRow, args: Record<string, string>): string {
 
 /** Agent asked to run a command / create a schedule on someone's behalf; the click decides who. */
 export function requestCard(o: {
-  kind: 'run' | 'schedule' | 'schedule_resume' | 'schedule_delete'; reqId: string; cmd: CommandRow; args: Record<string, string>;
-  requestedBy: string; targetOpenId?: string; ruleText?: string; nextText?: string; scheduleId?: string;
+  kind: 'run' | 'schedule' | 'schedule_resume' | 'schedule_delete' | 'retire' | 'scope_global' | 'scope_local'; reqId: string; cmd: CommandRow; args: Record<string, string>;
+  requestedBy: string; targetOpenId?: string; ruleText?: string; nextText?: string; scheduleId?: string; schedules?: number;
 }): object {
-  const danger = o.cmd.options.confirm || o.kind === 'schedule_delete';
+  const danger = o.cmd.options.confirm || o.kind === 'schedule_delete' || o.kind === 'retire';
   const who = o.targetOpenId ? person(o.targetOpenId) : '你';
   const by = sanitizeMarkdown(o.requestedBy, 80);
   const name = sanitizeMarkdown(o.cmd.name, 40);
@@ -242,6 +242,19 @@ export function requestCard(o: {
     title = `请确认定时任务：${o.cmd.name}`;
     ok = danger ? '确认并创建定时任务' : '创建定时任务';
     els.push({ tag: 'markdown', content: `**${by}** 请求为 ${who} 创建定时任务：**${sanitizeMarkdown(o.ruleText ?? '', 80)}** 自动执行「**${name}**」。\n首次运行：${sanitizeMarkdown(o.nextText ?? '', 40)}` });
+  } else if (o.kind === 'retire') {
+    title = `请确认下线指令：${o.cmd.name}`;
+    ok = '确认下线';
+    els.push({ tag: 'markdown', content: `**${by}** 请求下线指令「**${name}**」（${o.cmd.id}）。下线后任何人都不能再执行它，不需要审核，也不能撤销。${o.schedules ? `\n它的 **${o.schedules}** 个定时任务会暂停，并私聊通知各自的创建人。` : ''}` });
+    els.push({ tag: 'markdown', content: '<font color="grey">只有指令的创建人或管理员可以确认。</font>' });
+  } else if (o.kind === 'scope_global' || o.kind === 'scope_local') {
+    const g = o.kind === 'scope_global';
+    title = g ? `请确认设为全局：${o.cmd.name}` : `请确认取消全局：${o.cmd.name}`;
+    ok = g ? '设为全局' : '取消全局';
+    els.push({ tag: 'markdown', content: g
+      ? `**${by}** 请求把指令「**${name}**」（${o.cmd.id}）设为**全局**：Amber 所在的任何群和私聊都能使用。`
+      : `**${by}** 请求把指令「**${name}**」（${o.cmd.id}）改回**只在创建处可用**。` });
+    els.push({ tag: 'markdown', content: '<font color="grey">只有管理员可以确认。</font>' });
   } else if (o.kind === 'schedule_resume') {
     title = `请确认恢复定时任务：${o.cmd.name}`;
     ok = '恢复';

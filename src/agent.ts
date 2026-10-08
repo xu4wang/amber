@@ -25,6 +25,9 @@ export interface Deps {
   /** undefined = cannot tell (missing permission). */
   isMember(chatId: string, unionId: string): Promise<boolean | undefined>;
   signer: Signer;
+  /** Take a command offline (checks creator/admin, pauses its schedules). */
+  retire(cmdId: string, actor: { unionId: string }, byLabel: string): Promise<{ name: string; schedules: number }>;
+  nameOf(unionId: string): Promise<string | undefined>;
 }
 
 /** What the agent says about where it is. Nothing here is trusted as identity. */
@@ -162,13 +165,36 @@ export class AgentGate {
     return { mode: 'confirm_card', requestId: req.id, status: 'awaiting', message: '已发出确认卡片，需要定时任务的创建人（或管理员）点确认。' };
   }
 
+  /**
+   * Take a command offline, or change its scope (global / local). These change what everyone can run,
+   * so — like schedule resume/delete — a person with the right (creator or admin for retire; admin for
+   * scope) must click Amber's card. When the agent names the person, the permission is checked now, so
+   * nobody is asked to confirm something they cannot do (D44).
+   */
+  async commandChange(ctx: Ctx, name: string, kind: 'retire' | 'scope_global' | 'scope_local'): Promise<object> {
+    const cmd = findVisible(this.store, this.viewer(ctx), name);
+    if (ctx.user) {
+      const allowed = kind === 'retire'
+        ? cmd.ownerUnionId === ctx.user.unionId || this.deps.isAdmin(ctx.user.unionId)
+        : this.deps.isAdmin(ctx.user.unionId);
+      if (!allowed) throw new AmberError('forbidden', kind === 'retire' ? '只有指令的创建人或管理员可以下线' : '只有管理员可以修改指令的执行范围');
+    }
+    if (kind === 'scope_global' && cmd.global) throw new AmberError('not_needed', `「${cmd.name}」已经是全局指令`);
+    if (kind === 'scope_local' && !cmd.global) throw new AmberError('not_needed', `「${cmd.name}」本来就只在创建处可用`);
+    if (kind === 'scope_global' && this.store.listActiveGlobal().some(g => g.name === cmd.name && g.id !== cmd.id)) throw new AmberError('conflict', `已经有一条全局指令叫「${cmd.name}」，不能重名`);
+    const schedules = kind === 'retire' ? this.store.schedulesOfCommand(cmd.id).length : 0;
+    const req = await this.post(ctx, kind, cmd, {}, { schedules });
+    const who = kind === 'retire' ? '指令的创建人（或管理员）' : '管理员';
+    return { mode: 'confirm_card', requestId: req.id, status: 'awaiting', message: `已发出确认卡片，需要${ctx.user ? ` ${ctx.user.email}（须是${who}）` : who}点确认。用 amber wait ${req.id} 查看结果。` };
+  }
+
   private cleanArgs(args: unknown): Record<string, string> {
     const out: Record<string, string> = {};
     if (args && typeof args === 'object') for (const [k, v] of Object.entries(args)) if (v !== undefined && v !== null) out[k] = String(v).slice(0, 2000);
     return out;
   }
 
-  private async post(ctx: Ctx, kind: RequestKind, cmd: CommandRow, args: Record<string, string>, o: { rule?: unknown; scheduleId?: string; target?: string; targetOpenId?: string; toCreatorDm?: boolean }): Promise<RequestRow> {
+  private async post(ctx: Ctx, kind: RequestKind, cmd: CommandRow, args: Record<string, string>, o: { rule?: unknown; scheduleId?: string; target?: string; targetOpenId?: string; toCreatorDm?: boolean; schedules?: number }): Promise<RequestRow> {
     // Agents are not trusted: cap how many cards they can make Amber post into one chat.
     if (this.store.recentRequestsInChat(ctx.chatId, 10 * 60_000) >= REQUESTS_PER_CHAT_10MIN) throw new AmberError('rate_limited', '这个会话 10 分钟内的确认请求太多了，请稍后再试');
     const target = o.target ?? ctx.user?.unionId ?? null;
@@ -180,6 +206,7 @@ export class AgentGate {
     const card = requestCard({
       kind, reqId: req.id, cmd, args, requestedBy: ctx.requestedBy, targetOpenId: o.targetOpenId ?? ctx.user?.openId,
       ruleText: rule ? describeRule(rule) : undefined, nextText: rule ? formatAt(nextRun(rule, Date.now()), rule.tz) : undefined, scheduleId: o.scheduleId,
+      schedules: o.schedules,
     });
     // p2p: Amber cannot post into the agent's private chat, so the card goes to the person's chat with Amber.
     const to = ctx.chatType === 'p2p' || o.toCreatorDm ? { unionId: target! } : ctx.replyTo ? { replyTo: ctx.replyTo, inThread: ctx.inThread } : { chatId: ctx.chatId };
@@ -193,6 +220,47 @@ export class AgentGate {
     this.store.audit(null, 'request.create', { id: req.id, kind, command: cmd.id, chatId: ctx.chatId, requestedBy: ctx.requestedBy, machine: ctx.machine, target });
     log('request', req.id, kind, cmd.name, ctx.chatId, ctx.requestedBy);
     return { ...req, messageId: messageId ?? null };
+  }
+
+  private async onCommandChangeClick(ok: boolean, req: RequestRow, clicker: Caller, cardChatId: string): Promise<object> {
+    const cmd = this.store.getCommand(req.commandId ?? '');
+    if (!cmd) throw new AmberError('not_found', '指令不存在');
+    const retire = req.kind === 'retire';
+    const allowed = retire ? cmd.ownerUnionId === clicker.unionId || this.deps.isAdmin(clicker.unionId) : this.deps.isAdmin(clicker.unionId);
+    if (!allowed) throw new AmberError('forbidden', retire ? '只有指令的创建人或管理员可以下线' : '只有管理员可以修改指令的执行范围');
+    if (req.targetUnionId && req.targetUnionId !== clicker.unionId) throw new AmberError('forbidden', '这个请求是发给别人的，只有被请求人可以点');
+    if (req.chatType === 'group' && cardChatId !== req.chatId) throw new AmberError('forbidden', '请在原来的群里操作');
+    const actor = clicker.unionId;
+    if (!ok) {
+      if (!this.store.transitionRequest(req.id, 'awaiting', 'canceled', { actorUnionId: actor })) throw new AmberError('closed', '这个请求已经处理过了');
+      this.store.audit(actor, 'request.cancel', { id: req.id });
+      return closedCard('已取消', 'grey', `${person(clicker.openId)} 取消了这个请求（${req.id}），指令没有变化。`);
+    }
+    // Act only on the version the request was made for.
+    if (cmd.status !== 'active' || cmd.specHash !== req.specHash) {
+      this.store.transitionRequest(req.id, 'awaiting', 'failed', { error: 'command_changed' });
+      return closedCard('没有执行', 'grey', `指令「${sanitizeMarkdown(cmd.name, 40)}」在请求之后已下线或换了新版本，请让 agent 重新发起。`);
+    }
+    if (!this.store.transitionRequest(req.id, 'awaiting', 'running', { actorUnionId: actor })) throw new AmberError('closed', '这个请求已经处理过了');
+    try {
+      if (retire) {
+        const r = await this.deps.retire(cmd.id, { unionId: actor }, (await this.deps.nameOf(actor)) ?? '创建人');
+        this.store.transitionRequest(req.id, 'running', 'done');
+        return closedCard(`指令已下线：${cmd.name}`, 'grey', `「${sanitizeMarkdown(r.name, 40)}」已由 ${person(clicker.openId)} 下线，不能再执行。${r.schedules ? `它的 ${r.schedules} 个定时任务已暂停，并已通知创建人。` : ''}`);
+      }
+      const toGlobal = req.kind === 'scope_global';
+      if (toGlobal && this.store.listActiveGlobal().some(g => g.name === cmd.name && g.id !== cmd.id)) throw new AmberError('conflict', `已经有一条全局指令叫「${cmd.name}」，不能重名`);
+      this.store.setGlobal(cmd.id, toGlobal);
+      this.store.audit(actor, toGlobal ? 'scope.promote' : 'scope.demote', { id: cmd.id, name: cmd.name, via: 'agent', request: req.id });
+      log('scope', toGlobal ? 'promote' : 'demote', cmd.id, cmd.name, 'via agent');
+      this.store.transitionRequest(req.id, 'running', 'done');
+      return closedCard('执行范围已修改', 'green', toGlobal
+        ? `「${sanitizeMarkdown(cmd.name, 40)}」已设为**全局**：Amber 所在的任何群和私聊都能使用。`
+        : `「${sanitizeMarkdown(cmd.name, 40)}」已改回**只在创建处可用**。`);
+    } catch (e) {
+      this.store.transitionRequest(req.id, 'running', 'failed', { error: (e as Error).message });
+      throw e;
+    }
   }
 
   /** Status for `amber wait`; long-polls up to waitSec while the request is still open. */
@@ -234,6 +302,7 @@ export class AgentGate {
       return closedCard('请求已过期', 'grey', '这个请求已超过 24 小时，请让 agent 重新发起。');
     }
     const s = req.scheduleId ? this.store.getSchedule(req.scheduleId) : undefined;
+    if (req.kind === 'retire' || req.kind === 'scope_global' || req.kind === 'scope_local') return this.onCommandChangeClick(ok, req, clicker, cardChatId);
     // Who may click.
     if (req.kind === 'schedule_resume' || req.kind === 'schedule_delete') {
       if (!s) throw new AmberError('not_found', '定时任务已不存在');

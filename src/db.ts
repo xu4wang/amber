@@ -62,7 +62,7 @@ export interface RunRow {
   status: string; result: string | null; error: string | null; startedAt: number; finishedAt: number | null;
 }
 
-export type RequestKind = 'run' | 'schedule' | 'schedule_resume' | 'schedule_delete';
+export type RequestKind = 'run' | 'schedule' | 'schedule_resume' | 'schedule_delete' | 'retire' | 'scope_global' | 'scope_local';
 export type RequestStatus = 'awaiting' | 'running' | 'done' | 'failed' | 'canceled' | 'expired';
 export interface RequestRow {
   id: string; kind: RequestKind; commandId: string | null; specHash: string | null; chatId: string; chatType: ScopeType;

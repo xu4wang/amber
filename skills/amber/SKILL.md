@@ -40,6 +40,8 @@ amber schedule add 天气 --at "工作日 09:00" city=上海 --user user@example
 amber schedule list
 amber schedule pause <id>                         # 立即暂停
 amber schedule resume <id> / delete <id>          # 要创建人在卡片上确认
+amber retire 天气 --user user@example.com          # 下线指令：创建人或管理员在卡片上确认
+amber global 天气 --user user@example.com          # 设为全局 / amber local 天气 取消全局：管理员在卡片上确认
 ```
 
 退出码：0 完成，1 出错，2 用法错误，3 还在等人点卡片。
@@ -48,6 +50,17 @@ amber schedule resume <id> / delete <id>          # 要创建人在卡片上确�
 
 - **直接执行**（指令不需要任何人的身份，也没开 confirm）：结果的 Markdown 直接打印出来，你整理后回复用户即可。执行身份记为「agent@机器」。
 - **确认卡片**：打印 `request: <id>`。先告诉用户去点卡片，然后运行 `amber wait <id>`；输出就是执行结果。用户点了「取消」或者 24 小时没人点，wait 会说明情况。
+
+## 下线指令、设为全局
+
+用户说「下线指令 xxx」「把 xxx 设为全局 / 取消全局」时，直接替他调用，不要让他去找 Amber：
+
+- `amber retire <指令> --user <邮箱>`：Amber 发确认卡，**指令创建人或管理员**点「确认下线」才生效。下线不需要审核、不能撤销，它的定时任务会暂停并通知创建人。
+- `amber global <指令> --user <邮箱>` / `amber local <指令> --user <邮箱>`：只有**管理员**能确认。
+- 带了 `--user` 而这个人没有权限时，Amber 当场拒绝、不发卡片，把原因告诉用户即可。
+- 发出后同样用 `amber wait <request>` 等结果。
+
+用户想**登录网站**时，让他自己私聊 Amber 发「登录」，这一步不能代办（登录链接只发在他的私聊里）。
 
 ## 定时任务
 

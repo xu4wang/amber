@@ -66,6 +66,8 @@ export class AmberBot {
       isAdmin: u => this.isAdmin(u),
       isMember: (chatId, u) => this.isMember(chatId, u),
       signer: this.signer,
+      retire: (id, actor, by) => this.retire(id, actor, by),
+      nameOf: u => this.nameOf(u),
     };
     this.agent = new AgentGate(store, deps);
     this.scheduler = new Scheduler(store, deps);

@@ -46,7 +46,10 @@ amber schedule list
 amber schedule pause <编号>                  立即暂停
 amber schedule resume <编号>                 恢复，需要创建人在卡片上确认
 amber schedule delete <编号>                 删除，需要创建人在卡片上确认
-amber submit draft.json                      提交新指令草稿
+amber submit draft.json                      提交新指令草稿（同名即新版本）
+amber retire <指令>                          下线指令，需要创建人或管理员在卡片上确认
+amber global <指令>                          设为全局，需要管理员在卡片上确认
+amber local <指令>                           取消全局，需要管理员在卡片上确认
 amber info                                   本机连的 Amber 服务、网站地址
 amber config set-url <地址>                  设置本机的 Amber 服务地址
 ```
@@ -117,6 +120,8 @@ $ amber wait 1a2b3c4d
 | POST | `/v1/schedules` | `command`、`args`、`at`、`tz` |
 | POST | `/v1/schedules/list` | 无 |
 | POST | `/v1/schedules/<编号>/pause\|resume\|delete` | 无 |
+| POST | `/v1/commands/retire` | `command` |
+| POST | `/v1/commands/scope` | `command`、`global`（true 设为全局，false 取消全局） |
 | POST | `/v1/drafts` | 草稿 JSON |
 | GET | `/v1/info` | 无，返回网站地址 `webUrl` 和本机名字 |
 | GET | `/v1/keys` | 无，返回公钥，见 [identity.md](identity.md) |

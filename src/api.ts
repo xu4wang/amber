@@ -56,6 +56,8 @@ export function startApi(port: number, machines: Record<string, string>, flow: F
       const ctx = await agent.context(body as AgentContext, machine);
       if (path === '/v1/commands/list') return reply(200, { ok: true, commands: agent.list(ctx) });
       if (path === '/v1/commands/show') return reply(200, { ok: true, command: agent.show(ctx, String(body.command ?? '')) });
+      if (path === '/v1/commands/retire') return reply(200, { ok: true, ...(await agent.commandChange(ctx, String(body.command ?? ''), 'retire')) });
+      if (path === '/v1/commands/scope') return reply(200, { ok: true, ...(await agent.commandChange(ctx, String(body.command ?? ''), body.global ? 'scope_global' : 'scope_local')) });
       if (path === '/v1/runs') return reply(200, { ok: true, ...(await agent.run(ctx, String(body.command ?? ''), body.args ?? {})) });
       if (path === '/v1/schedules/list') return reply(200, { ok: true, schedules: agent.schedules(ctx) });
       if (path === '/v1/schedules') return reply(200, { ok: true, ...(await agent.scheduleAdd(ctx, String(body.command ?? ''), body.args ?? {}, String(body.at ?? ''), body.tz)) });

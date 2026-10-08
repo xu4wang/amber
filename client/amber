@@ -16,7 +16,10 @@ usage:
   amber schedule list
   amber schedule pause <id>                    stops it at once
   amber schedule resume <id> | delete <id>     the creator confirms on a card
-  amber submit draft.json                      submit a new command for review
+  amber submit draft.json                      submit a new command for review (same name = new version)
+  amber retire <command>                       take a command offline; its creator or an admin confirms on a card
+  amber global <command> | local <command>     make a command usable everywhere / only where it was made;
+                                               an admin confirms on a card
   amber info                                   the Amber service this machine uses, and its website
   amber config set-url <url>                   set the Amber service address for this machine
 
@@ -186,7 +189,9 @@ def main(argv):
         if st == "done" and r.get("kind") == "run":
             return out(r, opts, r.get("markdown") or "（没有输出）")
         if st == "done":
-            return out(r, opts, "已完成（%s）%s" % (r.get("kind"), "，定时任务 %s" % r["scheduleId"] if r.get("scheduleId") else ""))
+            done = {"retire": "指令已下线。", "scope_global": "已设为全局指令。", "scope_local": "已改回只在创建处可用。",
+                    "schedule_resume": "定时任务已恢复。", "schedule_delete": "定时任务已删除。"}.get(r.get("kind"))
+            return out(r, opts, done or "已完成（%s）%s" % (r.get("kind"), "，定时任务 %s" % r["scheduleId"] if r.get("scheduleId") else ""))
         msg = {"canceled": "对方取消了。", "expired": "请求已过期（24 小时没人点）。"}.get(st, "失败：%s" % (r.get("runError") or r.get("error")))
         print(json.dumps(r, ensure_ascii=False, indent=2) if opts.get("json") else msg)
         return 1
@@ -217,6 +222,14 @@ def main(argv):
             if r.get("status") != "ok":
                 r["ok"] = False
             return out(r, opts, r.get("markdown") or "（没有输出）")
+        return out(r, opts, "%s\nrequest: %s" % (r.get("message"), r.get("requestId")))
+    if cmd in ("retire", "global", "local"):
+        if len(pos) < 2:
+            raise Usage()
+        if cmd == "retire":
+            r = call("POST", "/v1/commands/retire", dict(ctx, command=pos[1]))
+        else:
+            r = call("POST", "/v1/commands/scope", dict(ctx, command=pos[1], **{"global": cmd == "global"}))
         return out(r, opts, "%s\nrequest: %s" % (r.get("message"), r.get("requestId")))
     if cmd == "schedule":
         if len(pos) < 2:

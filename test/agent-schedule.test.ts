@@ -130,3 +130,87 @@ test('schedules: runs missed while Amber was down are skipped, not caught up', a
     assert.equal(env.amber.store.getSchedule(id)!.nextRunAt, nextRun(s.rule, s.nextRunAt + 3 * 3600_000));
   } finally { await env.close(); }
 });
+
+test('agent: retire a command — creator or admin clicks; others are refused up front and at the click', async () => {
+  const env = await makeEnv();
+  try {
+    // bob owns 报表; alice is an admin; carol is neither.
+    await activate(env, { chatId: GROUP, chatType: 'group', name: '报表', params: [], script: script('print(1)'), options: { schedulable: true } }, env.bob);
+    const id = env.amber.store.listAll().find((c: any) => c.name === '报表')!.id;
+    // A named person without the right is refused before any card is posted.
+    const before = env.fake.sent.length;
+    const bad = await env.api('POST', '/v1/commands/retire', { ...ctx(env, env.carol), command: '报表' });
+    assert.equal(bad.body.ok, false);
+    assert.match(bad.body.message, /创建人或管理员/);
+    assert.equal(env.fake.sent.length, before);
+    // Unnamed request: a card anyone sees, but only the creator or an admin may confirm.
+    const r = await env.api('POST', '/v1/commands/retire', { ...ctx(env), command: '报表' });
+    assert.equal(r.body.mode, 'confirm_card');
+    const card = env.fake.sent.at(-1)!;
+    assert.match(FakeFeishu.text(card.card), /下线/);
+    const ok = button(card.card, 'req_ok')!;
+    assert.match(JSON.stringify(await env.click(env.carol, card.id, ok)), /创建人或管理员/);
+    assert.equal(env.amber.store.getCommand(id)!.status, 'active');
+    await env.click(env.bob, card.id, ok);
+    assert.equal(env.amber.store.getCommand(id)!.status, 'retired');
+    assert.equal((await env.api('GET', `/v1/requests/${r.body.requestId}`)).body.status, 'done');
+    assert.match(JSON.stringify(await env.click(env.bob, card.id, ok)), /处理过/);
+  } finally { await env.close(); }
+});
+
+test('agent: retire pauses the schedules; a version change between request and click blocks it', async () => {
+  const env = await makeEnv();
+  try {
+    await activate(env, { chatId: GROUP, chatType: 'group', name: '日报', params: [], script: script('print(1)'), options: { schedulable: true } }, env.bob);
+    const sr = await env.api('POST', '/v1/schedules', { ...ctx(env, env.bob), command: '日报', at: '每天 09:00' });
+    let card = env.fake.sent.at(-1)!;
+    await env.click(env.bob, card.id, button(card.card, 'req_ok')!);
+    const sid = (await env.api('GET', `/v1/requests/${sr.body.requestId}`)).body.scheduleId;
+    const r = await env.api('POST', '/v1/commands/retire', { ...ctx(env, env.alice), command: '日报' });
+    card = env.fake.sent.at(-1)!;
+    assert.match(FakeFeishu.text(card.card), /1\*\* 个定时任务/);
+    // Only the named admin may click, even though bob is the creator.
+    assert.match(JSON.stringify(await env.click(env.bob, card.id, button(card.card, 'req_ok')!)), /发给别人/);
+    await env.click(env.alice, card.id, button(card.card, 'req_ok')!);
+    assert.equal(env.amber.store.getSchedule(sid)!.status, 'paused');
+    // New version between request and click.
+    await activate(env, { chatId: GROUP, chatType: 'group', name: '周报', params: [], script: script('print(1)') }, env.bob);
+    const r2 = await env.api('POST', '/v1/commands/retire', { ...ctx(env, env.bob), command: '周报' });
+    const c2 = env.fake.sent.at(-1)!;
+    await activate(env, { chatId: GROUP, chatType: 'group', name: '周报', params: [], script: script('print(2)') }, env.bob);
+    assert.match(JSON.stringify(await env.click(env.bob, c2.id, button(c2.card, 'req_ok')!)), /新版本/);
+    assert.equal((await env.api('GET', `/v1/requests/${r2.body.requestId}`)).body.status, 'failed');
+    assert.ok(env.amber.store.listAll().some((c: any) => c.name === '周报' && c.status === 'active'));
+    void r;
+  } finally { await env.close(); }
+});
+
+test('agent: global / local need an admin click', async () => {
+  const env = await makeEnv();
+  try {
+    await activate(env, { chatId: GROUP, chatType: 'group', name: '汇率', params: [], script: script('print(1)') }, env.bob);
+    const id = env.amber.store.listAll().find((c: any) => c.name === '汇率')!.id;
+    // bob is the creator but not an admin.
+    const bad = await env.api('POST', '/v1/commands/scope', { ...ctx(env, env.bob), command: '汇率', global: true });
+    assert.match(bad.body.message, /只有管理员/);
+    const r = await env.api('POST', '/v1/commands/scope', { ...ctx(env), command: '汇率', global: true });
+    const card = env.fake.sent.at(-1)!;
+    assert.match(FakeFeishu.text(card.card), /全局/);
+    assert.match(JSON.stringify(await env.click(env.bob, card.id, button(card.card, 'req_ok')!)), /只有管理员/);
+    await env.click(env.alice, card.id, button(card.card, 'req_ok')!);
+    assert.equal(env.amber.store.getCommand(id)!.global, true);
+    assert.equal((await env.api('GET', `/v1/requests/${r.body.requestId}`)).body.status, 'done');
+    // Already global: refused up front.
+    assert.match((await env.api('POST', '/v1/commands/scope', { ...ctx(env, env.alice), command: '汇率', global: true })).body.message, /已经是全局/);
+    const r2 = await env.api('POST', '/v1/commands/scope', { ...ctx(env, env.alice), command: '汇率', global: false });
+    const c2 = env.fake.sent.at(-1)!;
+    await env.click(env.alice, c2.id, button(c2.card, 'req_ok')!);
+    assert.equal(env.amber.store.getCommand(id)!.global, false);
+    assert.equal((await env.api('GET', `/v1/requests/${r2.body.requestId}`)).body.status, 'done');
+    // Cancel leaves it unchanged.
+    await env.api('POST', '/v1/commands/scope', { ...ctx(env), command: '汇率', global: true });
+    const c3 = env.fake.sent.at(-1)!;
+    await env.click(env.alice, c3.id, button(c3.card, 'req_no')!);
+    assert.equal(env.amber.store.getCommand(id)!.global, false);
+  } finally { await env.close(); }
+});
