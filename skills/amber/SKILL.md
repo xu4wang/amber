@@ -88,6 +88,8 @@ amber schedule resume <id> / delete <id>          # 要创建人在卡片上确�
 ```
 
 - 私聊时 `chatType` 写 `p2p`，并加 `"claimer": "用户邮箱"`（认领卡发到他和 Amber 的私聊）。群指令要求 Amber 在群里。
+- 群里提交时也建议带上 `"claimer"`（让你固化的那个人的邮箱或 union_id）：认领卡会 @ 他，提醒他来认领；这只是提醒，群里其他人照样能认领。
+- 想让认领卡出现在当前话题里，加 `"originMessageId": "<话题里的消息 id>", "inThread": true`；不加就发在群主时间线上。
 - 参数类型：`string`（可加 `maxLength`、`pattern`）或 `integer`（可加 `min`、`max`）；`"defaultFrom": "caller.city"` 表示不填时用执行人的办公城市。
 - `options.confirm`：执行前必须确认（会改数据、有风险时打开）。
 - `options.schedulable`：允许定时执行。

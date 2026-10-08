@@ -99,8 +99,8 @@ function changePanels(c: CommandRow, prev: CommandRow): unknown[] {
   return els;
 }
 
-export function claimCard(c: CommandRow, trial?: { by?: string; blocks?: Block[]; error?: string }, submittedBy?: string, prev?: CommandRow): object {
-  const who = submittedBy ? `**${sanitizeMarkdown(submittedBy, 80)}**` : 'agent';
+export function claimCard(c: CommandRow, trial?: { by?: string; blocks?: Block[]; error?: string }, submittedBy?: string, prev?: CommandRow, notifyOpenId?: string): object {
+  const who = (submittedBy ? `**${sanitizeMarkdown(submittedBy, 80)}**` : 'agent') + (notifyOpenId ? `（替 ${person(notifyOpenId)}）` : '');
   const intro = prev
     ? `${who} 提交了「${sanitizeMarkdown(c.name, 40)}」的**新版本**，等待认领。审核通过后会替换当前版本（${prev.specHash.slice(0, 8)}）。只有原创建人或管理员可以认领。\n<font color="grey">请确认这是你让 agent 做的；不认识的草稿直接点「丢弃」。</font>`
     : `${who} 提交了一条新指令，等待认领。认领人会成为这条指令的创建人，提交后由审核人审核。\n<font color="grey">请确认这是你让 agent 做的；不认识的草稿直接点「丢弃」。</font>`;
@@ -201,6 +201,13 @@ export class Flow {
     return { ids: [...new Set(ids)], missing };
   }
 
+  async openIdOf(unionId: string): Promise<string | undefined> {
+    try {
+      const r = await (this.client as any).contact.v3.user.get({ path: { user_id: unionId }, params: { user_id_type: 'union_id' } });
+      return r?.data?.user?.open_id || undefined;
+    } catch { return undefined; }
+  }
+
   /** D19: any unresolved reviewer disables review entirely instead of silently shrinking the list. */
   async loadReviewers(): Promise<void> {
     const { ids, missing } = await this.resolveEmails(this.reviewerEmails);
@@ -214,10 +221,8 @@ export class Flow {
     // so a union_id entry works too; any failure leaves the list short and submitting stays blocked.
     const openIds: string[] = [];
     for (const u of ids) {
-      try {
-        const r = await (this.client as any).contact.v3.user.get({ path: { user_id: u }, params: { user_id_type: 'union_id' } });
-        if (r?.data?.user?.open_id) openIds.push(r.data.user.open_id);
-      } catch { /* left out: review stays blocked */ }
+      const o = await this.openIdOf(u);
+      if (o) openIds.push(o); // left out on failure: review stays blocked
     }
     this.reviewerOpenIds = openIds;
     log('reviewers resolved', ids.length, 'open_ids', this.reviewerOpenIds.length);
@@ -262,6 +267,14 @@ export class Flow {
       // Anti-spam: an agent picks the claimer for p2p drafts, so cap how many claim cards one person can receive.
       if (this.store.recentDraftsFor(expectedClaimer, 3600_000) >= 5) throw new AmberError('rate_limited', '这位认领人一小时内已收到 5 张认领卡，请稍后再提交');
     }
+    // Group drafts: an optional claimer (the person who asked the agent) is only @-mentioned on the
+    // claim card so they notice it (D46). It grants nothing: any group member may still claim.
+    let notifyOpenId: string | undefined;
+    if (d.chatType !== 'p2p' && d.claimer) {
+      const { ids } = await this.resolveEmails([d.claimer]);
+      if (!ids[0]) throw new AmberError('claimer_unresolved', `找不到认领人 ${d.claimer}`);
+      notifyOpenId = await this.openIdOf(ids[0]);
+    }
     const row = this.store.insertCommand({
       scopeType: d.chatType, chatId: d.chatId, ownerUnionId: expectedClaimer ?? '', name: d.name, description: d.description ?? '',
       params: d.params ?? [], script: d.script, options, status: 'draft',
@@ -273,7 +286,7 @@ export class Flow {
     try {
       claimMessageId = d.chatType === 'p2p'
         ? await this.send({ unionId: expectedClaimer }, claimCard(row, undefined, d.submittedBy, prev))
-        : await this.send(d.originMessageId ? { replyTo: d.originMessageId, inThread: !!d.inThread } : { chatId: d.chatId }, claimCard(row, undefined, d.submittedBy, prev));
+        : await this.send(d.originMessageId ? { replyTo: d.originMessageId, inThread: !!d.inThread } : { chatId: d.chatId }, claimCard(row, undefined, d.submittedBy, prev, notifyOpenId));
     } catch (e: any) {
       const code = e?.response?.data?.code;
       this.store.setStatus(row.id, 'rejected');

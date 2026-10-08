@@ -170,3 +170,20 @@ test('reviewers can be configured by email or union_id; the approval goes to all
     assert.deepEqual([...flow.reviewerOpenIds].sort(), ['ou_alice', 'ou_bob'], 'a union_id entry also resolves to an open_id');
   } finally { await env.close(); }
 });
+
+test('a group draft can name the person who asked; the claim card @-mentions them but anyone may claim (D46)', async () => {
+  const env = await makeEnv();
+  try {
+    const r = await env.submit({ chatId: GROUP, chatType: 'group', name: '问候', params: [], script: HELLO, claimer: env.bob.unionId });
+    assert.equal(r.ok ?? true, true);
+    const card = env.fake.sent.at(-1)!;
+    assert.equal(card.to.chatId, GROUP);
+    assert.match(JSON.stringify(card.card), /<at id=ou_bob><\/at>/);
+    // Without a claimer nobody is mentioned.
+    await env.submit({ chatId: GROUP, chatType: 'group', name: '问候2', params: [], script: HELLO });
+    assert.doesNotMatch(JSON.stringify(env.fake.sent.at(-1)!.card), /<at id=/);
+    // An unknown claimer is refused instead of silently dropped.
+    const bad = await env.submit({ chatId: GROUP, chatType: 'group', name: '问候3', params: [], script: HELLO, claimer: 'nobody@example.com' });
+    assert.match(JSON.stringify(bad), /找不到认领人/);
+  } finally { await env.close(); }
+});
