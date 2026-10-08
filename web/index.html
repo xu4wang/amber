@@ -384,7 +384,7 @@ function cmdPane(key, { c, scope }) {
     <div class="where">${esc(scopeName(scope))} · 指令 ${esc(c.id)}</div>
     ${c.description ? `<div class="desc">${esc(c.description)}</div>` : '<div class="desc"></div>'}
     <div class="box">
-      <div class="tabs"><button class="on" data-tab="run">执行</button>${c.options.schedulable ? '<button data-tab="sch">定时</button>' : ''}<button data-tab="code">代码</button></div>
+      <div class="tabs"><button class="on" data-tab="run">执行</button><button data-tab="sch">定时</button><button data-tab="code">代码</button></div>
       <form data-form="run">${c.params.length ? paramInputs(c) : '<p class="note">这条指令没有参数。</p>'}
         ${c.options.confirm ? '<p class="note" style="color:var(--warn)">⚠️ 执行前需要确认：请核对参数，按钮要点两次。</p>' : ''}
         <div class="actions"><button class="btn ${c.options.confirm ? 'danger' : 'primary'}" data-do="run">${c.options.confirm ? '确认执行' : '执行'}</button>
@@ -395,7 +395,7 @@ function cmdPane(key, { c, scope }) {
         <div class="field"><label>时区</label><select name="__tz">${(DATA.timezones || []).map(z => `<option value="${esc(z.tz)}">${esc(z.label)}</option>`).join('')}</select></div>
         <p class="note">每次都以你的身份自动执行；结果发到${scope.startsWith('group:') ? '这个群' : '你和 Amber 的私聊'}，没有输出时不发。</p>
         <div class="actions"><button class="btn primary" data-do="sch">${c.options.confirm ? '确认并创建定时任务' : '创建定时任务'}</button></div>
-        <div class="sch-msg note" style="margin-top:8px"></div></form>` : ''}
+        <div class="sch-msg note" style="margin-top:8px"></div></form>` : `<form data-form="sch" style="display:none"><p class="note">这条指令审核时没有允许定时执行，所以不能在这里创建定时任务。<br>如需定时，请让你的 agent 提交一个打开「允许定时」的新版本（同名提交），审核通过后就能在这里创建。</p></form>`}
       <form data-form="code" style="display:none"><div id="src" class="note">读取中……</div></form>
     </div>
     <div class="result-area"><h3 class="note" style="margin:0 0 8px">执行结果</h3>

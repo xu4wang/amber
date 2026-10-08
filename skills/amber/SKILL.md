@@ -92,7 +92,7 @@ amber schedule resume <id> / delete <id>          # 要创建人在卡片上确�
 - 想让认领卡出现在当前话题里，加 `"originMessageId": "<话题里的消息 id>", "inThread": true`；不加就发在群主时间线上。
 - 参数类型：`string`（可加 `maxLength`、`pattern`）或 `integer`（可加 `min`、`max`）；`"defaultFrom": "caller.city"` 表示不填时用执行人的办公城市。
 - `options.confirm`：执行前必须确认（会改数据、有风险时打开）。
-- `options.schedulable`：允许定时执行。
+- `options.schedulable`：允许定时执行。**不写时默认为 true**；不适合定时的（比如有副作用、或结果每次都需要人看着执行的）请显式写 `false`。
 - `script.kind` 只能用 `script`。`privileged` 已停用，提交会被拒绝。
 
 ### 修改已有指令

@@ -260,7 +260,10 @@ export class Flow {
     // Same name as an active command here = a new version of it (D38).
     const prev = this.store.activeByName(d.chatId, d.name);
     if ((d as any).sideEffect !== undefined) throw new AmberError('bad_options', '已不区分读写：请用 options.confirm（执行前确认）/ options.schedulable（允许定时）');
-    const options = normalizeOptions(d.options);
+    // D47: read-only data commands are usually wanted on a schedule, so a draft that does not say
+    // otherwise is schedulable. It is still shown on the claim card and reviewed like any option.
+    const rawOptions = (d.options ?? {}) as Record<string, unknown>;
+    const options = normalizeOptions({ ...rawOptions, schedulable: rawOptions.schedulable === undefined ? true : rawOptions.schedulable });
     let expectedClaimer: string | undefined;
     if (d.chatType === 'p2p') {
       if (!d.claimer) throw new AmberError('claimer_required', '私聊草稿需要指定认领人（email）');

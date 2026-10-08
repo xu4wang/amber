@@ -187,3 +187,14 @@ test('a group draft can name the person who asked; the claim card @-mentions the
     assert.match(JSON.stringify(bad), /找不到认领人/);
   } finally { await env.close(); }
 });
+
+test('a draft that does not mention schedulable is schedulable; an explicit false stays false (D47)', async () => {
+  const env = await makeEnv();
+  try {
+    await env.submit({ chatId: GROUP, chatType: 'group', name: '默认', params: [], script: HELLO });
+    await env.submit({ chatId: GROUP, chatType: 'group', name: '关掉', params: [], script: HELLO, options: { schedulable: false } });
+    const byName = (n: string) => env.amber.store.listAll().find(c => c.name === n)!;
+    assert.equal(byName('默认').options.schedulable, true);
+    assert.equal(byName('关掉').options.schedulable, false);
+  } finally { await env.close(); }
+});

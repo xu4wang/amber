@@ -55,7 +55,7 @@ test('schedules: created by a click, run as the creator, silent when empty, paus
   try {
     const code = 'import json,sys\nm=json.load(sys.stdin)["params"].get("mode","")\nif m=="fail": sys.exit("boom")\nif m!="quiet": print("hi")';
     await activate(env, { chatId: GROUP, chatType: 'group', name: '报告', params: [{ name: 'mode', label: '模式', type: 'string' }], script: script(code), options: { schedulable: true } }, env.alice);
-    await activate(env, { chatId: GROUP, chatType: 'group', name: '不可定时', params: [], script: script('print(1)') }, env.alice);
+    await activate(env, { chatId: GROUP, chatType: 'group', name: '不可定时', params: [], script: script('print(1)'), options: { schedulable: false } }, env.alice);
     assert.match((await env.api('POST', '/v1/schedules', { ...ctx(env, env.bob), command: '不可定时', at: '每天 09:00' })).body.message, /没有允许定时/);
     assert.match((await env.api('POST', '/v1/schedules', { ...ctx(env, env.bob), command: '报告', at: '每 3 分钟' })).body.message, /最短 5 分钟/);
     const mk = async (mode: string) => {
