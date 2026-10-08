@@ -297,16 +297,13 @@ export class Store {
     return (this.db.prepare(`SELECT * FROM commands WHERE scope_type = 'p2p' AND owner_union_id = ? AND status = 'active' ORDER BY name`).all(unionId) as Record<string, unknown>[]).map(r => this.toRow(r));
   }
 
-  /** Live (draft/pending/active) commands Amber can no longer run: privileged scripts (D40) or the
-   *  pre-D41 `services: [..]` list form. Reported at startup; runCommand refuses them anyway. */
-  listUnrunnable(): { id: string; name: string; status: string; reason: string }[] {
+  /** Live (not retired/rejected) commands whose stored script fails `check` — the same validation a
+   *  new draft gets. Reported at startup; runCommand refuses them anyway. */
+  listInvalidScripts(check: (script: unknown) => void): { id: string; name: string; status: string; reason: 'invalid_script'; error: string }[] {
     const rows = this.db.prepare(`SELECT id, name, status, script_json FROM commands WHERE status NOT IN ('retired', 'rejected')`).all() as Record<string, string>[];
-    const out: { id: string; name: string; status: string; reason: string }[] = [];
+    const out: { id: string; name: string; status: string; reason: 'invalid_script'; error: string }[] = [];
     for (const r of rows) {
-      let s: { kind?: unknown; services?: unknown };
-      try { s = JSON.parse(r.script_json); } catch { out.push({ id: r.id, name: r.name, status: r.status, reason: 'unreadable' }); continue; }
-      if (s.kind !== 'script') out.push({ id: r.id, name: r.name, status: r.status, reason: 'privileged' });
-      else if (Array.isArray(s.services)) out.push({ id: r.id, name: r.name, status: r.status, reason: 'services_list' });
+      try { check(JSON.parse(r.script_json)); } catch (e) { out.push({ id: r.id, name: r.name, status: r.status, reason: 'invalid_script', error: (e as Error).message }); }
     }
     return out;
   }

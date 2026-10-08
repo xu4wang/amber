@@ -21,7 +21,7 @@ function docMarkdown(c: CommandRow, opts: { creator: string; submittedBy?: strin
        ...c.params.map(p => `| ${p.name} | ${p.label ?? ''} | ${p.type === 'integer' ? '整数' : '文本'} | ${p.defaultFrom === 'caller.city' ? '执行人办公城市' + (p.default ? `（兜底 ${p.default}）` : '') : (p.default ?? '')} | ${p.required ? '是' : '否'} |`)].join('\n')
     : '无参数。';
   const s = c.script;
-  const how = s.kind === 'privileged' ? '**特权脚本**：不在沙盒里运行，可读本机文件' : '沙盒脚本';
+  const how = s.kind === 'privileged' ? '**特权脚本（已停用，不能执行）**' : '沙盒脚本';
   const net = s.network ? '，可访问外网' : s.services && Object.keys(s.services).length ? `，以执行人身份调用：${describeServices(s)}（不能访问外网）` : '，不联网';
   const code = `## 代码\n\n${how}${net}；超时 ${(s.timeoutMs ?? 30000) / 1000} 秒。\n\n${FENCE}python\n${s.code.split(FENCE).join('``\u200b`')}\n${FENCE}`;
   const trial = opts.trial
@@ -102,7 +102,7 @@ export class FeishuReview {
       `创建人：${creatorLabel}`,
       `版本：${c.specHash.slice(0, 12)}`,
       `完整代码与试运行结果：${docUrl}`,
-      c.script.kind === 'privileged' ? '⚠️ 含特权脚本，只能由管理员同意。' : '',
+      c.script.kind === 'privileged' ? '⚠️ 特权脚本已停用：即使同意也不能执行。' : '',
     ].filter(Boolean).join('\n');
     const r = await this.req('POST', '/open-apis/approval/v4/instances', {
       approval_code: a.code,

@@ -64,16 +64,48 @@ test('scripts: privileged is disabled; services declare 1–20 calls (D40/D41)',
   setServices({});
 });
 
-test('run: privileged or old-form commands already in the database are refused (D40/D41)', async () => {
+test('run: stored definitions are re-validated before any run or token; startup lists them (D40/D41)', async () => {
   const { runCommand } = await import('../src/engine.ts');
-  const { computeSpecHash } = await import('../src/db.ts');
+  const { computeSpecHash, Store } = await import('../src/db.ts');
+  const { setServices, validateScript } = await import('../src/runner.ts');
+  setServices({ demo: { audience: 'demo', tcpPort: 9 } });
   const caller = { unionId: 'on_x', chatId: 'oc_x', chatType: 'group' as const, channel: 'bot' as const };
-  const store = { startRun() { throw new Error('must not start'); }, audit() {} } as any;
-  for (const script of [{ kind: 'privileged', lang: 'python', code: 'print(1)' }, { kind: 'script', lang: 'python', code: 'print(1)', services: ['demo'] }]) {
+  const store = { startRun() { throw new Error('must not start a run'); }, audit() {} } as any;
+  const signer = { issue() { throw new Error('must not issue a token'); } } as any;
+  const base = { kind: 'script', lang: 'python', code: 'print(1)' };
+  const bad: Record<string, unknown>[] = [
+    { ...base, kind: 'privileged' },
+    { ...base, services: ['demo'] },
+    { ...base, services: { demo: { calls: 21 } } },
+    { ...base, services: { demo: { calls: 0 } } },
+    { ...base, services: { demo: { calls: 1.5 } } },
+    { ...base, services: { demo: { calls: '2' } } },
+    { ...base, services: { nope: { calls: 1 } } },
+    { ...base, services: { demo: { calls: 1 } }, network: true },
+    { ...base, services: { demo: null } },
+    { ...base, services: 'demo' },
+    { ...base, lang: 'bash' },
+  ];
+  for (const script of bad) {
     const c: any = { id: 'c1', name: 'x', params: [], options: { confirm: false, schedulable: true }, script, status: 'active' };
     c.specHash = computeSpecHash(c);
     for (const opts of [{}, { trial: true }, { viaForm: true }]) {
-      await assert.rejects(runCommand(store, c, {}, caller, {}, opts), (e: any) => e.code === 'disabled', JSON.stringify([script.kind, opts]));
+      await assert.rejects(runCommand(store, c, {}, caller, { signer }, opts), (e: any) => e.code === 'invalid_script', JSON.stringify([script, opts]));
     }
   }
+  // Startup scan uses the same validation.
+  const { mkdtempSync, rmSync } = await import('node:fs');
+  const { join } = await import('node:path');
+  const { tmpdir } = await import('node:os');
+  const dir = mkdtempSync(join(tmpdir(), 'amber-unit-'));
+  try {
+    const real = new Store(dir);
+    const ins = (name: string, script: any, status = 'active') => real.insertCommand({ scopeType: 'group', chatId: 'oc_x', ownerUnionId: 'on_x', name, description: '', params: [], script, options: { confirm: false, schedulable: false }, status } as any);
+    ins('ok', { ...base, services: { demo: { calls: 3 } } });
+    ins('too-many', { ...base, services: { demo: { calls: 21 } } });
+    ins('net', { ...base, services: { demo: { calls: 1 } }, network: true }, 'draft');
+    ins('old-but-retired', { ...base, kind: 'privileged' }, 'retired');
+    const found = real.listInvalidScripts(validateScript).map(x => [x.name, x.reason]).sort();
+    assert.deepEqual(found, [['net', 'invalid_script'], ['too-many', 'invalid_script']]);
+  } finally { rmSync(dir, { recursive: true, force: true }); setServices({}); }
 });

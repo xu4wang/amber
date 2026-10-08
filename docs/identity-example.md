@@ -66,8 +66,8 @@ rows = [r for r in data["sales"] if r["region"] in data["permissions"].get(user,
 python3 -m venv ~/demo-service-venv
 ~/demo-service-venv/bin/pip install cryptography
 cd examples/identity-service
-# 部署时取一次 Amber 公钥并核对指纹（kid），之后服务只读这个文件
-curl -s --noproxy '*' http://127.0.0.1:7341/v1/keys > amber-keys.json
+# 部署时由 Amber 部署方导出公钥（直接从私钥文件推出，不经端口），核对 kid 后原子替换；之后服务只读这个文件
+(cd ~/amber && node src/cli.ts keys) > amber-keys.json.tmp && mv amber-keys.json.tmp amber-keys.json
 DEMO_PORT=18790 DEMO_AUDIENCE=demo-profile ~/demo-service-venv/bin/python service.py
 # 输出：demo service on 127.0.0.1:18790, audience=demo-profile, keys=[...]
 ```

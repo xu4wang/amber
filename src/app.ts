@@ -3,7 +3,7 @@ import type { Server } from 'node:http';
 import type { AmberConfig } from './config.ts';
 import { Store } from './db.ts';
 import { AmberBot } from './bot.ts';
-import { setServices } from './runner.ts';
+import { setServices, validateScript } from './runner.ts';
 import { startApi } from './api.ts';
 import { startWeb } from './web.ts';
 import { setTimezones } from './schedule-rule.ts';
@@ -15,7 +15,7 @@ export async function startAmber(cfg: AmberConfig, opts: { apiPort: number; webP
   setTimezones(cfg.timezones);
   const store = new Store(cfg.dataDir);
   // Fail closed and say so: these commands stay in the database but every run is refused (D40/D41).
-  for (const u of store.listUnrunnable()) {
+  for (const u of store.listInvalidScripts(validateScript)) {
     console.warn(new Date().toISOString(), 'command cannot run', u);
     store.audit(null, 'startup.unrunnable', u);
   }

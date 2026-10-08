@@ -4,17 +4,21 @@ import { readFileSync } from 'node:fs';
 import { loadConfig } from './config.ts';
 import { Store } from './db.ts';
 import type { ParamDef, Script, ScopeType } from './db.ts';
+import { setServices, validateScript } from './runner.ts';
+import { Signer } from './identity.ts';
 
 const [, , cmd, ...rest] = process.argv;
 const cfg = loadConfig();
 const store = new Store(cfg.dataDir);
+setServices(cfg.services);
 
 function usage(): never {
   console.error(`usage:
   amber cli list
   amber cli add <command.json>     # { scopeType, chatId, ownerUnionId, name, description, params, script, options }
   amber cli retire <id>
-  amber cli submit <draft.json>    # submit a draft to the running service (prints the claim info)`);
+  amber cli submit <draft.json>    # submit a draft to the running service (prints the claim info)
+  amber cli keys                   # print Amber's public key set (JWKS) read straight from the signing key file`);
   process.exit(2);
 }
 
@@ -26,7 +30,7 @@ if (cmd === 'list') {
     scopeType: ScopeType; chatId: string; ownerUnionId: string; name: string; description?: string;
     params: ParamDef[]; script: Script; options?: { confirm?: boolean; schedulable?: boolean };
   };
-  const row = store.insertCommand({ ...j, description: j.description ?? '', options: { confirm: !!j.options?.confirm, schedulable: !!j.options?.schedulable }, status: 'active' });
+  const row = store.insertCommand({ ...j, script: validateScript(j.script), description: j.description ?? '', options: { confirm: !!j.options?.confirm, schedulable: !!j.options?.schedulable }, status: 'active' });
   store.audit(null, 'operator.add_active', { id: row.id, name: row.name, chatId: row.chatId, specHash: row.specHash });
   console.log('added', row.id, row.name);
 } else if (cmd === 'retire') {
@@ -34,6 +38,12 @@ if (cmd === 'list') {
   store.setStatus(rest[0], 'retired');
   store.audit(null, 'operator.retire', { id: rest[0] });
   console.log('retired', rest[0]);
+} else if (cmd === 'keys') {
+  // Offline: derived from the private key file itself, never fetched from a port that another local
+  // process could be holding. Services pin this output (D42).
+  const s = new Signer(cfg.configDir);
+  console.log(JSON.stringify(s.jwks()));
+  console.error(`kid ${s.kid}`);
 } else if (cmd === 'submit') {
   const base = `http://127.0.0.1:${process.env.AMBER_API_PORT ?? 7341}`;
   const r = await fetch(`${base}/v1/drafts`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: readFileSync(rest[0] ?? usage(), 'utf8') });

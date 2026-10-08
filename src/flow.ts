@@ -44,7 +44,7 @@ function btn(text: string, value: Record<string, string>, type: 'primary' | 'def
 }
 
 function scriptLabel(k: string): string {
-  return k === 'privileged' ? '<font color="red">特权脚本（不在沙盒里运行，可读本机文件）</font>' : '脚本（沙盒运行）';
+  return k === 'privileged' ? '<font color="red">特权脚本（已停用，不能执行）</font>' : '脚本（沙盒运行）';
 }
 
 function specSummary(c: CommandRow): string {
@@ -143,7 +143,7 @@ export function reviewCard(c: CommandRow, creatorOpenIdForReviewer: string | und
     { tag: 'markdown', content: `请审核这条指令。需要 **全部 ${state.total} 位**审核人通过才生效，目前已通过 ${state.approved} 位。` },
     { tag: 'markdown', content: specSummary(c) },
     ...codePanels(c),
-    ...(c.script.kind === 'privileged' ? [{ tag: 'markdown', content: '<font color="red">⚠️ 含特权脚本：通过即允许这段代码不经沙盒在 Amber 所在机器上运行。只有管理员能通过。</font>' }] : []),
+    ...(c.script.kind === 'privileged' ? [{ tag: 'markdown', content: '<font color="red">⚠️ 特权脚本已停用：这条指令即使通过也不能执行。</font>' }] : []),
     { tag: 'markdown', content: `**创建人**：${person(creatorOpenIdForReviewer)}　**spec**：\`${c.specHash.slice(0, 12)}\`` },
   ];
   if (state.mine === 'approve') els.push({ tag: 'markdown', content: '✅ 你已通过' });

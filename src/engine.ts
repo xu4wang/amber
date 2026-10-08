@@ -1,6 +1,6 @@
 import type { Store, CommandRow, ParamDef } from './db.ts';
 import { computeSpecHash } from './db.ts';
-import { runScript, serviceDef } from './runner.ts';
+import { runScript, serviceDef, validateScript } from './runner.ts';
 import type { Signer } from './identity.ts';
 
 export interface Caller {
@@ -82,10 +82,11 @@ export interface RunOutcome { runId: string; ok: boolean; blocks: Block[]; markd
 export async function runCommand(store: Store, cmd: CommandRow, rawArgs: Record<string, string | undefined>, caller: Caller, facts: CallerFacts = {}, opts: { trial?: boolean; viaForm?: boolean } = {}): Promise<RunOutcome> {
   if (cmd.status !== 'active' && !(opts.trial && cmd.status === 'draft')) throw new AmberError('not_active', '指令未生效');
   if (computeSpecHash(cmd) !== cmd.specHash) throw new AmberError('spec_mismatch', '指令定义与审核通过的版本不一致，已拒绝执行');
-  // D40: privileged scripts are disabled, including ones approved before the switch.
-  if (cmd.script.kind !== 'script') throw new AmberError('disabled', '特权脚本已停用，这条指令不能执行');
-  // D41: services must be the { name: { calls } } form; the old list form is refused, not guessed.
-  if (Array.isArray(cmd.script.services)) throw new AmberError('disabled', '指令使用旧的 services 写法，需要重新提交');
+  // The stored definition is re-validated with the same rules as a new draft, and only the validated
+  // copy runs: privileged scripts (D40), the old services list (D41), calls outside 1–20, services
+  // together with internet, unknown services … are all refused before any run record or token exists.
+  let script;
+  try { script = validateScript(cmd.script); } catch (e) { throw new AmberError('invalid_script', `指令定义不合规，已拒绝执行：${(e as Error).message}`); }
   // confirm = true: only runnable from the confirmation form, never from a one-line shortcut (D30).
   if (cmd.options.confirm && !opts.trial && !opts.viaForm) throw new AmberError('needs_confirm', '这条指令需要在表单卡片上确认后执行');
   const args = await validateArgs(cmd.params, rawArgs, facts);
@@ -93,7 +94,6 @@ export async function runCommand(store: Store, cmd: CommandRow, rawArgs: Record<
   const started = Date.now();
   const runId = store.startRun({ commandId: cmd.id, specHash: cmd.specHash, channel: opts.trial ? `${caller.channel}.trial` : caller.channel, callerUnionId: caller.unionId, chatId: caller.chatId, args });
   store.audit(caller.unionId, 'run.start', { runId, commandId: cmd.id, name: cmd.name, channel: caller.channel, chatId: caller.chatId });
-  const script = cmd.script;
   const services: Record<string, { tokens: string[]; tcpPort?: number; unixSocket?: string }> = {};
   const channel = opts.trial ? `${caller.channel}.trial` : caller.channel;
   for (const [name, use] of Object.entries(script.services ?? {})) {

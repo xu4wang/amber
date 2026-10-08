@@ -10,9 +10,10 @@
 环境变量：
     DEMO_PORT        监听端口，默认 18790
     DEMO_AUDIENCE    本服务的名字，必须和 Amber config.json 里 services.<名字>.audience 一致，默认 demo-profile
-    AMBER_KEYS_FILE  Amber 公钥文件（JWKS），默认同目录下的 amber-keys.json。部署时取一次：
-                     curl -s --noproxy '*' http://127.0.0.1:7341/v1/keys > amber-keys.json
-                     运行时不再访问 7341：Amber 停掉时本机任何进程都能占用这个端口冒充 Amber。
+    AMBER_KEYS_FILE  Amber 公钥文件（JWKS），默认同目录下的 amber-keys.json。部署时由 Amber 部署方导出：
+                     (cd ~/amber && node src/cli.ts keys) > amber-keys.json.tmp && mv amber-keys.json.tmp amber-keys.json
+                     它直接从私钥文件推出，不经端口；不要用 curl 7341 建立信任，也不要在运行时访问 7341
+                     （Amber 停掉时本机任何进程都能占用这个端口冒充 Amber）。
     DEMO_DATA        权限数据文件，默认同目录下的 data.json
 """
 import base64, json, os, threading, time
@@ -112,7 +113,7 @@ class Handler(BaseHTTPRequestHandler):
             rows = [r for r in data["sales"] if r["region"] in regions]
             # 审计：谁、通过哪条指令的哪个版本、哪次执行、什么渠道
             print(f"{time.strftime('%F %T')} caller_source=amber sub={user} cmd={claims['cmd']} rev={claims['rev'][:12]} "
-                  f"run={claims['run']} channel={claims['channel']} rows={len(rows)}", flush=True)
+                  f"run={claims['run']} call={claims.get('call_index')}/{claims.get('call_count')} channel={claims['channel']} rows={len(rows)}", flush=True)
             return self.reply(200, {"user": user, "regions": regions, "rows": rows})
         return self.reply(404, {"error": "not found"})
 
@@ -121,6 +122,5 @@ class Handler(BaseHTTPRequestHandler):
 
 
 if __name__ == "__main__":
-    KEYS.refresh()
-    print(f"demo service on 127.0.0.1:{PORT}, audience={AUDIENCE}, keys={list(KEYS.keys)}", flush=True)
+    print(f"demo service on 127.0.0.1:{PORT}, audience={AUDIENCE}, keys={list(KEYS)}", flush=True)
     ThreadingHTTPServer(("127.0.0.1", PORT), Handler).serve_forever()
