@@ -2,7 +2,7 @@
 
 Amber 是一个常驻服务，需要 macOS 和 Node.js 24 及以上版本。一个组织只部署一套，其他机器通过 HTTP 访问它。
 
-> **这篇是部署 Amber 服务端的。** 如果组织里已经有 Amber（比如 dev-beta 上这一套），你只是想让自己的 agent 用上它，不需要看这篇，按 [amber 命令行与 skill](cli-and-skill.md) 在 agent 所在的机器上装客户端和 skill 即可。
+> **这篇是部署 Amber 服务端的。** 如果组织里已经部署了 Amber，你只是想让自己的 agent 用上它，不需要看这篇，按 [amber 命令行与 skill](cli-and-skill.md) 在 agent 所在的机器上装客户端和 skill 即可。
 
 ## 1. 环境要求
 
