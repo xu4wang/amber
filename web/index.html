@@ -201,14 +201,31 @@ function tableHtml(src) {
 function withValueLabels(spec) {
   const mark = typeof spec.mark === 'string' ? spec.mark : spec.mark?.type;
   const enc = spec.encoding || {};
-  // Pie: values and shares go into the legend (labels on the slices overlap and take the slice colour).
+  // Pie: each slice gets a leader line out to a label with its value and share (computed in pixels,
+  // so the chart has a fixed size). The legend keeps only the category.
   if (mark === 'arc' && !spec.layer && enc.theta?.field && enc.color?.field) {
     const v = enc.theta.field, c = enc.color.field;
-    return { ...spec, height: spec.height ?? 260,
-      transform: [...(spec.transform || []), { joinaggregate: [{ op: 'sum', field: v, as: '__total' }] },
-        { calculate: `datum['${c}'] + '　' + format(datum['${v}'], ',.2~f') + '（' + format(datum['${v}'] / datum.__total, '.1%') + '）'`, as: '__legend' }],
-      encoding: { ...enc, color: { ...enc.color, field: '__legend', sort: null, legend: { labelLimit: 400, ...(enc.color.legend || {}) } },
-        tooltip: [{ field: c, type: 'nominal' }, { field: v, type: 'quantitative', format: ',.2~f' }] } };
+    const W = 760, H = 340, R = 110, cx = W / 2, cy = H / 2;
+    const ang = `2 * PI * (datum.__cum - datum['${v}'] / 2) / datum.__total`;
+    const px = r => `${cx} + ${r} * sin(${ang})`, py = r => `${cy} - ${r} * cos(${ang})`;
+    const side = `(sin(${ang}) >= 0 ? 1 : -1)`;
+    const { mark: m, encoding, ...rest } = spec;
+    const raw = { scale: null, type: 'quantitative' };
+    return { ...rest, width: W, height: H, autosize: { type: 'none' },
+      transform: [...(spec.transform || []),
+        { joinaggregate: [{ op: 'sum', field: v, as: '__total' }] },
+        { window: [{ op: 'sum', field: v, as: '__cum' }], frame: [null, 0] },
+        { calculate: px(R), as: '__x0' }, { calculate: py(R), as: '__y0' },
+        { calculate: px(R + 16), as: '__x1' }, { calculate: py(R + 16), as: '__y1' },
+        { calculate: `datum.__x1 + 14 * ${side}`, as: '__x2' },
+        { calculate: `${side} > 0 ? 'left' : 'right'`, as: '__align' },
+        { calculate: `datum['${c}'] + '：' + format(datum['${v}'], ',.2~f') + '（' + format(datum['${v}'] / datum.__total, '.1%') + '）'`, as: '__label' }],
+      layer: [
+        { mark: { ...(typeof m === 'object' ? m : { type: 'arc' }), outerRadius: R }, encoding: { theta: { ...enc.theta, stack: true }, color: { ...enc.color, sort: null, legend: null }, tooltip: [{ field: c, type: 'nominal' }, { field: v, type: 'quantitative', format: ',.2~f' }] } },
+        { mark: { type: 'rule', color: '#888' }, encoding: { x: { field: '__x0', ...raw }, y: { field: '__y0', ...raw }, x2: { field: '__x1' }, y2: { field: '__y1' } } },
+        { mark: { type: 'rule', color: '#888' }, encoding: { x: { field: '__x1', ...raw }, y: { field: '__y1', ...raw }, x2: { field: '__x2' }, y2: { field: '__y1' } } },
+        ...['left', 'right'].map(al => ({ transform: [{ filter: `datum.__align === '${al}'` }], mark: { type: 'text', fontSize: 11, align: al, dx: al === 'left' ? 3 : -3, baseline: 'middle' }, encoding: { x: { field: '__x2', ...raw }, y: { field: '__y1', ...raw }, text: { field: '__label' } } })),
+      ] };
   }
   if ((mark !== 'line' && mark !== 'bar') || spec.layer || !enc.x || !enc.y) return spec;
   const horizontal = mark === 'bar' && enc.x.type === 'quantitative' && enc.y.type !== 'quantitative';
