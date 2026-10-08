@@ -2,6 +2,7 @@
   "name": "amber",
   "version": "0.1.0",
   "private": true,
+  "license": "MIT",
   "description": "Run it once. Keep it forever. — freeze LLM-assisted operations into reviewed, deterministic commands for Feishu.",
   "type": "module",
   "engines": {
