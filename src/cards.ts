@@ -242,6 +242,18 @@ export function requestCard(o: {
   return shell(`Amber · ${title}`, danger ? 'red' : 'orange', els);
 }
 
+/** D44: retiring from Feishu asks once more; only the person who asked can confirm, for 5 minutes. */
+export function retireConfirmCard(c: CommandRow, schedules: number, requester: string, issuedAt: number): object {
+  const v = { c: c.id, h: c.specHash, u: requester, t: String(issuedAt) };
+  return shell('Amber · 确认下线', 'red', [
+    { tag: 'markdown', content: `确定下线「${sanitizeMarkdown(c.name, 80)}」？\n\n下线后这条指令不能再执行${schedules ? `，它的 **${schedules} 个定时任务**会暂停并通知创建人` : ''}。下线不能撤销，需要时只能重新提交、审核。\n<font color="grey">只有发起下线的人能确认，5 分钟内有效。</font>` },
+    { tag: 'column_set', columns: [
+      { tag: 'column', width: 'auto', elements: [btn('确认下线', { a: 'retire_ok', ...v }, 'danger')] },
+      { tag: 'column', width: 'auto', elements: [btn('取消', { a: 'retire_no', ...v })] },
+    ] },
+  ]);
+}
+
 export function closedCard(title: string, template: string, md: string): object {
   return shell(`Amber · ${title}`, template, [{ tag: 'markdown', content: md }]);
 }

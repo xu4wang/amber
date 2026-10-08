@@ -2,7 +2,7 @@ import * as lark from '@larksuiteoapi/node-sdk';
 import type { Store, CommandRow } from './db.ts';
 import type { Caller } from './engine.ts';
 import { visibleCommands, findVisible, runCommand, AmberError } from './engine.ts';
-import { listCard, formCard, runningCard, resultCard, errorCard, infoCard } from './cards.ts';
+import { listCard, formCard, runningCard, resultCard, errorCard, infoCard, retireConfirmCard, closedCard } from './cards.ts';
 import type { AmberConfig } from './config.ts';
 import { Flow } from './flow.ts';
 import { Signer } from './identity.ts';
@@ -25,6 +25,9 @@ export function splitArgs(text: string): string[] {
   while ((m = re.exec(text))) out.push(m[1] ?? m[2] ?? m[3]);
   return out;
 }
+
+/** D44: how long a Feishu retire confirmation stays usable. */
+const RETIRE_CONFIRM_MS = 5 * 60_000;
 
 export class AmberBot {
   private client: lark.Client;
@@ -295,8 +298,10 @@ export class AmberBot {
     if (parts.length === 2 && ['下线', 'retire'].includes(parts[0].toLowerCase())) {
       try {
         const cmd = findVisible(this.store, caller, parts[1]);
-        const r = await this.retire(cmd.id, caller, (await this.nameOf(caller.unionId)) ?? '创建人');
-        await this.replyCard(msg.message_id, inThread, infoCard('指令已下线', `「${r.name}」已下线，不能再执行。${r.schedules ? `它的 ${r.schedules} 个定时任务已暂停，并已通知创建人。` : ''}`));
+        // Check the permission now so nobody gets a confirmation they cannot use (D44).
+        if (cmd.ownerUnionId !== caller.unionId && !this.isAdmin(caller.unionId)) throw new AmberError('forbidden', '只有指令的创建人或管理员可以下线');
+        const schedules = this.store.schedulesOfCommand(cmd.id).length;
+        await this.replyCard(msg.message_id, inThread, retireConfirmCard(cmd, schedules, caller.unionId, Date.now()));
       } catch (e) {
         await this.replyCard(msg.message_id, inThread, errorCard('Amber', e instanceof AmberError ? e.message : '出错了'));
       }
@@ -514,6 +519,15 @@ export class AmberBot {
           return { toast: { type: 'info', content: '已开始运行，结果会发到原来的位置' } };
         }
         return raw(this.scheduleList(caller));
+      }
+      if (value.a === 'retire_ok' || value.a === 'retire_no') {
+        if (String(value.u) !== caller.unionId) throw new AmberError('forbidden', '只有发起下线的人能确认');
+        if (value.a === 'retire_no') return raw(closedCard('已取消下线', 'grey', '没有下线，指令照常可用。'));
+        if (Date.now() - Number(value.t) > RETIRE_CONFIRM_MS) return raw(closedCard('确认已过期', 'grey', '这张确认卡已超过 5 分钟，没有下线。需要时请重新发送「下线 指令名」。'));
+        const c = this.store.getCommand(String(value.c));
+        if (!c || c.status !== 'active' || c.specHash !== String(value.h)) return raw(closedCard('没有下线', 'grey', '这条指令在确认前已经下线或换了新版本。需要时请重新发送「下线 指令名」。'));
+        const r = await this.retire(c.id, caller, (await this.nameOf(caller.unionId)) ?? '创建人');
+        return raw(infoCard('指令已下线', `「${r.name}」已下线，不能再执行。${r.schedules ? `它的 ${r.schedules} 个定时任务已暂停，并已通知创建人。` : ''}`));
       }
       if (value.a === 'list') return raw(listCard(visibleCommands(this.store, caller), this.scopeLabel(caller)));
       if (value.a === 'pick') return raw(formCard(findVisible(this.store, caller, String(value.c))));

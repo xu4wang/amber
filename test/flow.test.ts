@@ -126,7 +126,24 @@ test('only the owner or an admin can retire a command; its schedules pause', asy
     await env.say(env.carol, GROUP, '下线 问候');
     assert.equal(env.amber.store.getCommand(id)!.status, 'active');
     assert.match(FakeFeishu.text(env.fake.sent.at(-1)!.card), /创建人或管理员/);
+    // D44: retiring from Feishu asks once more; only the requester can confirm.
     await env.say(env.bob, GROUP, '下线 问候');
+    assert.equal(env.amber.store.getCommand(id)!.status, 'active', 'not retired before confirming');
+    const confirmCard = env.fake.sent.at(-1)!;
+    assert.match(FakeFeishu.text(confirmCard.card), /确定下线「问候」/);
+    assert.match(FakeFeishu.text(confirmCard.card), /1 个定时任务/);
+    // Not even an admin (alice) can confirm someone else's request.
+    await env.click(env.alice, confirmCard.id, button(confirmCard.card, 'retire_ok')!);
+    assert.equal(env.amber.store.getCommand(id)!.status, 'active', 'someone else cannot confirm');
+    const cancel = await env.click(env.bob, confirmCard.id, button(confirmCard.card, 'retire_no')!);
+    assert.match(JSON.stringify(cancel), /已取消下线/);
+    assert.equal(env.amber.store.getCommand(id)!.status, 'active');
+    // An expired confirmation does nothing.
+    const old = { ...button(confirmCard.card, 'retire_ok')!, t: String(Date.now() - 6 * 60_000) };
+    const expired = await env.click(env.bob, confirmCard.id, old);
+    assert.match(JSON.stringify(expired), /已过期/);
+    assert.equal(env.amber.store.getCommand(id)!.status, 'active');
+    await env.click(env.bob, confirmCard.id, button(confirmCard.card, 'retire_ok')!);
     assert.equal(env.amber.store.getCommand(id)!.status, 'retired');
     assert.equal(env.amber.store.getSchedule(sch.id)!.status, 'paused');
     assert.ok(env.fake.sent.some(s => s.to.unionId === env.bob.unionId && /已被.*下线/.test(FakeFeishu.text(s.card))));
