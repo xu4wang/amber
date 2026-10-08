@@ -7,7 +7,7 @@ import type { Caller } from './engine.ts';
 import { findVisible, runCommand, validateArgs, AmberError } from './engine.ts';
 import { validateRule, nextRun, describeRule, formatAt } from './schedule-rule.ts';
 import type { Rule } from './schedule-rule.ts';
-import { scheduleResultCard, errorCard, scheduleListCard, rebindCard, closedCard } from './cards.ts';
+import { scheduleResultCard, errorCard, scheduleListCard, rebindCard, closedCard, takeoverCard } from './cards.ts';
 import type { ScheduleView } from './cards.ts';
 import type { Deps } from './agent.ts';
 
@@ -19,6 +19,8 @@ const LATE_MS = 2 * 60_000;
 const MAX_CONCURRENT = 2;
 const MAX_FAILS = 3;
 export const MAX_PER_CHAT = 20;
+
+const CREATOR_LEFT = '创建人已不在群里';
 
 export class Scheduler {
   private store: Store;
@@ -101,8 +103,11 @@ export class Scheduler {
       if (s.chatType === 'group') {
         const member = await this.deps.isMember(s.chatId, s.creatorUnionId);
         if (member === false) {
-          this.pause(s, '创建人已不在群里');
+          this.pause(s, CREATOR_LEFT);
           await this.notifyCreator(s, `定时任务已暂停：${name}`, `你已不在这个群里，定时任务 ${s.id}（${ruleText}）已暂停。`);
+          // The creator may have left for good (e.g. left the company): the group has to know (D45).
+          try { await this.deps.send(s.replyTo ? { replyTo: s.replyTo, inThread: s.inThread } : { chatId: s.chatId }, takeoverCard({ scheduleId: s.id, name, ruleText, creatorOpenId: s.creatorOpenId })); }
+          catch (e) { log('takeover notice failed', s.id, (e as Error).message); }
           return;
         }
       }
@@ -209,6 +214,32 @@ export class Scheduler {
     this.store.updateSchedule(s.id, { status: 'active', pauseReason: null, failCount: 0, nextRunAt: nextRun(s.rule, Date.now()) });
     this.store.audit(actor, 'schedule.resume', { id: s.id });
     return this.store.getSchedule(s.id)!;
+  }
+
+  /** D45: a member of the group takes over a schedule whose creator left. The new schedule runs as
+   *  the person who clicked (their own data permissions); arguments and times are unchanged. */
+  async takeover(scheduleId: string, clicker: Caller): Promise<{ old: ScheduleRow; next: ScheduleRow }> {
+    const s0 = this.store.getSchedule(scheduleId);
+    if (!s0 || s0.status === 'deleted') throw new AmberError('gone', '这个定时任务已经被接手或删除了');
+    if (s0.chatType !== 'group' || clicker.chatId !== s0.chatId) throw new AmberError('forbidden', '请在原来的群里操作');
+    if (await this.deps.isMember(s0.chatId, clicker.unionId) !== true) throw new AmberError('forbidden', '只有群成员可以接手');
+    // Re-read after the await: from here to the delete there is no await, so two clicks cannot both win.
+    const s = this.store.getSchedule(scheduleId);
+    if (!s || s.status === 'deleted') throw new AmberError('gone', '这个定时任务已经被接手或删除了');
+    if (s.status !== 'paused' || s.pauseReason !== CREATOR_LEFT) throw new AmberError('not_needed', '这个定时任务现在不需要接手');
+    const cmd = this.store.getCommand(s.commandId);
+    if (!cmd || cmd.status !== 'active' || cmd.specHash !== s.specHash) throw new AmberError('changed', '指令已下线或已更新，不能接手；请让 agent 用新版本重新创建');
+    this.store.updateSchedule(s.id, { status: 'deleted' });
+    let next: ScheduleRow;
+    try {
+      next = await this.create({ cmd, chatId: s.chatId, chatType: s.chatType, replyTo: s.replyTo, inThread: s.inThread,
+        creator: { ...clicker, chatId: s.chatId, chatType: s.chatType }, args: s.args, rule: s.rule, requestedBy: '接手', via: { takeoverFrom: s.id } });
+    } catch (e) {
+      this.store.updateSchedule(s.id, { status: 'paused' });
+      throw e;
+    }
+    this.store.audit(clicker.unionId, 'schedule.takeover', { from: s.id, to: next.id, previousCreator: s.creatorUnionId });
+    return { old: s, next };
   }
 
   remove(s: ScheduleRow, actor: string): void {

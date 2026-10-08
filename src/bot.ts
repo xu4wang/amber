@@ -506,6 +506,11 @@ export class AmberBot {
         this.scheduler.remove(s, caller.unionId);
         return raw(infoCard('定时任务已删除', `定时任务 ${s.id} 已删除。`));
       }
+      if (value.a === 'sch_takeover') {
+        const { next } = await this.scheduler.takeover(String(value.s), caller);
+        const v = this.scheduler.view(next);
+        return raw(closedCard('定时任务已接手', 'green', `定时任务「${v.name}」（${v.ruleText}）已由 <at id=${caller.openId}></at> 接手，之后以接手人的身份运行。下次运行：${v.nextText}。`));
+      }
       if (typeof value.a === 'string' && value.a.startsWith('sch_')) {
         const s = this.store.getSchedule(String(value.s));
         if (!s) throw new AmberError('not_found', '定时任务已不存在');

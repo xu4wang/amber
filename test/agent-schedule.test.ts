@@ -88,6 +88,29 @@ test('schedules: created by a click, run as the creator, silent when empty, paus
     await tickAt(t);
     assert.equal(env.amber.store.getSchedule(normal)!.status, 'paused');
     assert.match(env.amber.store.getSchedule(normal)!.pauseReason!, /不在群里/);
+    // D45: the group is told, and any member can take the schedule over as themselves.
+    const notice = env.fake.sent.filter(p => p.to.chatId === GROUP && button(p.card, 'sch_takeover')?.s === normal);
+    assert.equal(notice.length, 1, 'one takeover notice in the group');
+    const take = button(notice[0].card, 'sch_takeover')!;
+    await env.click(env.carol, notice[0].id, take);           // carol is not in the group
+    assert.equal(env.amber.store.getSchedule(normal)!.status, 'paused');
+    // A schedule paused for another reason (3 failures) cannot be taken over through a forged value.
+    const forged = await env.click(env.alice, notice[0].id, { a: 'sch_takeover', s: failing });
+    assert.match(JSON.stringify(forged), /不需要接手/);
+    assert.equal(env.amber.store.getSchedule(failing)!.status, 'paused');
+    const old = env.amber.store.getSchedule(normal)!;
+    const res = await env.click(env.alice, notice[0].id, take);
+    assert.match(JSON.stringify(res), /已接手/);
+    assert.equal(env.amber.store.getSchedule(normal)?.status ?? 'deleted', 'deleted');
+    const mine = env.amber.store.schedulesInChat(GROUP).filter(x => x.creatorUnionId === env.alice.unionId && x.status === 'active');
+    assert.equal(mine.length, 1);
+    assert.deepEqual([mine[0].commandId, mine[0].args, mine[0].rule], [old.commandId, old.args, old.rule]);
+    const again = await env.click(env.alice, notice[0].id, take);
+    assert.match(JSON.stringify(again), /已经被接手/);
+    assert.equal(env.amber.store.schedulesInChat(GROUP).filter(x => x.creatorUnionId === env.alice.unionId && x.status === 'active').length, 1, 'no second copy');
+    await tickAt(mine[0].nextRunAt + 1000);
+    const run2 = env.amber.store.getRun(env.amber.store.getSchedule(mine[0].id)!.lastRunId!)!;
+    assert.equal(run2.callerUnionId, env.alice.unionId, 'runs as the person who took over');
   } finally { await env.close(); }
 });
 

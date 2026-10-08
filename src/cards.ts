@@ -254,6 +254,15 @@ export function retireConfirmCard(c: CommandRow, schedules: number, requester: s
   ]);
 }
 
+/** D45: the creator left the group — tell the group, and let any member take the schedule over. */
+export function takeoverCard(o: { scheduleId: string; name: string; ruleText: string; creatorOpenId: string | null }): object {
+  const who = o.creatorOpenId ? `<at id=${o.creatorOpenId}></at>` : '创建人';
+  return shell('Amber · 定时任务已暂停', 'orange', [
+    { tag: 'markdown', content: `定时任务「${sanitizeMarkdown(o.name, 80)}」（${sanitizeMarkdown(o.ruleText, 80)}）已暂停：${who} 已不在这个群里。\n\n群成员可以点「由我接手」，之后**以你的身份**继续运行（按你的数据权限），参数和时间都不变。没人接手就一直保持暂停。` },
+    btn('由我接手', { a: 'sch_takeover', s: o.scheduleId }, 'primary'),
+  ]);
+}
+
 export function closedCard(title: string, template: string, md: string): object {
   return shell(`Amber · ${title}`, template, [{ tag: 'markdown', content: md }]);
 }
