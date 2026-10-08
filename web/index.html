@@ -205,7 +205,7 @@ function withValueLabels(spec) {
   // so the chart has a fixed size). The legend keeps only the category.
   if (mark === 'arc' && !spec.layer && enc.theta?.field && enc.color?.field) {
     const v = enc.theta.field, c = enc.color.field;
-    const W = 760, H = 340, R = 110, cx = W / 2, cy = H / 2;
+    const W = 760, H = 380, R = 130, cx = W / 2, cy = H / 2;
     const ang = `2 * PI * (datum.__cum - datum['${v}'] / 2) / datum.__total`;
     const px = r => `${cx} + ${r} * sin(${ang})`, py = r => `${cy} - ${r} * cos(${ang})`;
     const side = `(sin(${ang}) >= 0 ? 1 : -1)`;
@@ -219,12 +219,12 @@ function withValueLabels(spec) {
         { calculate: px(R + 16), as: '__x1' }, { calculate: py(R + 16), as: '__y1' },
         { calculate: `datum.__x1 + 14 * ${side}`, as: '__x2' },
         { calculate: `${side} > 0 ? 'left' : 'right'`, as: '__align' },
-        { calculate: `datum['${c}'] + '：' + format(datum['${v}'], ',.2~f') + '（' + format(datum['${v}'] / datum.__total, '.1%') + '）'`, as: '__label' }],
+        { calculate: `datum['${c}'] + '，' + format(datum['${v}'] / datum.__total, '.1%') + '\\n' + format(datum['${v}'], ',.0f')`, as: '__label' }],
       layer: [
-        { mark: { ...(typeof m === 'object' ? m : { type: 'arc' }), outerRadius: R }, encoding: { theta: { ...enc.theta, stack: true }, color: { ...enc.color, sort: null, legend: null }, tooltip: [{ field: c, type: 'nominal' }, { field: v, type: 'quantitative', format: ',.2~f' }] } },
-        { mark: { type: 'rule', color: '#888' }, encoding: { x: { field: '__x0', ...raw }, y: { field: '__y0', ...raw }, x2: { field: '__x1' }, y2: { field: '__y1' } } },
-        { mark: { type: 'rule', color: '#888' }, encoding: { x: { field: '__x1', ...raw }, y: { field: '__y1', ...raw }, x2: { field: '__x2' }, y2: { field: '__y1' } } },
-        ...['left', 'right'].map(al => ({ transform: [{ filter: `datum.__align === '${al}'` }], mark: { type: 'text', fontSize: 11, align: al, dx: al === 'left' ? 3 : -3, baseline: 'middle' }, encoding: { x: { field: '__x2', ...raw }, y: { field: '__y1', ...raw }, text: { field: '__label' } } })),
+        { mark: { ...(typeof m === 'object' ? m : { type: 'arc' }), outerRadius: R, stroke: '#fff', strokeWidth: 1 }, encoding: { theta: { ...enc.theta, stack: true }, color: { ...enc.color, sort: null, legend: null }, tooltip: [{ field: c, type: 'nominal' }, { field: v, type: 'quantitative', format: ',.2~f' }] } },
+        { mark: { type: 'rule', strokeWidth: 1 }, encoding: { x: { field: '__x0', ...raw }, y: { field: '__y0', ...raw }, x2: { field: '__x1' }, y2: { field: '__y1' }, color: { ...enc.color, sort: null, legend: null } } },
+        { mark: { type: 'rule', strokeWidth: 1 }, encoding: { x: { field: '__x1', ...raw }, y: { field: '__y1', ...raw }, x2: { field: '__x2' }, y2: { field: '__y1' }, color: { ...enc.color, sort: null, legend: null } } },
+        ...['left', 'right'].map(al => ({ transform: [{ filter: `datum.__align === '${al}'` }], mark: { type: 'text', fontSize: 12, align: al, dx: al === 'left' ? 3 : -3, dy: -7, baseline: 'middle', lineBreak: '\n' }, encoding: { x: { field: '__x2', ...raw }, y: { field: '__y1', ...raw }, text: { field: '__label' }, color: { ...enc.color, sort: null, legend: null } } })),
       ] };
   }
   if ((mark !== 'line' && mark !== 'bar') || spec.layer || !enc.x || !enc.y) return spec;
