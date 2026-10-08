@@ -2,6 +2,10 @@
 
 **跑通一次，随时再用。**（Run it once. Keep it forever.）
 
+![Amber：每次都让大模型重跑，慢、费 token、可能出错 → 跑通一次存进 Amber、审核后固化 → 以后从飞书、网站、AI 助手或定时任务一键执行，结果每次都一样](docs/assets/amber-hero.gif)
+
+> 📺 [视频手册](https://xu4wang.github.io/amber-manual/)：每章 1 分钟左右的操作演示 · 📖 [文档站](https://xu4wang.github.io/amber-manual/docs/)
+
 Amber 把「和 LLM agent 一起跑通的一次操作」封存成经过审核的确定性指令，在飞书里一键执行。执行时不经过模型。
 
 ## 工作流程
