@@ -138,3 +138,12 @@ test('cli keys: read-only export — never generates a key, never opens the data
     assert.match(loose.stderr, /不能对同组或其他用户开放/);
   } finally { rmSync(empty, { recursive: true, force: true }); rmSync(full, { recursive: true, force: true }); }
 });
+
+test('charts: a vega-lite pie (mark arc) becomes a Feishu pie chart', () => {
+  const spec = { mark: { type: 'arc' }, data: { values: [{ d: '10-01', v: 1 }, { d: '10-02', v: 3 }] }, encoding: { theta: { field: 'v', type: 'quantitative' }, color: { field: 'd', type: 'nominal' } } };
+  const els = markdownWithCharts('```vega-lite\n' + JSON.stringify(spec) + '\n```') as any[];
+  const chart = els.find(e => e.tag === 'chart');
+  assert.equal(chart?.chart_spec.type, 'pie');
+  assert.equal(chart.chart_spec.valueField, 'v');
+  assert.equal(chart.chart_spec.categoryField, 'd');
+});

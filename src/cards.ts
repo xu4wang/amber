@@ -137,10 +137,19 @@ function vegaLiteToChart(src: string): unknown[] | null {
   try { spec = JSON.parse(src); } catch { return null; }
   const values: any[] = spec?.data?.values;
   const mark = typeof spec?.mark === 'string' ? spec.mark : spec?.mark?.type;
+  const title = typeof spec.title === 'string' ? spec.title : spec?.title?.text;
+  // Pie (mark arc): theta = value, color = category → Feishu pie chart.
+  if (mark === 'arc') {
+    const vf = spec?.encoding?.theta?.field, cf = spec?.encoding?.color?.field;
+    if (!Array.isArray(values) || values.length === 0 || values.length > 50 || !vf || !cf) return null;
+    const out: unknown[] = [];
+    if (title) out.push({ tag: 'markdown', content: `**${sanitizeMarkdown(String(title), 80)}**` });
+    out.push({ tag: 'chart', aspect_ratio: '4:3', chart_spec: { type: 'pie', data: { values: values.map(v => ({ [cf]: v[cf], [vf]: v[vf] })) }, valueField: vf, categoryField: cf, label: { visible: true }, legends: { visible: true } } });
+    return out;
+  }
   const ex = spec?.encoding?.x?.field, ey = spec?.encoding?.y?.field;
   if (!Array.isArray(values) || values.length === 0 || values.length > 500 || !ex || !ey) return null;
   if (mark !== 'bar' && mark !== 'line') return null;
-  const title = typeof spec.title === 'string' ? spec.title : spec?.title?.text;
   const clean = values.map(v => ({ [ex]: v[ex], [ey]: v[ey] }));
   const horizontal = mark === 'bar' && spec.encoding.x.type === 'quantitative' && spec.encoding.y.type !== 'quantitative';
   const out: unknown[] = [];
