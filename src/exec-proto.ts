@@ -102,6 +102,18 @@ export function openJob(amberPub: KeyObject, myId: string, myBoxKey: KeyObject, 
   return payload;
 }
 
+// ---------- relayed service responses (Amber → executor, D52)
+
+/** What Amber signs for a relayed service response: bound to the job and to the executor's request id,
+ *  so an on-path party can neither alter the response nor replay it onto another request. */
+export function relayResponseInput(jobId: string, reqId: string, r: { ok: boolean; status?: number; contentType?: string; body?: string; error?: string; message?: string }): Buffer {
+  return Buffer.from(JSON.stringify([PROTO, 'relay-response', jobId, reqId, r.ok, r.status ?? null, r.contentType ?? '', r.body ?? '', r.error ?? '', r.message ?? '']));
+}
+export function verifyRelayResponse(amberPub: KeyObject, jobId: string, reqId: string, r: any): boolean {
+  if (typeof r?.sig !== 'string') return false;
+  return verify(null, relayResponseInput(jobId, reqId, r), amberPub, Buffer.from(r.sig, 'base64'));
+}
+
 /** Replaces every secret value (4 characters or longer) that appears in text with ***. */
 export function redact(text: string, values: Record<string, string>): string {
   let out = text;

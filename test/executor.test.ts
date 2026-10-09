@@ -534,7 +534,7 @@ except Exception as e: print("direct", type(e).__name__)
     const k = newExecutorKeys();
     const sp = pubB64(createPublicKey(keyFromPem(k.signKey))), bp = pubB64(createPublicKey(keyFromPem(k.boxKey)));
     const myId = fingerprint(pubB64(createPublicKey(keyFromPem(readFileSync(join(dir, 'sign-key.pem'), 'utf8')))), pubB64(createPublicKey(keyFromPem(readFileSync(join(dir, 'box-key.pem'), 'utf8'))))).slice(0, 16);
-    const rb = JSON.stringify({ jobId: 'nope', service: 'demo', method: 'POST', path: '/amber/query', body: '' });
+    const rb = JSON.stringify({ jobId: 'nope', reqId: '0'.repeat(32), service: 'demo', method: 'POST', path: '/amber/query', body: '' });
     const st = await fetch(`http://127.0.0.1:${env.apiPort}/v1/executor/relay`, { method: 'POST', body: rb, headers: signRequest(keyFromPem(readFileSync(join(dir, 'sign-key.pem'), 'utf8')), myId, 'POST', '/v1/executor/relay', rb) }).then(x => x.status);
     assert.equal(st, 403, 'no such running job');
     const st2 = await fetch(`http://127.0.0.1:${env.apiPort}/v1/executor/relay`, { method: 'POST', body: rb, headers: signRequest(keyFromPem(k.signKey), fingerprint(sp, bp).slice(0, 16), 'POST', '/v1/executor/relay', rb) }).then(x => x.status);
@@ -544,7 +544,7 @@ except Exception as e: print("direct", type(e).__name__)
     for (const [jid, job, service] of [['other-exec', { executorId: 'ffffffffffffffff', picked: true, calls: { demo: 1 } }, 'demo'], ['not-picked', { executorId: myId, picked: false, calls: { demo: 1 } }, 'demo'],
       ['closed-service', { executorId: myId, picked: true, calls: { localonly: 1 } }, 'localonly'], ['undeclared', { executorId: myId, picked: true, calls: { demo: 1 } }, 'demo2']] as const) {
       hub.jobs.set(jid, { ...job, envelope: {}, resolve() {}, timer: setTimeout(() => {}, 0) });
-      const body = JSON.stringify({ jobId: jid, service, method: 'POST', path: '/amber/query', body: '' });
+      const body = JSON.stringify({ jobId: jid, reqId: '0'.repeat(32), service, method: 'POST', path: '/amber/query', body: '' });
       const code = await fetch(`http://127.0.0.1:${env.apiPort}/v1/executor/relay`, { method: 'POST', body, headers: signRequest(keyFromPem(readFileSync(join(dir, 'sign-key.pem'), 'utf8')), myId, 'POST', '/v1/executor/relay', body) }).then(x => x.status);
       assert.equal(code, 403, jid);
       hub.jobs.delete(jid);
@@ -577,7 +577,18 @@ test('executor relay port: only the job\'s own tokens, each once; size limit; a 
   const { mkdtempSync } = await import('node:fs');
   const { tmpdir } = await import('node:os');
   const relayed: any[] = [];
-  const amberStub = createServer((req, res) => { let b = ''; req.on('data', c => { b += c; }); req.on('end', () => { relayed.push(JSON.parse(b)); res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify({ ok: true, status: 200, contentType: 'text/plain', body: Buffer.from('fine').toString('base64') })); }); });
+  const amberKeys = generateKeyPairSync('ed25519');
+  const { sign: edSign } = await import('node:crypto');
+  const { relayResponseInput } = await import('../src/exec-proto.ts');
+  let tamper = false;
+  const amberStub = createServer((req, res) => { let b = ''; req.on('data', c => { b += c; }); req.on('end', () => {
+    const q = JSON.parse(b); relayed.push(q);
+    const r = { ok: true, status: 200, contentType: 'text/plain', body: Buffer.from('fine').toString('base64') };
+    const sig = edSign(null, relayResponseInput(q.jobId, q.reqId, r), amberKeys.privateKey).toString('base64');
+    res.writeHead(200, { 'content-type': 'application/json' });
+    // tamper: an on-path party changes the body after Amber signed it
+    res.end(JSON.stringify({ ...r, ...(tamper ? { body: Buffer.from('evil').toString('base64') } : {}), sig }));
+  }); });
   await new Promise<void>(r => amberStub.listen(0, '127.0.0.1', () => r()));
   const dir = mkdtempSync(join(tmpdir(), 'amber-relay-unit-'));
   const k = newExecutorKeys();
@@ -589,7 +600,7 @@ test('executor relay port: only the job\'s own tokens, each once; size limit; a 
     const sp = pubB64(createPublicKey(keyFromPem(k.signKey))), bp = pubB64(createPublicKey(keyFromPem(k.boxKey)));
     const me = { sign: keyFromPem(k.signKey), id: fingerprint(sp, bp).slice(0, 16) };
     const cfg = { name: 'u', amber: `http://127.0.0.1:${(amberStub.address() as any).port}` };
-    const r = await ex.startRelays(cfg, me, 'job-1', { demo: { tokens: ['tokA', 'tokB'] } });
+    const r = await ex.startRelays(cfg, me, amberKeys.publicKey, 'job-1', { demo: { tokens: ['tokA', 'tokB', 'tokC'] } });
     const port = r.services.demo.tcpPort;
     const send = (auth?: string, body = '{}') => fetch(`http://127.0.0.1:${port}/amber/query`, { method: 'POST', body, headers: { 'content-type': 'application/json', ...(auth ? { authorization: auth } : {}) } }).then(async x => [x.status, await x.text()] as const);
     assert.equal((await send())[0], 403, 'no token: another local process');
@@ -598,7 +609,12 @@ test('executor relay port: only the job\'s own tokens, each once; size limit; a 
     assert.equal((await send('Amber tokA'))[0], 403, 'each token once');
     assert.equal((await send('Amber tokB', 'x'.repeat(600 * 1024)))[0], 413);
     assert.deepEqual(await send('Amber tokB'), [200, 'fine'], 'a refused oversized request does not spend the token');
-    assert.equal(relayed.length, 2);
+    tamper = true;
+    const t = await send('Amber tokC');
+    assert.equal(t[0], 502, 'an altered response never reaches the script');
+    assert.doesNotMatch(t[1], /evil/);
+    assert.equal(relayed.length, 3);
+    relayed.pop();
     assert.deepEqual(relayed.map(x => [x.jobId, x.service, x.headers.authorization]), [['job-1', 'demo', 'Amber tokA'], ['job-1', 'demo', 'Amber tokB']]);
     r.close();
   } finally {

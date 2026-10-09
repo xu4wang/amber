@@ -11,7 +11,7 @@ import { generateKeyPairSync, createPrivateKey, createPublicKey, sign, randomUUI
 import type { KeyObject } from 'node:crypto';
 import { existsSync, lstatSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { sealJob, type JobEnvelope } from './exec-proto.ts';
+import { sealJob, relayResponseInput, type JobEnvelope } from './exec-proto.ts';
 
 const b64u = (b: Buffer | string) => Buffer.from(b).toString('base64url');
 
@@ -56,6 +56,11 @@ export class Signer {
   /** A job for an executor (D50): encrypted to its key, signed with this key. */
   sealJob(executorId: string, boxPub: string, jobId: string, ttlMs: number, payload: unknown): JobEnvelope {
     return sealJob(this.key, executorId, boxPub, jobId, ttlMs, payload);
+  }
+
+  /** Signs a relayed service response for the executor that asked (D52). */
+  signRelayResponse(jobId: string, reqId: string, r: Parameters<typeof relayResponseInput>[2]): string {
+    return sign(null, relayResponseInput(jobId, reqId, r), this.key).toString('base64');
   }
 
   issue(c: { aud: string; sub: string; cmd: string; rev: string; run: string; chat: string; channel: string; callIndex: number; callCount: number; ttlSec?: number }): string {

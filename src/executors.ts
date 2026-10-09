@@ -213,9 +213,17 @@ export class ExecutorHub {
 
   /** A script's call to a registered service, relayed by the executor running its job (D52).
    *  Amber does not read the request or the response; the service checks the token itself. */
-  async relay(e: ExecutorRow, raw: string): Promise<{ ok: boolean; status?: number; contentType?: string; body?: string; error?: string; message?: string }> {
+  async relay(e: ExecutorRow, raw: string): Promise<{ ok: boolean; status?: number; contentType?: string; body?: string; error?: string; message?: string; sig?: string }> {
     let b: any;
     try { b = JSON.parse(raw); } catch { throw new AmberError('bad_json', '请求不是合法的 JSON'); }
+    const reqId = String(b?.reqId ?? '');
+    if (!/^[0-9a-f]{32}$/.test(reqId)) throw new AmberError('invalid', '缺少 reqId');
+    const r = await this.forward(e, b);
+    // Signed, so the executor can tell the response really comes from Amber for this very request.
+    return { ...r, sig: this.signer.signRelayResponse(String(b.jobId), reqId, r) };
+  }
+
+  private async forward(e: ExecutorRow, b: any): Promise<{ ok: boolean; status?: number; contentType?: string; body?: string; error?: string; message?: string }> {
     const j = this.jobs.get(String(b?.jobId ?? ''));
     // Only the executor this job went to, only while it is running.
     if (!j || j.executorId !== e.id || !j.picked) throw new AmberError('forbidden', '没有这个正在运行的任务');

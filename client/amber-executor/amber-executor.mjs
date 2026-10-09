@@ -25,7 +25,8 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'node:child_process';
 import { createServer } from 'node:http';
-import { newExecutorKeys, keyFromPem, pubB64, fingerprint, showFingerprint, signRequest, openJob, specHashOf, redact, EXECUTOR_NAME, ENV_NAME } from './lib/exec-proto.mjs';
+import { newExecutorKeys, keyFromPem, pubB64, fingerprint, showFingerprint, signRequest, openJob, specHashOf, redact, verifyRelayResponse, EXECUTOR_NAME, ENV_NAME } from './lib/exec-proto.mjs';
+import { randomBytes } from 'node:crypto';
 import { setSandboxContext, validateEnvAccess, buildPolicy, compileToSeatbelt, normalizePath, hardDenyRoots, credentialGrants, describeAccess } from './lib/sandbox-policy.mjs';
 import { runSandboxed } from './lib/sandbox-run.mjs';
 
@@ -128,7 +129,7 @@ export async function handle(cfg, me, amberPub, envelope) {
     const job = prepare(cfg, payload);
     log('job start', envelope.jobId, payload.spec.name, payload.env, `run ${payload.runId}`);
     // Declared services (D52): a local port per service, relayed to Amber; the script only reaches these ports.
-    relays = await startRelays(cfg, me, envelope.jobId, payload.input?.services);
+    relays = await startRelays(cfg, me, amberPub, envelope.jobId, payload.input?.services);
     const input = relays.services ? { ...payload.input, services: relays.services } : payload.input;
     const r = await runSandboxed({ code: job.code, python: job.python, profileFor: dir => job.profileFor(dir, relays.ports), input, timeoutMs: job.timeoutMs, env: { ...job.vars, WORKDIR: job.workdir }, ...(job.realHome ? { home: homedir() } : {}) });
     // The log never sees a secret: the error text can contain one (e.g. an exception message).
@@ -147,7 +148,7 @@ const RELAY_MAX_REQUEST = 512 * 1024;
 /** One local HTTP port per declared service. Each request is passed, signed and unchanged, to Amber's relay
  *  for this job; Amber checks it and forwards it to the registered service. The script's code is the same as
  *  on Amber's own machine: services[name].tcpPort is this port. */
-export async function startRelays(cfg, me, jobId, services) {
+export async function startRelays(cfg, me, amberPub, jobId, services) {
   const names = Object.keys(services ?? {});
   if (!names.length) return { ports: [], close() {} };
   const servers = [], out = {};
@@ -169,7 +170,10 @@ export async function startRelays(cfg, me, jobId, services) {
         try {
           const headers = {};
           for (const k of ['authorization', 'content-type', 'accept']) if (typeof req.headers[k] === 'string') headers[k] = req.headers[k];
-          const r = await call(cfg, me, '/v1/executor/relay', { jobId, service: name, method: req.method, path: req.url, headers, body: Buffer.concat(chunks).toString('base64') }, 75_000);
+          const reqId = randomBytes(16).toString('hex');
+          const r = await call(cfg, me, '/v1/executor/relay', { jobId, reqId, service: name, method: req.method, path: req.url, headers, body: Buffer.concat(chunks).toString('base64') }, 75_000);
+          // Only a response Amber signed for this request reaches the script (nothing on the way can alter it).
+          if (!verifyRelayResponse(amberPub, jobId, reqId, r)) return reply(502, 'application/json', JSON.stringify({ error: 'relay_unverified', message: '转发的响应签名不对' }));
           if (!r.ok) return reply(502, 'application/json', JSON.stringify({ error: r.error ?? 'relay_failed', message: r.message ?? '' }));
           reply(r.status, r.contentType || 'application/octet-stream', Buffer.from(r.body ?? '', 'base64'));
         } catch (e) {
