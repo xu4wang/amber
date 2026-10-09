@@ -6,6 +6,13 @@
 //   node export-botmux-env.mjs --bot <appId> [--name <env>] [--python <path>] [--readonly] [--bots-json <path>] > env.json
 //   node amber-executor.mjs env import env.json
 //
+// Following botmux (D53): write the definition to a file, keep it current, and let the executor follow that file.
+//   node export-botmux-env.mjs --bot <appId> … --out <file>      writes <file> only when the definition changed
+//   node export-botmux-env.mjs --bot <appId> … --out <file> --install-launchd
+//                                                               the same, every 5 minutes (launchd); --uninstall-launchd removes it
+//   node amber-executor.mjs env follow <file>
+// The executor only reads the file; it does not know botmux. This script is the botmux adapter.
+//
 // What it includes (mirrors botmux's FsPolicy for that bot, src/adapters/cli/fs-policy.ts):
 //   read-write  the bot's workingDir, bots.json sandboxPaths.readWrite, its BOT_HOME (~/.botmux/bots/<appId>),
 //               its role-library subtree (~/botmux-roles/<appId>), its lark-cli config (~/.lark-cli-bots/<appId>)
@@ -17,9 +24,11 @@
 //   HOME        the user's real home, as in the bot's sessions (lark-cli finds its key store under $HOME/Library);
 //               only the paths above are reachable there
 // --readonly turns every data grant read-only (the lark-cli config stays writable: lark-cli refreshes tokens there).
-import { readFileSync, existsSync, lstatSync } from 'node:fs';
+import { readFileSync, existsSync, lstatSync, writeFileSync, renameSync, mkdirSync, unlinkSync, realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { join, dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { execFileSync } from 'node:child_process';
 
 const args = process.argv.slice(2);
 const flag = n => { const i = args.indexOf(n); return i >= 0 ? args[i + 1] : undefined; };
@@ -70,4 +79,48 @@ const def = {
   realHome: true,
   source: `botmux:${appId}${readonly ? '（只读）' : ''}`,
 };
-process.stdout.write(JSON.stringify(def, null, 2) + '\n');
+const text = JSON.stringify(def, null, 2) + '\n';
+const out = flag('--out');
+const label = `com.amber.botmux-env.${appId}`;
+const plist = join(H, 'Library', 'LaunchAgents', `${label}.plist`);
+const domain = `gui/${process.getuid()}`;
+if (args.includes('--uninstall-launchd')) {
+  try { execFileSync('launchctl', ['bootout', `${domain}/${label}`], { stdio: 'ignore' }); } catch { /* not loaded */ }
+  if (existsSync(plist)) unlinkSync(plist);
+  console.log('已停止并移除', label);
+} else if (!out) {
+  process.stdout.write(text);
+} else {
+  const file = resolve(out);
+  // Only when the definition changed, atomically: the executor re-reads this file and re-registers on change.
+  if (!existsSync(file) || readFileSync(file, 'utf8') !== text) {
+    mkdirSync(dirname(file), { recursive: true });
+    writeFileSync(`${file}.tmp`, text, { mode: 0o600 });
+    renameSync(`${file}.tmp`, file);
+    console.log(new Date().toISOString(), 'updated', file);
+  }
+  if (args.includes('--install-launchd')) {
+    const esc = x => String(x).replace(/&/g, '&amp;').replace(/</g, '&lt;');
+    const node = ['/opt/homebrew/bin/node', '/usr/local/bin/node'].find(p => { try { return realpathSync(p) === realpathSync(process.execPath); } catch { return false; } }) ?? process.execPath;
+    const keep = [];
+    for (const f of ['--bot', '--name', '--python', '--bots-json']) if (flag(f)) keep.push(f, flag(f));
+    if (args.includes('--readonly')) keep.push('--readonly');
+    keep.push('--out', file);
+    const argv = [node, fileURLToPath(import.meta.url), ...keep].map(a => `<string>${esc(a)}</string>`).join('');
+    try { execFileSync('launchctl', ['bootout', `${domain}/${label}`], { stdio: 'ignore' }); } catch { /* not loaded */ }
+    for (let i = 0; i < 50; i++) { try { execFileSync('launchctl', ['print', `${domain}/${label}`], { stdio: 'ignore' }); } catch { break; } execFileSync('sleep', ['0.2']); }
+    writeFileSync(plist, `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>Label</key><string>${label}</string>
+  <key>ProgramArguments</key><array>${argv}</array>
+  <key>StartInterval</key><integer>300</integer>
+  <key>RunAtLoad</key><true/>
+  <key>StandardOutPath</key><string>${esc(file)}.log</string>
+  <key>StandardErrorPath</key><string>${esc(file)}.log</string>
+</dict></plist>
+`);
+    execFileSync('launchctl', ['bootstrap', domain, plist]);
+    console.log(`已安装：每 5 分钟导出一次到 ${file}（${plist}）。在执行端上运行 env follow ${file} 跟随它。`);
+  }
+}

@@ -41,6 +41,34 @@ const RELAY_MAX_REQUEST = 512 * 1024;
 const RELAY_MAX_RESPONSE = 4 * 1024 * 1024;
 const RELAY_TIMEOUT_MS = 60_000;
 
+/** What changed in one followed environment (D53), for the admin notice. */
+export interface FollowChange { env: string; added: Record<string, string[]>; removed: Record<string, string[]>; vars: string[]; python?: [string | null, string | null] }
+
+/** Changes allowed without a new approval: the same environments, each changed one following the same file with
+ *  the same source, WORKDIR and HOME mode, and only its paths, variables or Python different. Null otherwise. */
+export function followDiff(prev: Record<string, ExecutorEnv>, next: Record<string, ExecutorEnv>): FollowChange[] | null {
+  const a = Object.keys(prev).sort(), b = Object.keys(next).sort();
+  if (JSON.stringify(a) !== JSON.stringify(b)) return null;
+  const out: FollowChange[] = [];
+  for (const k of a) {
+    const o = prev[k], n = next[k];
+    if (JSON.stringify(o) === JSON.stringify(n)) continue;
+    if (!o.follow || n.follow !== o.follow || (n.source ?? null) !== (o.source ?? null) || n.workdir !== o.workdir || !!n.realHome !== !!o.realHome) return null;
+    const ea = effectiveAccess(o), eb = effectiveAccess(n);
+    const added: Record<string, string[]> = {}, removed: Record<string, string[]> = {};
+    for (const key of ['readWrite', 'readOnly', 'deny'] as const) {
+      const x = new Set(ea[key] ?? []), y = new Set(eb[key] ?? []);
+      const plus = [...y].filter(p => !x.has(p)).sort(), minus = [...x].filter(p => !y.has(p)).sort();
+      if (plus.length) added[key] = plus;
+      if (minus.length) removed[key] = minus;
+    }
+    const ov = o.vars ?? {}, nv = n.vars ?? {};
+    const vars = [...new Set([...Object.keys(ov), ...Object.keys(nv)])].filter(v => ov[v] !== nv[v]).sort();
+    out.push({ env: k, added, removed, vars, ...((o.interpreter ?? null) !== (n.interpreter ?? null) ? { python: [o.interpreter ?? null, n.interpreter ?? null] as [string | null, string | null] } : {}) });
+  }
+  return out.length ? out : null;
+}
+
 export const envsHash = (name: string, envs: Record<string, ExecutorEnv>) => createHash('sha256').update(JSON.stringify({ name, envs })).digest('hex').slice(0, 16);
 
 interface Waiter { resolve: (jobs: JobEnvelope[]) => void; timer: NodeJS.Timeout }
@@ -56,6 +84,7 @@ export class ExecutorHub {
   /** Sends a card to every admin. */
   notifyAdmins: (card: object) => Promise<void> = async () => {};
   approvalCard: (e: ExecutorRow, h: string) => object = () => ({});
+  followCard: (e: ExecutorRow, changes: FollowChange[]) => object = () => ({});
   private nonces = new Map<string, number>();
   private waiters = new Map<string, Waiter>();
   private queues = new Map<string, JobEnvelope[]>();
@@ -114,6 +143,17 @@ export class ExecutorHub {
     if (prev && (same || prev.status === 'rejected' || prev.status === 'revoked')) {
       this.store.touchExecutor(id);
       return { id, status: prev.status, fingerprint: fp };
+    }
+    // Followed environments (D53): changes within what was approved take effect at once; admins are told.
+    if (prev && prev.status === 'approved' && prev.name === name) {
+      const diff = followDiff(prev.envs, envs);
+      if (diff) {
+        this.store.updateExecutorEnvs(id, envs, machine, version);
+        this.store.touchExecutor(id);
+        this.store.audit(null, 'executor.follow', { id, name, changes: diff });
+        await this.notifyAdmins(this.followCard(this.store.getExecutor(id)!, diff)).catch(() => {});
+        return { id, status: 'approved', fingerprint: fp };
+      }
     }
     if (this.store.listExecutors().filter(x => x.status === 'pending').length >= MAX_PENDING) throw new AmberError('busy', '等待批准的执行端太多，请先让管理员处理');
     // A changed environment list loses the approval until an admin approves the new one.
@@ -345,7 +385,9 @@ function validateEnvs(x: unknown): Record<string, ExecutorEnv> {
     const vars = v?.vars === undefined ? undefined : validateVars(k, v.vars);
     const source = v?.source === undefined ? undefined : String(v.source).slice(0, 200);
     if (v?.realHome !== undefined && typeof v.realHome !== 'boolean') throw new AmberError('invalid', `环境「${k}」的 realHome 只能是 true/false`);
-    out[k] = { workdir, ...(interpreter ? { interpreter } : {}), ...(access ? { access } : {}), ...(vars ? { vars } : {}), ...(source ? { source } : {}), ...(v?.realHome === true ? { realHome: true } : {}) };
+    const follow = v?.follow === undefined ? undefined : String(v.follow);
+    if (follow !== undefined && (!follow.startsWith('/') || follow.length > 1024 || /[\0\n\r]/.test(follow))) throw new AmberError('invalid', `环境「${k}」的 follow 要是定义文件的绝对路径`);
+    out[k] = { workdir, ...(interpreter ? { interpreter } : {}), ...(access ? { access } : {}), ...(vars ? { vars } : {}), ...(source ? { source } : {}), ...(v?.realHome === true ? { realHome: true } : {}), ...(follow ? { follow } : {}) };
   }
   return out;
 }

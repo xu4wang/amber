@@ -88,6 +88,26 @@ node ~/amber/client/amber-executor/amber-executor.mjs status
 - 最稳妥的做法是给执行端单独建一个系统用户，用它安装、运行（数据目录给这个用户读权限）；
 - 如果装在和机器人相同的用户下，就等于信任这个用户下的所有进程，只适合这些进程本来就可信的机器；或者它们都在沙箱里，并且确认沙箱挡住了 `~/.config/amber-executor/`。批准时管理员要知道是哪种情况。
 
+### 跟随 botmux 机器人的配置
+
+机器人环境可以「跟随」一个定义文件：第一次批准之后，这个文件里的路径、环境变量、Python 有变化，会自动生效，不需要重新批准；Amber 会给管理员发一张变化通知卡（新增的凭证路径标红，卡上可以直接撤销这个执行端）。
+
+```bash
+# 1. 导出到一个文件（只有内容变了才会改写这个文件）
+node ~/amber/client/amber-executor/export-botmux-env.mjs --bot cli_xxxx --name 结算助手 --python /opt/homebrew/bin/python3 --out ~/.config/amber-envs/结算助手.json
+# 2. 让执行端跟随这个文件（之后这个环境的内容以文件为准），然后等管理员批准这一次
+node ~/amber/client/amber-executor/amber-executor.mjs env follow ~/.config/amber-envs/结算助手.json
+launchctl kickstart -k gui/$(id -u)/com.amber.executor
+```
+
+之后 **botmux 里这个机器人的配置改了，手工再跑一次第 1 步的导出命令**。执行端每 5 分钟检查一次跟随的文件，有变化就自动更新；想马上生效，就重启执行端服务（`launchctl kickstart -k gui/$(id -u)/com.amber.executor`）。
+
+可选：不想手工导出，可以在导出命令后面加 `--install-launchd`，装成每 5 分钟自动导出一次的定时任务（`--uninstall-launchd` 移除）。
+
+自动生效的范围：同一个环境、同一个跟随文件、同一个来源、同一个 `{WORKDIR}`、HOME 方式不变，只是路径、环境变量、Python 变了。下面这些仍然要管理员重新批准：增加或删除环境、改了 `{WORKDIR}` 或来源、换了跟随的文件、换了执行端密钥。等待批准期间，文件的后续变化会一起体现在新的申请里。文件损坏或校验不通过时，执行端保留上一次的内容，并在日志里记一条。
+
+执行端只读这个文件，不知道 botmux 的存在；`export-botmux-env.mjs` 是 botmux 的适配层，以后 botmux 能直接输出这个文件，就不需要它了。
+
 改了环境（`env set` / `env rm`）之后，重启服务让它重新申请：`launchctl kickstart -k gui/$(id -u)/com.amber.executor`，然后等管理员批准。
 
 初始化时执行端会记下 Amber 的签名公钥，之后只接受这把钥匙签的任务。Amber 换了签名密钥时，执行端会拒绝所有任务；确认是 Amber 自己换的之后，重新运行 `init … --repin`。

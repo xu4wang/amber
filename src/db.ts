@@ -69,6 +69,9 @@ export interface ExecutorEnv {
   source?: string;
   /** HOME is the user's real home (as in the bot's own sessions) instead of the run dir. */
   realHome?: boolean;
+  /** The definition file this environment follows (D53): once approved, changes to its paths, variables or
+   *  Python take effect without a new approval (admins are notified and can revoke). */
+  follow?: string;
 }
 export interface ExecutorRow {
   id: string; name: string; fingerprint: string; signPub: string; boxPub: string; envs: Record<string, ExecutorEnv>;
@@ -678,6 +681,11 @@ export class Store {
 
   setExecutorStatus(id: string, status: ExecutorStatus, by: string | null): void {
     this.db.prepare('UPDATE executors SET status = ?, decided_by = ?, decided_at = ? WHERE id = ?').run(status, by, Date.now(), id);
+  }
+
+  /** An approved executor's environments changed within what it is allowed to follow (D53): status unchanged. */
+  updateExecutorEnvs(id: string, envs: Record<string, ExecutorEnv>, machine: string, version: string): void {
+    this.db.prepare('UPDATE executors SET envs_json = ?, machine = ?, version = ? WHERE id = ?').run(JSON.stringify(envs), machine, version, id);
   }
 
   touchExecutor(id: string): void { this.db.prepare('UPDATE executors SET last_seen = ? WHERE id = ?').run(Date.now(), id); }

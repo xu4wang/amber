@@ -1,6 +1,6 @@
 import type { CommandRow, ExecutorRow } from './db.ts';
 import { showFingerprint } from './exec-proto.ts';
-import { effectiveAccess, credentialPaths } from './executors.ts';
+import { effectiveAccess, credentialPaths, type FollowChange } from './executors.ts';
 import type { Block } from './engine.ts';
 import type { SecretInfo } from './secrets.ts';
 
@@ -415,6 +415,7 @@ function executorLines(e: ExecutorRow): string {
       ...(a.deny?.length ? ['- 禁止：', ...lines(a.deny, false)] : []),
       ...(vars.length ? ['- 环境变量：', ...vars.map(([n, val]) => `　　- \`${sanitizeMarkdown(n, 64)}=${sanitizeMarkdown(val, 200)}\``)] : []),
       ...(v.realHome ? ['- HOME：用户主目录（能访问的仍只有上面这些路径）'] : []),
+      ...(v.follow ? [`- 跟随：\`${sanitizeMarkdown(v.follow, 300)}\`（之后这个文件里的路径、环境变量、Python 有变化会自动生效，并通知管理员）`] : []),
       ...(cred.size ? ['<font color="red">⚠️ 标记的是凭证路径（含凭证路径）：这个环境里的指令能使用这些凭证</font>'] : []),
     ];
   });
@@ -443,4 +444,25 @@ export function executorListCard(list: { e: ExecutorRow; online: boolean }[]): o
   const label: Record<string, string> = { pending: '等待批准', approved: '已批准', rejected: '已拒绝', revoked: '已撤销' };
   const lines = list.map(({ e, online }) => `- **${e.name}**（${sanitizeMarkdown(e.machine, 60)}）· ${label[e.status] ?? e.status}${e.status === 'approved' ? ` · ${online ? '在线' : '离线'}` : ''} · 环境：${Object.keys(e.envs).map(k => sanitizeMarkdown(k, 40)).join('、')} · 指纹 \`${showFingerprint(e.fingerprint).slice(0, 9)}\` · 最后在线 ${e.lastSeen ? new Date(e.lastSeen).toISOString().slice(0, 16).replace('T', ' ') + ' UTC' : '从未'}`);
   return shell('Amber · 执行端', 'blue', [{ tag: 'markdown', content: (lines.join('\n') || '（还没有执行端登记）') + '\n\n撤销：发「撤销执行端 名称」。' }]);
+}
+
+/** Sent to admins when a followed environment changed on its own (D53). No approval needed; one click revokes. */
+export function executorFollowCard(e: ExecutorRow, changes: FollowChange[]): object {
+  const KIND: Record<string, string> = { readWrite: '可读写', readOnly: '只读', deny: '禁止' };
+  const lines: string[] = [];
+  for (const c of changes) {
+    const v = e.envs[c.env];
+    const cred = new Set(v ? credentialPaths(v) : []);
+    lines.push(`**环境「${sanitizeMarkdown(c.env, 40)}」**（跟随 \`${sanitizeMarkdown(v?.follow ?? '', 300)}\`）`);
+    for (const k of ['readWrite', 'readOnly', 'deny']) {
+      for (const p of c.added[k] ?? []) lines.push(`- 新增${KIND[k]}：\`${sanitizeMarkdown(p, 300)}\`${cred.has(p) ? ' <font color="red">⚠️ 凭证</font>' : ''}`);
+      for (const p of c.removed[k] ?? []) lines.push(`- 去掉${KIND[k]}：\`${sanitizeMarkdown(p, 300)}\``);
+    }
+    if (c.vars.length) lines.push(`- 环境变量有变化：${c.vars.map(n => `\`${sanitizeMarkdown(n, 64)}\``).join('、')}`);
+    if (c.python) lines.push(`- Python：\`${sanitizeMarkdown(c.python[0] ?? '默认', 200)}\` → \`${sanitizeMarkdown(c.python[1] ?? '默认', 200)}\``);
+  }
+  return shell(`Amber · 执行端环境已自动更新：${e.name}`, 'blue', [
+    { tag: 'markdown', content: `执行端 **${e.name}**（${sanitizeMarkdown(e.machine, 60)}）跟随的定义文件变了，已按新内容生效（跟随关系在批准时已经同意，这类变化不需要再批准）：\n\n${lines.join('\n')}\n\n有问题可以直接撤销这个执行端，撤销后立即停止派任务。` },
+    buttonRow([btn('撤销执行端', { a: 'exe_rv', e: e.id }, 'danger')]),
+  ]);
 }

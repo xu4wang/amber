@@ -648,3 +648,84 @@ test('executor relay port: only the job\'s own tokens, each once; size limit; a 
     assert.deepEqual(destroyed, ['req']);
   } finally { await env.close(); }
 });
+
+test('followed environments (D53): changes within the approved follow apply at once and notify admins; others need approval', async () => {
+  const { followDiff } = await import('../src/executors.ts');
+  const base0 = { workdir: '/w', follow: '/f.json', source: 'botmux:cli_x', access: { readWrite: ['/w'] } };
+  assert.equal(followDiff({ e: base0 }, { e: base0 }), null, 'nothing changed');
+  assert.deepEqual(followDiff({ e: base0 }, { e: { ...base0, access: { readWrite: ['/w', '/new'], readOnly: ['/ro'] } } }), [{ env: 'e', added: { readWrite: ['/new'], readOnly: ['/ro'] }, removed: {}, vars: [] }]);
+  for (const bad of [{ ...base0, workdir: '/other' }, { ...base0, follow: '/g.json' }, { ...base0, source: 'botmux:cli_y' }, { ...base0, realHome: true }]) assert.equal(followDiff({ e: base0 }, { e: bad }), null, JSON.stringify(bad));
+  assert.equal(followDiff({ e: { workdir: '/w' } }, { e: { workdir: '/w', access: { readWrite: ['/w', '/x'] } } }), null, 'not following: approval');
+  assert.equal(followDiff({ e: base0 }, { e: base0, f: { workdir: '/z' } }), null, 'a new environment: approval');
+  assert.equal(followDiff({ e: base0 }, { e: { ...base0, access: { readWrite: ['/w', '/n'] } }, f: { workdir: '/z' } }), null, 'a followed change plus a new environment: approval');
+
+  const env = await makeEnv();
+  const base = join(H, `.amber-exectest4-${process.pid}`);
+  const dir = join(base, 'conf'), data = join(base, 'd'), extra = join(base, 'extra');
+  mkdirSync(data, { recursive: true }); mkdirSync(extra, { recursive: true });
+  let child: ChildProcess | undefined;
+  try {
+    const { alice, bob, fake } = env;
+    env.amber.hub.pollWaitMs = 300;
+    await cli(dir, 'init', '--name', 'followbox', '--amber', `http://127.0.0.1:${env.apiPort}`);
+    const defFile = join(base, 'bot-env.json');
+    const def = { format: 'amber-env/1', name: 'bot', workdir: data, access: { readWrite: [data] }, source: 'botmux:cli_x' };
+    writeFileSync(defFile, JSON.stringify(def));
+    assert.match(await cli(dir, 'env', 'follow', defFile), /跟随/);
+    child = spawn(process.execPath, [EXE, 'run'], { env: { ...process.env, AMBER_EXECUTOR_DIR: dir, AMBER_EXECUTOR_FOLLOW_MS: '400' } });
+    const cards = (re: RegExp) => fake.sent.filter(s => s.to.unionId === alice.unionId && re.test(FakeFeishu.text(s.card)));
+    const reg = await env.waitFor(() => cards(/执行端申请登记/)[0]);
+    assert.match(FakeFeishu.text(reg.card), /跟随/);
+    await env.click(alice, reg.id, button(reg.card, 'exe_ok')!);
+    const id = env.amber.store.approvedExecutor('followbox')!.id;
+    // The followed file gains a path: applied without approval, admins told what changed.
+    writeFileSync(defFile, JSON.stringify({ ...def, access: { readWrite: [data], readOnly: [extra] } }));
+    const notice = await env.waitFor(() => cards(/已自动更新/)[0]);
+    assert.ok(FakeFeishu.text(notice.card).includes(extra));
+    assert.match(FakeFeishu.text(notice.card), /新增只读/);
+    const row = env.amber.store.getExecutor(id)!;
+    assert.equal(row.status, 'approved');
+    assert.deepEqual(row.envs.bot.access?.readOnly, [extra]);
+    // The revoke button on the notice: admins only.
+    assert.match(JSON.stringify(await env.click(bob, notice.id, button(notice.card, 'exe_rv')!)), /只有管理员/);
+    // A broken file is ignored (the last approved entry stays, still approved).
+    const before = readFileSync(join(dir, 'config.json'), 'utf8');
+    writeFileSync(defFile, '{ not json');
+    await new Promise(r => setTimeout(r, 1500));
+    assert.equal(readFileSync(join(dir, 'config.json'), 'utf8'), before);
+    assert.equal(env.amber.store.getExecutor(id)!.status, 'approved');
+    // A change outside the follow (WORKDIR) needs approval again.
+    writeFileSync(defFile, JSON.stringify({ ...def, workdir: extra, access: { readWrite: [extra] } }));
+    await env.waitFor(() => env.amber.store.getExecutor(id)!.status === 'pending');
+    await env.waitFor(() => cards(/执行端申请登记/).length === 2);
+    // While pending, even a followable change is not applied on its own: it is a new request to approve.
+    writeFileSync(defFile, JSON.stringify({ ...def, workdir: extra, access: { readWrite: [extra], readOnly: [data] } }));
+    await env.waitFor(() => cards(/执行端申请登记/).length === 3);
+    assert.equal(env.amber.store.getExecutor(id)!.status, 'pending');
+  } finally {
+    child?.kill('SIGKILL');
+    await env.close();
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('export-botmux-env --out: writes the file only when the definition changed', async () => {
+  const { mkdtempSync, statSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const home = realpathSync(mkdtempSync(join(tmpdir(), 'amber-exphome2-')));
+  try {
+    mkdirSync(join(home, '.botmux'), { recursive: true }); mkdirSync(join(home, 'w'));
+    const bj = join(home, '.botmux', 'bots.json');
+    writeFileSync(bj, JSON.stringify([{ larkAppId: 'cli_x', workingDir: join(home, 'w') }]));
+    const out = join(home, 'out', 'env.json');
+    const run = () => promisify(execFile)(process.execPath, [join(ROOT, 'client', 'amber-executor', 'export-botmux-env.mjs'), '--bot', 'cli_x', '--out', out], { env: { ...process.env, HOME: home }, encoding: 'utf8' });
+    assert.match((await run()).stdout, /updated/);
+    const t1 = statSync(out).mtimeMs;
+    await new Promise(r => setTimeout(r, 30));
+    assert.doesNotMatch((await run()).stdout, /updated/, 'unchanged: not rewritten');
+    assert.equal(statSync(out).mtimeMs, t1);
+    writeFileSync(bj, JSON.stringify([{ larkAppId: 'cli_x', workingDir: join(home, 'w'), sandboxPaths: { readOnly: ['/opt/x'] } }]));
+    assert.match((await run()).stdout, /updated/);
+    assert.ok(JSON.parse(readFileSync(out, 'utf8')).access.readOnly.includes('/opt/x'));
+  } finally { rmSync(home, { recursive: true, force: true }); }
+});

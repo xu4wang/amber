@@ -2,7 +2,7 @@ import * as lark from '@larksuiteoapi/node-sdk';
 import type { Store, CommandRow } from './db.ts';
 import type { Caller } from './engine.ts';
 import { visibleCommands, findVisible, runCommand, AmberError, secretVault, dropOrphanSecrets } from './engine.ts';
-import { listCard, formCard, runningCard, resultCard, errorCard, infoCard, retireConfirmCard, closedCard, secretFormCard, secretPickCard, executorApprovalCard, executorDecidedCard, executorListCard } from './cards.ts';
+import { listCard, formCard, runningCard, resultCard, errorCard, infoCard, retireConfirmCard, closedCard, secretFormCard, secretPickCard, executorApprovalCard, executorDecidedCard, executorListCard, executorFollowCard } from './cards.ts';
 import { ExecutorHub } from './executors.ts';
 import type { AmberConfig } from './config.ts';
 import { Flow } from './flow.ts';
@@ -79,6 +79,7 @@ export class AmberBot {
     this.flow.onReplaced = (prev, next) => this.scheduler.onCommandReplaced(prev, next);
     this.hub = new ExecutorHub(store, this.signer);
     this.hub.approvalCard = executorApprovalCard;
+    this.hub.followCard = executorFollowCard;
     this.hub.notifyAdmins = async card => {
       if (!this.adminUnionIds.size) log('executor registered but no admin resolved to approve it');
       for (const u of this.adminUnionIds) await this.flow.send({ unionId: u }, card).catch(e => log('executor card failed', e?.message));
@@ -613,6 +614,12 @@ export class AmberBot {
         log('executor decision', value.a, value.e, r.message);
         if (!r.ok || !r.row) return { toast: { type: 'error', content: r.message } };
         return raw(executorDecidedCard(r.row, (await this.nameOf(caller.unionId)) ?? '管理员'));
+      }
+      if (value.a === 'exe_rv') {
+        if (!this.isAdmin(caller.unionId)) return { toast: { type: 'error', content: '只有管理员可以撤销执行端' } };
+        const e = this.hub.revokeId(String(value.e), caller.unionId);
+        if (!e) return { toast: { type: 'error', content: '这个执行端现在不是已批准状态' } };
+        return raw(closedCard('执行端已撤销', 'grey', `「${e.name}」已撤销：不会再给它派任务。要恢复，需要在那台机器上重新生成密钥并再次批准。`));
       }
       if (value.a === 'req_ok' || value.a === 'req_no') {
         return raw(await this.agent.onClick(value.a === 'req_ok', String(value.r), caller, chatId, messageId));

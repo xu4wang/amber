@@ -8,6 +8,8 @@
 //   amber-executor env set <env> <dir> [--python <p>] [--readonly] [--print]
 //                                                         shorthand: the definition {WORKDIR} read-write (or read-only);
 //                                                         --print only prints it
+//   amber-executor env follow <file.json> [--name <env>]  like import, and keeps following the file: once approved,
+//                                                         changes to its paths / vars / Python apply automatically (D53)
 //   amber-executor env export <env>                       a stored environment as a definition (edit, then import)
 //   amber-executor env show | env rm <env>
 //   amber-executor status                                  register / show fingerprint and approval
@@ -35,6 +37,7 @@ const DIR = process.env.AMBER_EXECUTOR_DIR ?? join(homedir(), '.config', 'amber-
 const P = { config: join(DIR, 'config.json'), sign: join(DIR, 'sign-key.pem'), box: join(DIR, 'box-key.pem'), amber: join(DIR, 'amber-key.json'), seen: join(DIR, 'seen-jobs.json') };
 const DEFAULT_PYTHON = '/usr/bin/python3';
 const MAX_PARALLEL = 4;
+const FOLLOW_MS = Number(process.env.AMBER_EXECUTOR_FOLLOW_MS) || 300_000;
 const LABEL = 'com.amber.executor';
 
 const log = (...a) => console.log(new Date().toISOString(), ...a);
@@ -206,7 +209,8 @@ async function runLoop() {
   const amberPub = amberKey();
   setSandboxContext({ configDir: DIR });
   log(`amber-executor ${cfg.name} (${me.id}) → ${cfg.amber}; environments: ${Object.keys(cfg.envs ?? {}).join(', ') || 'none'}`);
-  let running = 0, lastStatus = '';
+  let running = 0, lastStatus = '', lastFollow = Date.now();
+  refreshFollowed(cfg);
   /** Starts every job in a poll answer, whatever state we thought we were in. */
   const take = r => {
     for (const job of r?.jobs ?? []) {
@@ -218,6 +222,8 @@ async function runLoop() {
   };
   for (;;) {
     try {
+      // Followed files are re-read in every state, so a pending request carries the latest content.
+      if (Date.now() - lastFollow > FOLLOW_MS) { lastFollow = Date.now(); refreshFollowed(cfg); }
       const reg = await register(cfg, me);
       if (reg.status !== 'approved') {
         if (reg.status !== lastStatus) log(`status: ${reg.status}; fingerprint ${showFingerprint(me.fp)}`);
@@ -235,6 +241,8 @@ async function runLoop() {
         const r = await call(cfg, me, '/v1/executor/poll', {}, 60_000);
         take(r);
         if (r.status !== 'approved') break;
+        // Followed files: re-read now and then; a change goes back through register (Amber applies or asks).
+        if (Date.now() - lastFollow > FOLLOW_MS) { lastFollow = Date.now(); if (refreshFollowed(cfg)) break; }
       }
     } catch (e) {
       log('error', e.message);
@@ -270,29 +278,51 @@ async function init(args) {
   console.log(`已初始化 ${DIR}\n执行端：${name}\nAmber：${url}（签名公钥 ${jwk.kid ?? ''} 已记录）\n公钥指纹：${showFingerprint(me.fp)}\n\n下一步：amber-executor env set <环境名> <目录>，然后 amber-executor status 申请登记。`);
 }
 
-/** The one way an environment gets into the config: a definition in the JSON format (D51), whatever made it. */
-function importDef(cfg, def, nameOverride) {
-  if (def.format !== undefined && def.format !== 'amber-env/1') die(`不认识的格式版本：${def.format}（只支持 amber-env/1）`);
-  const envName = nameOverride ?? def.name;
-  if (!envName || !ENV_NAME.test(envName)) die('环境名不对：用 --name 指定，或写在定义里的 name');
-  if (!def.workdir || typeof def.workdir !== 'string') die('定义缺少 workdir');
-  if (/(^|\/)\.\.(\/|$)/.test(def.workdir)) die(`workdir 不能含 ..：${def.workdir}`);
-  let workdir;
-  try { workdir = normalizePath(def.workdir); } catch (e) { die(e.message); }
-  if (!isDir(workdir)) die(`workdir 不是已存在的目录：${workdir}`);
-  let access;
-  try { access = validateEnvAccess(def.access ?? { readWrite: [workdir] }, { workdir }); checkVars(def.vars); } catch (e) { die(e.message); }
+/** The one way an environment gets into the config: a definition in the JSON format (D51), whatever made it.
+ *  Throws with a message for the person (or the follow loop, which keeps the old entry). */
+export function buildEntry(def) {
+  if (!def || typeof def !== 'object') throw new Error('定义要是 JSON 对象');
+  if (def.format !== undefined && def.format !== 'amber-env/1') throw new Error(`不认识的格式版本：${def.format}（只支持 amber-env/1）`);
+  if (!def.workdir || typeof def.workdir !== 'string') throw new Error('定义缺少 workdir');
+  if (/(^|\/)\.\.(\/|$)/.test(def.workdir)) throw new Error(`workdir 不能含 ..：${def.workdir}`);
+  const workdir = normalizePath(def.workdir);
+  if (!isDir(workdir)) throw new Error(`workdir 不是已存在的目录：${workdir}`);
+  const access = validateEnvAccess(def.access ?? { readWrite: [workdir] }, { workdir });
+  checkVars(def.vars);
   const python = def.python ?? def.interpreter;
+  let interpreter;
   if (python !== undefined) {
-    let p;
-    try { p = normalizePath(String(python)); } catch (e) { die(e.message); }
-    if (!/\/python(3(\.\d+)?)?$/.test(p)) die(`python 要是 Python 解释器的绝对路径（以 python、python3 或 python3.x 结尾）：${python}`);
+    interpreter = normalizePath(String(python));
+    if (!/\/python(3(\.\d+)?)?$/.test(interpreter)) throw new Error(`python 要是 Python 解释器的绝对路径（文件名是 python、python3 或 python3.x）：${python}`);
   }
-  if (def.realHome !== undefined && typeof def.realHome !== 'boolean') die('realHome 只能是 true 或 false');
-  if (def.source !== undefined && typeof def.source !== 'string') die('source 要是字符串');
-  cfg.envs = { ...cfg.envs, [envName]: { workdir, ...(python ? { interpreter: normalizePath(python) } : {}), access, ...(def.vars && Object.keys(def.vars).length ? { vars: def.vars } : {}), ...(def.source ? { source: String(def.source).slice(0, 200) } : {}), ...(def.realHome === true ? { realHome: true } : {}) } };
-  const cred = credentialGrants(access);
-  console.log(`环境「${envName}」：${describeAccess(access)}${cred.length ? `\n注意：含凭证路径 ${cred.join('、')}` : ''}`);
+  if (def.realHome !== undefined && typeof def.realHome !== 'boolean') throw new Error('realHome 只能是 true 或 false');
+  if (def.source !== undefined && typeof def.source !== 'string') throw new Error('source 要是字符串');
+  return { workdir, ...(interpreter ? { interpreter } : {}), access, ...(def.vars && Object.keys(def.vars).length ? { vars: def.vars } : {}), ...(def.source ? { source: def.source.slice(0, 200) } : {}), ...(def.realHome === true ? { realHome: true } : {}) };
+}
+
+function importDef(cfg, def, nameOverride, follow) {
+  const envName = nameOverride ?? def?.name;
+  if (!envName || !ENV_NAME.test(envName)) die('环境名不对：用 --name 指定，或写在定义里的 name');
+  let entry;
+  try { entry = buildEntry(def); } catch (e) { die(e.message); }
+  cfg.envs = { ...cfg.envs, [envName]: { ...entry, ...(follow ? { follow } : {}) } };
+  const cred = credentialGrants(entry.access);
+  console.log(`环境「${envName}」：${describeAccess(entry.access)}${cred.length ? `\n注意：含凭证路径 ${cred.join('、')}` : ''}${follow ? `\n跟随：${follow}（之后它变了会自动更新，不需要重新批准）` : ''}`);
+}
+
+/** Followed environments (D53): re-read each followed file; a valid change replaces the entry (keeping the follow).
+ *  Returns true when anything changed (the caller re-registers; Amber decides whether it needs approval). */
+export function refreshFollowed(cfg) {
+  let changed = false;
+  for (const [name, v] of Object.entries(cfg.envs ?? {})) {
+    if (!v.follow) continue;
+    let entry;
+    try { entry = { ...buildEntry(JSON.parse(readFileSync(v.follow, 'utf8'))), follow: v.follow }; }
+    catch (e) { log('follow skipped', name, e.message); continue; }   // keep the approved entry
+    if (JSON.stringify(entry) !== JSON.stringify(v)) { cfg.envs[name] = entry; changed = true; log('follow updated', name); }
+  }
+  if (changed) writePrivate(P.config, JSON.stringify(cfg, null, 2));
+  return changed;
 }
 
 /** A stored environment as a definition (the same JSON format; re-importable). */
@@ -317,6 +347,13 @@ function envCmd(args) {
     let def;
     try { def = JSON.parse(readFileSync(name, 'utf8')); } catch (e) { die(`定义文件不是合法的 JSON：${e.message}`); }
     importDef(cfg, def, flag(args, '--name'));
+  } else if (op === 'follow') {
+    // Like import, but keeps following the file: later changes to it apply without a new approval (D53).
+    if (!name || !existsSync(name)) die('用法：amber-executor env follow <定义文件.json> [--name <环境名>]');
+    const file = realpathSync(name);
+    let def;
+    try { def = JSON.parse(readFileSync(file, 'utf8')); } catch (e) { die(`定义文件不是合法的 JSON：${e.message}`); }
+    importDef(cfg, def, flag(args, '--name'), file);
   } else if (op === 'export') {
     if (!cfg.envs?.[name]) die(`没有环境「${name}」`);
     return void console.log(JSON.stringify(toDef(name, cfg.envs[name]), null, 2));
@@ -326,7 +363,7 @@ function envCmd(args) {
   } else if (op === 'rm') {
     if (!cfg.envs?.[name]) die(`没有环境「${name}」`);
     delete cfg.envs[name];
-  } else die('用法：amber-executor env set|import|export|show|rm …');
+  } else die('用法：amber-executor env set|import|follow|export|show|rm …');
   writePrivate(P.config, JSON.stringify(cfg, null, 2));
   console.log(`已保存。环境变了要重新批准：运行 amber-executor status 申请（正在运行的服务会自动重新申请，请重启它：launchctl kickstart -k gui/${process.getuid()}/${LABEL}）`);
 }
