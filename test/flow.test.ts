@@ -198,3 +198,27 @@ test('a draft that does not mention schedulable is schedulable; an explicit fals
     assert.equal(byName('关掉').options.schedulable, false);
   } finally { await env.close(); }
 });
+
+test('a slow 提交审核 answers within the callback window and finishes in the background', async () => {
+  const env = await makeEnv();
+  try {
+    (env.amber.bot as any).claimSubmitWaitMs = 100;
+    const r = await env.submit({ chatId: GROUP, chatType: 'group', name: '问候', params: [], script: HELLO });
+    await env.click(env.alice, r.claimMessageId, { a: 'claim_try', c: r.id });
+    await env.waitFor(() => button(env.fake.cardOf(r.claimMessageId), 'claim_submit'));
+    // Approval creation fails after the window: the card is left usable and the clicker is told.
+    env.fake.approvalDelayMs = 400; env.fake.approvalFails = true;
+    const sentBefore = env.fake.sent.length;
+    assert.match(JSON.stringify(await env.click(env.alice, r.claimMessageId, { a: 'claim_submit', c: r.id })), /正在发起审批/);
+    await env.waitFor(() => env.fake.sent.slice(sentBefore).find(s => s.to.replyTo === r.claimMessageId));
+    assert.match(FakeFeishu.text(env.fake.sent.at(-1)!.card), /提交审核失败/);
+    assert.equal(env.amber.store.getCommand(r.id)!.status, 'draft');
+    assert.ok(button(env.fake.cardOf(r.claimMessageId), 'claim_submit'), 'claim card still offers 提交审核');
+    // Retried and slow but successful: the card is patched to 审核中 once the approval exists.
+    env.fake.approvalFails = false;
+    assert.match(JSON.stringify(await env.click(env.alice, r.claimMessageId, { a: 'claim_submit', c: r.id })), /正在发起审批/);
+    await env.waitFor(() => /审核中/.test(FakeFeishu.text(env.fake.cardOf(r.claimMessageId))));
+    assert.equal(env.amber.store.getCommand(r.id)!.status, 'pending');
+    assert.equal(env.fake.approvals.size, 1);
+  } finally { await env.close(); }
+});

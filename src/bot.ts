@@ -33,6 +33,8 @@ export class AmberBot {
   private client: lark.Client;
   private ws: lark.WSClient;
   private botOpenId = '';
+  /** How long a 提交审核 click waits before answering and finishing in the background (Feishu allows ~3s). */
+  claimSubmitWaitMs = 2500;
   private seen = new Map<string, number>();
   private chatTypeCache = new Map<string, 'group' | 'p2p'>();
   private store: Store;
@@ -567,6 +569,21 @@ export class AmberBot {
           if (messageId) await this.patch(messageId, card);
         }, 300);
         return { toast: { type: 'info', content: '试运行中，结果会更新在这张卡片上' } };
+      }
+      if (value.a === 'claim_submit') {
+        // Creating the review doc and the approval can outlast the callback window. Wait briefly so
+        // refusals still come back as a toast; past that, answer now and patch the card when done.
+        const work = this.flow.onClaimAction('claim_submit', String(value.c), caller, { city: () => this.cityOf(caller.unionId), signer: this.signer });
+        let timer: NodeJS.Timeout | undefined;
+        const late = new Promise<'late'>(r => { timer = setTimeout(() => r('late'), this.claimSubmitWaitMs); });
+        const first = await Promise.race([work, late]).finally(() => clearTimeout(timer));
+        if (first !== 'late') return raw(first);
+        void work.then(
+          async card => { if (messageId) await this.patch(messageId, card); },
+          // The command is back to draft, so the claim card stays usable: leave it and reply instead.
+          async e => { if (messageId) await this.replyCard(messageId, false, errorCard('提交审核失败', e instanceof AmberError ? e.message : '出错了')).catch(() => {}); },
+        );
+        return { toast: { type: 'info', content: '正在发起审批，结果会更新在这张卡片上' } };
       }
       if (typeof value.a === 'string' && value.a.startsWith('claim_')) {
         return raw(await this.flow.onClaimAction(value.a, String(value.c), caller, { city: () => this.cityOf(caller.unionId), signer: this.signer }));

@@ -15,6 +15,8 @@ export class FakeFeishu {
   private n = 0;
   readonly botOpenId = 'ou_amberbot';
   approvalCode = 'APPROVAL-CODE';
+  approvalDelayMs = 0;                         // slow approval creation, to test the card callback window
+  approvalFails = false;
 
   id(prefix: string): string { return `${prefix}_${(++this.n).toString().padStart(6, '0')}`; }
   userByEmail(e: string) { return this.users.find(u => u.email === e); }
@@ -98,6 +100,8 @@ export class FakeFeishu {
       return { data: {} };
     }
     if (method === 'POST' && url === '/open-apis/approval/v4/instances') {
+      if (this.approvalDelayMs) await new Promise(r => setTimeout(r, this.approvalDelayMs));
+      if (this.approvalFails) this.fail(1390001, 'approval unavailable');
       const code = this.id('INST');
       const approvers: string[] = data.node_approver_open_id_list?.[0]?.value ?? [];
       this.approvals.set(code, { approvalCode: data.approval_code, status: 'PENDING', tasks: approvers.map(o => ({ open_id: o, status: 'PENDING' })), title: data.title, form: data.form });
