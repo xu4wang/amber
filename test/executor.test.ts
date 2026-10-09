@@ -169,7 +169,7 @@ test('executor: register → admin approval → runs next to the data, under the
     // Revoked: runs fail at once and the executor stops getting jobs.
     await env.say(alice, GROUP, '撤销执行端 ledger-box');
     assert.equal(env.amber.store.approvedExecutor('ledger-box'), undefined);
-    await env.say(bob, GROUP, '读台账');
+    await env.say(alice, GROUP, '读台账');
     await env.waitFor(() => fake.sent.some(s => /没有被管理员批准/.test(FakeFeishu.text(fake.cardOf(s.id)))));
     await env.waitFor(() => /status: revoked/.test(out));
     assert.equal(fp, showFingerprint(env.amber.store.listExecutors()[0].fingerprint));

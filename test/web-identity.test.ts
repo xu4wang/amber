@@ -18,10 +18,10 @@ async function login(env: any, u: any): Promise<string> {
   return cookie;
 }
 
-test('website: login by chat, run as yourself, CSRF and group membership enforced', async () => {
+test('website: login by chat, run as yourself, only your own commands, CSRF and group membership enforced', async () => {
   const env = await makeEnv();
   try {
-    await activate(env, { chatId: GROUP, chatType: 'group', name: '谁', params: [], script: script('import json,sys\nprint("caller=" + json.load(sys.stdin)["caller"]["unionId"])') }, env.alice);
+    await activate(env, { chatId: GROUP, chatType: 'group', name: '谁', params: [], script: script('import json,sys\nprint("caller=" + json.load(sys.stdin)["caller"]["unionId"])') }, env.bob);
     // Asked in a group, the login link goes to the person's private chat, never into the group (D43).
     const before = env.fake.sent.length;
     await env.say(env.bob, GROUP, '登录');
@@ -48,15 +48,16 @@ test('website: login by chat, run as yourself, CSRF and group membership enforce
     assert.equal(ok.body.markdown, `caller=${env.bob.unionId}`);
     assert.equal((await post(bob, { scope: 'group:' + GROUP, commandId: cmd.id }, 'http://evil.example')).status, 403);
     assert.equal((await post(bob, { scope: 'group:' + GROUP, commandId: cmd.id }, base, 'text/plain')).status, 403);
-    // Carol is not in the group.
+    // Carol is not its creator (#4).
     const carol = await login(env, env.carol);
-    assert.equal((await post(carol, { scope: 'group:' + GROUP, commandId: cmd.id })).status, 403);
+    assert.equal((await post(carol, { scope: 'group:' + GROUP, commandId: cmd.id })).status, 404);
     // Without the members permission, group commands are refused rather than allowed.
     env.fake.membersApiAllowed = false;
     (env.amber.bot as any).memberCache.clear();
     assert.equal((await post(bob, { scope: 'group:' + GROUP, commandId: cmd.id })).status, 403);
     env.fake.membersApiAllowed = true;
-    // Source code is visible to those who may run it.
+    // Source code is visible to those who may run it (and to admins); not to others.
+    assert.equal((await fetch(`${base}/web/api/commands/${cmd.id}/source?scope=group:${GROUP}`, { headers: { cookie: carol } })).status, 404);
     const src = await (await fetch(`${base}/web/api/commands/${cmd.id}/source?scope=group:${GROUP}`, { headers: { cookie: bob } })).json();
     assert.match(src.script.code, /caller=/);
     // Logging out everywhere.
@@ -99,7 +100,7 @@ test('identity token: the service receives a token for the person who clicked, t
     ].join('\n');
     // Declaring a service and internet access together is refused.
     assert.equal((await env.submit({ chatId: GROUP, chatType: 'group', name: '查', params: [], script: script(code, { services: { demo: { calls: 2 } }, network: true }) })).ok, false);
-    await activate(env, { chatId: GROUP, chatType: 'group', name: '查', params: [], script: script(code, { services: { demo: { calls: 2 } } }) }, env.alice);
+    await activate(env, { chatId: GROUP, chatType: 'group', name: '查', params: [], script: script(code, { services: { demo: { calls: 2 } } }) }, env.bob);
     // A command that uses a service always needs a person: the agent cannot run it directly.
     const r = await env.api('POST', '/v1/runs', { chatId: GROUP, chatType: 'group', user: env.bob.email, command: '查' });
     assert.equal(r.body.mode, 'confirm_card');

@@ -16,7 +16,7 @@ async function login(env: any, u: any): Promise<string> {
   return r.headers.get('set-cookie')!.split(';')[0];
 }
 
-test('secrets: declared, set in private chat by the claimer, masked in output, shared by the group, inherited and dropped', async () => {
+test('secrets: declared, set in private chat by the claimer, masked in output, only the creator runs it, inherited and dropped', async () => {
   const env = await makeEnv();
   try {
     const { alice, bob, carol, fake } = env;
@@ -61,27 +61,28 @@ test('secrets: declared, set in private chat by the claimer, masked in output, s
     await env.approveLatest();
     const cmd = env.amber.store.getCommand(r.id)!;
     assert.equal(cmd.status, 'active');
-    // Bob, another member, runs it with the shared value; the result says the secret is shared.
+    // Only the creator runs it (#4): bob, another member, does not see it.
     await env.say(bob, GROUP, '查余额');
+    await env.waitFor(() => fake.sent.some(s => /没有找到指令「查余额」/.test(FakeFeishu.text(fake.cardOf(s.id)))) || undefined);
+    await env.say(alice, GROUP, '查余额');
     const result = await env.waitFor(() => fake.sent.map(s => fake.cardOf(s.id)).find(c => c?.header?.title?.content === 'Amber · 查余额' && /len=20/.test(FakeFeishu.text(c))));
-    assert.match(FakeFeishu.text(result), /本群共用的密钥/);
-    for (const run of env.amber.store.runsByCaller(bob.unionId, 5)) assert.doesNotMatch(String(run.result), new RegExp(VALUE), 'stored output is masked');
+    assert.doesNotMatch(FakeFeishu.text(result), /共用的密钥/, 'not shared: only the creator runs it');
+    for (const run of env.amber.store.runsByCaller(alice.unionId, 5)) assert.doesNotMatch(String(run.result), new RegExp(VALUE), 'stored output is masked');
     // Agents: the name is visible, the value never; running needs a person's click.
-    const shown = await env.api('POST', '/v1/commands/show', { chatId: GROUP, chatType: 'group', command: '查余额' });
+    const shown = await env.api('POST', '/v1/commands/show', { chatId: GROUP, chatType: 'group', command: '查余额', user: alice.email });
     assert.deepEqual(shown.body.command.secrets, ['API_TOKEN']);
     assert.deepEqual(shown.body.command.secretsMissing, []);
     assert.equal(shown.body.command.run, 'confirm_card');
     assert.doesNotMatch(JSON.stringify(shown.body), new RegExp(VALUE));
-    // Website: names for everyone; only the creator or an admin may change it. Alice claimed; carol is in the group but not an admin.
+    // Website: only the creator (or an admin) sees and changes it. Alice claimed; carol is in the group but not an admin.
     fake.chats.get(GROUP)!.members.add(carol.unionId);
     (env.amber.bot as any).memberCache.clear();
     const base = `http://127.0.0.1:${env.webPort}`;
     const post = (cookie: string, path: string, body: unknown) => fetch(base + path, { method: 'POST', headers: { cookie, origin: base, 'content-type': 'application/json' }, body: JSON.stringify(body) }).then(async x => ({ status: x.status, body: await x.json() }));
     const carolCookie = await login(env, carol);
     const ov = await (await fetch(`${base}/web/api/overview`, { headers: { cookie: carolCookie } })).json();
-    const view = ov.groups[0].commands.find((c: any) => c.name === '查余额');
-    assert.deepEqual(view.secrets, [{ name: 'API_TOKEN', set: true }], 'no tail or time for non-managers');
-    assert.equal((await post(carolCookie, `/web/api/commands/${cmd.id}/secrets`, { scope: 'group:' + GROUP, name: 'API_TOKEN', value: 'carol-overwrites' })).status, 403);
+    assert.ok(!JSON.stringify(ov).includes('查余额'), 'others do not see it');
+    assert.equal((await post(carolCookie, `/web/api/commands/${cmd.id}/secrets`, { scope: 'group:' + GROUP, name: 'API_TOKEN', value: 'carol-overwrites' })).status, 404);
     const aliceCookie = await login(env, alice);
     assert.equal((await post(aliceCookie, `/web/api/commands/${cmd.id}/secrets`, { scope: 'group:' + GROUP, name: 'OTHER', value: 'whatever-123' })).status, 400, 'only declared names');
     const del = await post(aliceCookie, `/web/api/commands/${cmd.id}/secrets`, { scope: 'group:' + GROUP, name: 'API_TOKEN', delete: true });

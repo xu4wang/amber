@@ -75,8 +75,9 @@ export class AmberError extends Error {
 
 /**
  * Scope rules:
- * - local (default): visible only in the chat it was created in (D11/D14); a p2p command is also
- *   visible in its owner's private chat with Amber (D12).
+ * - local (default): only its creator sees and runs it (#4), and only in the chat it was created in (D11/D14);
+ *   a p2p command is also visible in its owner's private chat with Amber (D12). Others get their own copy by
+ *   installing it from Amber Store once it is listed. Admins can look at it and take it offline, not run it.
  * - global (D20): promoted by an admin; visible in every chat Amber is in.
  * When a local and a global command share a name, the local one wins in that chat.
  */
@@ -90,7 +91,7 @@ export function visibleCommands(store: Store, caller: Caller): CommandRow[] {
       ids.add(c.id); names.add(c.name); out.push(c);
     }
   };
-  add(store.listActiveByChat(caller.chatId));
+  add(store.listActiveByChat(caller.chatId).filter(c => !!caller.unionId && c.ownerUnionId === caller.unionId));
   if (caller.chatType === 'p2p') add(store.listActiveP2pByOwner(caller.unionId));
   add(store.listActiveGlobal());
   return out;
@@ -101,6 +102,18 @@ export function findVisible(store: Store, caller: Caller, idOrName: string): Com
   // Out-of-scope and non-existent look the same to the caller.
   if (!c) throw new AmberError('not_found', `没有找到指令「${idOrName}」`);
   return c;
+}
+
+/** For managing (take offline, change scope): what the caller can run, and for an admin also anyone's
+ *  command by id, or by name in this chat. Never for running. */
+export function findManageable(store: Store, caller: Caller, idOrName: string, admin: boolean): CommandRow {
+  try { return findVisible(store, caller, idOrName); } catch (e) {
+    if (!admin) throw e;
+    const active = store.listAll().filter(c => c.status === 'active');
+    const c = active.find(x => x.id === idOrName) ?? active.find(x => x.name === idOrName && x.chatId === caller.chatId);
+    if (!c) throw e;
+    return c;
+  }
 }
 
 export interface CallerFacts { city?: () => Promise<string | undefined>; signer?: Signer }

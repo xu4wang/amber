@@ -72,10 +72,10 @@ test('a new version shows the diff, only the owner may claim it, and it replaces
   const env = await makeEnv();
   try {
     const v1 = await activate(env, { chatId: GROUP, chatType: 'group', name: '问候', params: [], script: HELLO, options: { schedulable: true } }, env.alice);
-    // A schedule on v1, created by bob through the website-equivalent call.
+    // A schedule on v1, created by its creator through the website-equivalent call.
     const sch = await env.amber.bot.scheduler.create({
       cmd: env.amber.store.getCommand(v1)!, chatId: GROUP, chatType: 'group', replyTo: null, inThread: false,
-      creator: { unionId: env.bob.unionId, openId: env.bob.openId, chatId: GROUP, chatType: 'group', channel: 'web' },
+      creator: { unionId: env.alice.unionId, openId: env.alice.openId, chatId: GROUP, chatType: 'group', channel: 'web' },
       args: {}, rule: { kind: 'daily', time: '09:00', tz: 'Asia/Shanghai' }, requestedBy: 'test', via: {},
     });
     const v2code = script('import json,sys\nprint("您好（第 2 版）")');
@@ -98,14 +98,14 @@ test('a new version shows the diff, only the owner may claim it, and it replaces
     await env.approveLatest();
     assert.equal(env.amber.store.getCommand(v1)!.status, 'retired');
     assert.equal(env.amber.store.getCommand(r.id)!.status, 'active');
-    // The schedule paused; bob got a rebind card in his private chat.
+    // The schedule paused; alice got a rebind card in her private chat.
     assert.equal(env.amber.store.getSchedule(sch.id)!.status, 'paused');
-    const rebind = env.fake.lastTo(s => s.to.unionId === env.bob.unionId)!;
+    const rebind = env.fake.lastTo(s => s.to.unionId === env.alice.unionId && !!button(s.card, 'sch_rebind'))!;
     const value = button(rebind.card, 'sch_rebind')!;
     assert.equal(value.c, r.id);
-    // Alice is not the schedule's creator (but she is an admin, so allowed); carol is not.
+    // Carol is neither the schedule's creator nor an admin.
     assert.match(JSON.stringify(await env.click(env.carol, rebind.id, value)), /创建人或管理员/);
-    await env.click(env.bob, rebind.id, value);
+    await env.click(env.alice, rebind.id, value);
     const s = env.amber.store.getSchedule(sch.id)!;
     assert.equal(s.status, 'active');
     assert.equal(s.commandId, r.id);
@@ -125,7 +125,7 @@ test('only the owner or an admin can retire a command; its schedules pause', asy
     env.fake.chats.get(GROUP)!.members.add(env.carol.unionId);
     await env.say(env.carol, GROUP, '下线 问候');
     assert.equal(env.amber.store.getCommand(id)!.status, 'active');
-    assert.match(FakeFeishu.text(env.fake.sent.at(-1)!.card), /创建人或管理员/);
+    assert.match(FakeFeishu.text(env.fake.sent.at(-1)!.card), /没有找到指令/, 'carol does not even see it');
     // D44: retiring from Feishu asks once more; only the requester can confirm.
     await env.say(env.bob, GROUP, '下线 问候');
     assert.equal(env.amber.store.getCommand(id)!.status, 'active', 'not retired before confirming');
@@ -156,7 +156,7 @@ test('a command whose stored definition was changed after approval refuses to ru
     const id = await activate(env, { chatId: GROUP, chatType: 'group', name: '问候', params: [], script: HELLO }, env.alice);
     // Someone edits the code in the database behind Amber's back.
     (env.amber.store as any).db.prepare('UPDATE commands SET script_json = ? WHERE id = ?').run(JSON.stringify({ ...HELLO, code: 'print("tampered")' }), id);
-    const r = await env.api('POST', '/v1/runs', { chatId: GROUP, chatType: 'group', command: '问候' });
+    const r = await env.api('POST', '/v1/runs', { chatId: GROUP, chatType: 'group', command: '问候', user: env.alice.email });
     assert.equal(r.body.ok, false);
     assert.match(r.body.message, /审核通过的版本不一致/);
   } finally { await env.close(); }

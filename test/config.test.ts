@@ -54,46 +54,48 @@ test('config: trial from the form, set on the website by the creator, every run 
     assert.deepEqual(env.amber.store.configRows(GROUP, '检查'), []);
 
     // Not set yet: runs and schedules are refused with a pointer to the website.
-    await env.say(bob, GROUP, '检查 小红');
+    await env.say(alice, GROUP, '检查 小红');
     await env.waitFor(() => fake.sent.some(s => new RegExp(`还没设置配置项：仓库。请指令创建人或管理员在网站（${base}）`).test(FakeFeishu.text(fake.cardOf(s.id)))) || undefined);
-    const ctx = { chatId: GROUP, chatType: 'group', label: 'TestBot', user: bob.email };
+    const ctx = { chatId: GROUP, chatType: 'group', label: 'TestBot', user: alice.email };
     assert.match((await env.api('POST', '/v1/schedules', { ...ctx, command: '检查', at: '每天 09:00' })).body.message, /还没设置配置项：仓库/);
     const bobCookie = await login(env, bob), aliceCookie = await login(env, alice);
-    assert.match((await post(bobCookie, '/web/api/schedules', { scope, commandId: id, at: '每天 09:00', args: {} })).body.message, /还没设置配置项：仓库/);
+    assert.match((await post(aliceCookie, '/web/api/schedules', { scope, commandId: id, at: '每天 09:00', args: {} })).body.message, /还没设置配置项：仓库/);
     const shown = (await env.api('POST', '/v1/commands/show', { ...ctx, command: '检查' })).body.command;
     assert.deepEqual(shown.params.map((p: any) => p.name), ['who'], 'agents pass run parameters only');
     assert.deepEqual(shown.config.map((p: any) => [p.name, p.value]), [['repo', null], ['days', null]]);
     assert.deepEqual(shown.configMissing, ['仓库']);
     // The form card asks for run parameters only.
-    const form = JSON.stringify(await env.click(bob, r.claimMessageId, { a: 'pick', c: id }));
+    const form = JSON.stringify(await env.click(alice, r.claimMessageId, { a: 'pick', c: id }));
     assert.match(form, /"name":"who"/);
     assert.doesNotMatch(form, /"name":"repo"|"name":"days"/);
 
-    // Website: everyone sees the items; only the creator or an admin sets them. Bob is not an admin.
-    assert.equal((await post(bobCookie, `/web/api/commands/${id}/config`, { scope, name: 'repo', value: 'bob/repo' })).status, 403);
+    // Website: only the creator (or an admin) sees the command and sets its items. Bob is neither.
+    assert.equal((await post(bobCookie, `/web/api/commands/${id}/config`, { scope, name: 'repo', value: 'bob/repo' })).status, 404);
     assert.equal((await post(aliceCookie, `/web/api/commands/${id}/config`, { scope, name: 'nope', value: 'x' })).status, 400, 'only declared items');
     assert.equal((await post(aliceCookie, `/web/api/commands/${id}/config`, { scope, name: 'who', value: 'x' })).status, 400, 'run parameters are not configuration');
     assert.match((await post(aliceCookie, `/web/api/commands/${id}/config`, { scope, name: 'days', value: '99' })).body.message, /不能大于 30/);
     assert.equal((await post(aliceCookie, `/web/api/commands/${id}/config`, { scope, name: 'repo', value: ' team/app ' })).body.ok, true);
-    const ov = await (await fetch(`${base}/web/api/overview`, { headers: { cookie: bobCookie } })).json();
+    const bobView = await (await fetch(`${base}/web/api/overview`, { headers: { cookie: bobCookie } })).json();
+    assert.ok(!JSON.stringify(bobView).includes('team/app'), 'not visible to others');
+    const ov = await (await fetch(`${base}/web/api/overview`, { headers: { cookie: aliceCookie } })).json();
     const view = ov.groups[0].commands.find((c: any) => c.name === '检查');
     assert.deepEqual(view.params.map((p: any) => p.name), ['who']);
     assert.deepEqual(view.config.map((p: any) => [p.name, p.value, p.default]), [['repo', 'team/app', null], ['days', null, '1']]);
 
     // Runs get the stored value (and the default for an unset optional item); a caller's value is ignored.
-    const run = await post(bobCookie, '/web/api/run', { scope, commandId: id, args: { who: '小红', repo: 'evil/repo', days: '7' } });
+    const run = await post(aliceCookie, '/web/api/run', { scope, commandId: id, args: { who: '小红', repo: 'evil/repo', days: '7' } });
     assert.equal(run.body.markdown, 'params={"days": "1", "repo": "team/app", "who": "小红"}');
-    await env.say(bob, GROUP, '检查 小红 evil/repo');
+    await env.say(alice, GROUP, '检查 小红 evil/repo');
     await env.waitFor(() => fake.sent.some(s => /"repo\\": \\"team\/app/.test(FakeFeishu.text(fake.cardOf(s.id)))) || undefined);
     assert.ok(!fake.sent.some(s => /evil/.test(FakeFeishu.text(fake.cardOf(s.id)))));
     // A one-line shortcut without arguments runs right away: a required configuration item is not a missing argument.
-    await env.say(bob, GROUP, '检查');
+    await env.say(alice, GROUP, '检查');
     await env.waitFor(() => fake.sent.some(s => /params=\{\\"days\\": \\"1\\", \\"repo\\": \\"team\/app\\"\}/.test(FakeFeishu.text(fake.cardOf(s.id)))) || undefined);
 
     // A schedule reads the value at each run, so a change on the website applies from the next run.
     const req = await env.api('POST', '/v1/schedules', { ...ctx, command: '检查', at: '每 5 分钟', args: { who: '定时', repo: 'evil/repo' } });
     const card = fake.sent.at(-1)!;
-    await env.click(bob, card.id, button(card.card, 'req_ok')!);
+    await env.click(alice, card.id, button(card.card, 'req_ok')!);
     const sid = (await env.api('GET', `/v1/requests/${req.body.requestId}`)).body.scheduleId as string;
     await post(aliceCookie, `/web/api/commands/${id}/config`, { scope, name: 'days', value: '3' });
     const before = fake.sent.length;
@@ -103,7 +105,7 @@ test('config: trial from the form, set on the website by the creator, every run 
 
     // Clearing a required item stops runs again.
     assert.equal((await post(aliceCookie, `/web/api/commands/${id}/config`, { scope, name: 'repo', delete: true })).body.ok, true);
-    assert.match((await post(bobCookie, '/web/api/run', { scope, commandId: id, args: {} })).body.message, /还没设置配置项：仓库/);
+    assert.match((await post(aliceCookie, '/web/api/run', { scope, commandId: id, args: {} })).body.message, /还没设置配置项：仓库/);
     await post(aliceCookie, `/web/api/commands/${id}/config`, { scope, name: 'repo', value: 'team/app' });
 
     // A new version keeps the values (same chat + name); retiring drops them.

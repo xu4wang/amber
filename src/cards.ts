@@ -235,7 +235,7 @@ export function runningCard(name: string, whoOpenId?: string): object {
 export function resultCard(name: string, whoOpenId: string | undefined, blocks: Block[], runId: string, elapsedMs: number, cmdId: string, sharedSecrets = false, mentions?: Mentions): object {
   return shell(`Amber · ${name}`, 'green', [
     ...renderBlocks(blocks, mentions),
-    { tag: 'markdown', content: `由 ${person(whoOpenId)} 执行 · ${(elapsedMs / 1000).toFixed(1)} 秒 · run ${runId}${sharedSecrets ? ' · 使用本群共用的密钥' : ''}`, text_size: 'notation' },
+    { tag: 'markdown', content: `由 ${person(whoOpenId)} 执行 · ${(elapsedMs / 1000).toFixed(1)} 秒 · run ${runId}${sharedSecrets ? ' · 使用全局指令共用的密钥' : ''}`, text_size: 'notation' },
     btn('再执行一次', { a: 'pick', c: cmdId }),
   ]);
 }
@@ -326,15 +326,6 @@ export function retireConfirmCard(c: CommandRow, schedules: number, requester: s
       { tag: 'column', width: 'auto', elements: [btn('确认下线', { a: 'retire_ok', ...v }, 'danger')] },
       { tag: 'column', width: 'auto', elements: [btn('取消', { a: 'retire_no', ...v })] },
     ] },
-  ]);
-}
-
-/** D45: the creator left the group — tell the group, and let any member take the schedule over. */
-export function takeoverCard(o: { scheduleId: string; name: string; ruleText: string; creatorOpenId: string | null }): object {
-  const who = o.creatorOpenId ? `<at id=${o.creatorOpenId}></at>` : '创建人';
-  return shell('Amber · 定时任务已暂停', 'orange', [
-    { tag: 'markdown', content: `定时任务「${sanitizeMarkdown(o.name, 80)}」（${sanitizeMarkdown(o.ruleText, 80)}）已暂停：${who} 已不在这个群里。\n\n群成员可以点「由我接手」，之后**以你的身份**继续运行（按你的数据权限），参数和时间都不变。没人接手就一直保持暂停。` },
-    btn('由我接手', { a: 'sch_takeover', s: o.scheduleId }, 'primary'),
   ]);
 }
 

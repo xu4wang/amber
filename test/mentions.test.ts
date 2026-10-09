@@ -93,7 +93,7 @@ test('mentions: a schedule result @s the member it names', async () => {
   const { fake, bob } = env;
   try {
     fake.chatBots.set(GROUP, [{ name: '同步机器人', openId: 'ou_syncbot' }]);
-    await activate(env, { chatId: GROUP, chatType: 'group', name: '检查', params: [], script: script('print("有更新，@同步机器人 请拉代码")'), options: { schedulable: true } }, env.alice);
+    await activate(env, { chatId: GROUP, chatType: 'group', name: '检查', params: [], script: script('print("有更新，@同步机器人 请拉代码")'), options: { schedulable: true } }, bob);
     const r = await env.api('POST', '/v1/schedules', { chatId: GROUP, chatType: 'group', label: 'TestBot', user: bob.email, command: '检查', at: '每 5 分钟' });
     const req = fake.sent.at(-1)!;
     await env.click(bob, req.id, button(req.card, 'req_ok')!);
@@ -110,7 +110,7 @@ test('mentions: a run an agent asked for and a person confirmed @s the member it
   const { fake, bob } = env;
   try {
     fake.chatBots.set(GROUP, [{ name: '同步机器人', openId: 'ou_syncbot' }]);
-    await activate(env, { chatId: GROUP, chatType: 'group', name: '确认转交', params: [], script: script('print("@同步机器人 请处理")'), options: { confirm: true } }, env.alice);
+    await activate(env, { chatId: GROUP, chatType: 'group', name: '确认转交', params: [], script: script('print("@同步机器人 请处理")'), options: { confirm: true } }, bob);
     const r = await env.api('POST', '/v1/runs', { chatId: GROUP, chatType: 'group', label: 'TestBot', user: bob.email, command: '确认转交' });
     const card = fake.sent.at(-1)!;
     await env.click(bob, card.id, button(card.card, 'req_ok')!);

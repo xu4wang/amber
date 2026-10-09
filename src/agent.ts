@@ -7,7 +7,7 @@
 //      card in the chat; whoever clicks it is the identity, taken from the Feishu event.
 import type { Store, CommandRow, RequestRow, RequestKind, ScopeType } from './db.ts';
 import type { Caller, Block } from './engine.ts';
-import { visibleCommands, findVisible, runCommand, validateArgs, AmberError, missingSecrets, runParams, configParams, configValues, missingConfig, missingConfigMessage } from './engine.ts';
+import { visibleCommands, findVisible, findManageable, runCommand, validateArgs, AmberError, missingSecrets, runParams, configParams, configValues, missingConfig, missingConfigMessage } from './engine.ts';
 import type { Signer } from './identity.ts';
 import { requestCard, runningCard, resultCard, errorCard, closedCard, person, sanitizeMarkdown, type Mentions } from './cards.ts';
 import { parseRule, validateRule, nextRun, describeRule, formatAt, defaultTz } from './schedule-rule.ts';
@@ -184,7 +184,7 @@ export class AgentGate {
    * nobody is asked to confirm something they cannot do (D44).
    */
   async commandChange(ctx: Ctx, name: string, kind: 'retire' | 'scope_global' | 'scope_local'): Promise<object> {
-    const cmd = findVisible(this.store, this.viewer(ctx), name);
+    const cmd = findManageable(this.store, this.viewer(ctx), name, !!ctx.user && this.deps.isAdmin(ctx.user.unionId));
     if (ctx.user) {
       const allowed = kind === 'retire'
         ? cmd.ownerUnionId === ctx.user.unionId || this.deps.isAdmin(ctx.user.unionId)
@@ -373,7 +373,7 @@ export class AgentGate {
       try {
         const r = await runCommand(this.store, cmd, req.args, caller, { city: () => this.deps.cityOf(clicker.unionId), signer: this.deps.signer }, { viaForm: true });
         this.store.transitionRequest(req.id, 'running', r.ok ? 'done' : 'failed', { runId: r.runId, error: r.error });
-        card = r.ok ? resultCard(cmd.name, clicker.openId, r.blocks, r.runId, r.elapsedMs, cmd.id, cmd.scopeType !== 'p2p' && !!cmd.script.secrets?.length, await this.deps.mentionsFor(caller.chatId, caller.chatType, r.blocks)) : errorCard(cmd.name, `执行失败：${r.error}`);
+        card = r.ok ? resultCard(cmd.name, clicker.openId, r.blocks, r.runId, r.elapsedMs, cmd.id, cmd.global && !!cmd.script.secrets?.length, await this.deps.mentionsFor(caller.chatId, caller.chatType, r.blocks)) : errorCard(cmd.name, `执行失败：${r.error}`);
       } catch (e) {
         this.store.transitionRequest(req.id, 'running', 'failed', { error: (e as Error).message });
         card = errorCard(cmd.name, e instanceof AmberError ? e.message : `出错了：${(e as Error).message}`);

@@ -61,12 +61,15 @@ function readJson(req: IncomingMessage): Promise<any> {
  * Where a command is being used from the website, and whether this person may use it there.
  * scope: "p2p" (their private-chat commands), "global", or "group:<chat id>" (they must be a member).
  */
-async function target(store: Store, deps: WebDeps, unionId: string, scope: string, commandId: string): Promise<{ cmd: CommandRow; chatId: string; chatType: 'group' | 'p2p' }> {
+/** The command a request is about. Running needs it to be the person's own command (or a global one, #4);
+ *  `manage` (read the code, settings, take offline) also lets an admin reach anyone's command. */
+async function target(store: Store, deps: WebDeps, unionId: string, scope: string, commandId: string, manage = false): Promise<{ cmd: CommandRow; chatId: string; chatType: 'group' | 'p2p' }> {
   const cmd = store.getCommand(String(commandId));
   const nf = new AmberError('not_found', '没有找到这条指令');
   if (!cmd || cmd.status !== 'active') throw nf;
+  const adminView = manage && deps.isAdmin(unionId);
   if (scope === 'p2p') {
-    if (cmd.scopeType !== 'p2p' || cmd.ownerUnionId !== unionId) throw nf;
+    if (cmd.scopeType !== 'p2p' || (cmd.ownerUnionId !== unionId && !adminView)) throw nf;
     return { cmd, chatId: cmd.chatId, chatType: 'p2p' };
   }
   if (scope === 'global') {
@@ -76,6 +79,8 @@ async function target(store: Store, deps: WebDeps, unionId: string, scope: strin
   }
   const m = /^group:(oc_[A-Za-z0-9]+)$/.exec(scope);
   if (!m || cmd.scopeType !== 'group' || cmd.chatId !== m[1]) throw nf;
+  if (adminView) return { cmd, chatId: m[1], chatType: 'group' };
+  if (cmd.ownerUnionId !== unionId) throw nf;
   const member = await deps.isMember(m[1], unionId);
   if (member !== true) throw new AmberError('forbidden', member === undefined ? 'Amber 暂时无法确认你是否在这个群里（缺少「获取群成员」权限）' : '你不在这个群里');
   return { cmd, chatId: m[1], chatType: 'group' };
@@ -184,8 +189,8 @@ export function startWeb(port: number, store: Store, deps: WebDeps): import('nod
           return json(res, 200, { ok: true, id: r.id, status: r.status, markdown: r.result ?? '', error: r.error, startedAt: r.startedAt });
         }
         if (req.method === 'GET' && (m = /^\/web\/api\/commands\/([A-Za-z0-9-]{1,40})\/source$/.exec(url.pathname))) {
-          // Same visibility rule as running it: anyone who may run a command may read its code.
-          const t = await target(store, deps, who.unionId, String(url.searchParams.get('scope') ?? ''), m[1]);
+          // Whoever may run a command may read its code; so may an admin.
+          const t = await target(store, deps, who.unionId, String(url.searchParams.get('scope') ?? ''), m[1], true);
           const c = t.cmd;
           const review = store.getReview(c.id);
           return json(res, 200, { ok: true, id: c.id, name: c.name, specHash: c.specHash, createdAt: c.createdAt,
@@ -222,7 +227,7 @@ export function startWeb(port: number, store: Store, deps: WebDeps): import('nod
           return json(res, 200, { ok: true, scheduleId: sch.id, rule: describeRule(sch.rule), next: formatAt(sch.nextRunAt, sch.rule.tz) });
         }
         if ((m = /^\/web\/api\/commands\/([A-Za-z0-9-]{1,40})\/secrets$/.exec(url.pathname))) {
-          const t = await target(store, deps, who.unionId, String(body.scope ?? ''), m[1]);
+          const t = await target(store, deps, who.unionId, String(body.scope ?? ''), m[1], true);
           const c = t.cmd;
           if (c.ownerUnionId !== who.unionId && !deps.isAdmin(who.unionId)) throw new AmberError('forbidden', '只有指令的创建人或管理员可以设置密钥');
           const name = String(body.name ?? '');
@@ -240,7 +245,7 @@ export function startWeb(port: number, store: Store, deps: WebDeps): import('nod
         }
         if ((m = /^\/web\/api\/commands\/([A-Za-z0-9-]{1,40})\/config$/.exec(url.pathname))) {
           // Configuration items (#3) are set here only: by the command's creator or an admin.
-          const t = await target(store, deps, who.unionId, String(body.scope ?? ''), m[1]);
+          const t = await target(store, deps, who.unionId, String(body.scope ?? ''), m[1], true);
           const c = t.cmd;
           if (c.ownerUnionId !== who.unionId && !deps.isAdmin(who.unionId)) throw new AmberError('forbidden', '只有指令的创建人或管理员可以设置配置项');
           const p = configParams(c.params).find(x => x.name === String(body.name ?? ''));
@@ -272,7 +277,7 @@ export function startWeb(port: number, store: Store, deps: WebDeps): import('nod
           return json(res, 200, { ok: true, status: r.row!.status });
         }
         if ((m = /^\/web\/api\/commands\/([A-Za-z0-9-]{1,40})\/retire$/.exec(url.pathname))) {
-          const t = await target(store, deps, who.unionId, String(body.scope ?? ''), m[1]);
+          const t = await target(store, deps, who.unionId, String(body.scope ?? ''), m[1], true);
           if (body.confirm !== true) throw new AmberError('needs_confirm', '请确认后再下线');
           const r = await deps.retire(t.cmd.id, { unionId: who.unionId }, (await deps.nameOf(who.unionId)) ?? '创建人');
           return json(res, 200, { ok: true, ...r });
@@ -310,6 +315,8 @@ function cmdView(c: CommandRow, viewer?: string, isAdmin?: (u: string) => boolea
     .map(i => (canManage ? i : { name: i.name, set: i.set })) : [];
   return {
     canManage,
+    // Only the creator runs their command (#4); everyone may run a global one. An admin may look, not run.
+    canRun: !!viewer && (c.global || c.ownerUnionId === viewer),
     secrets,
     version: store ? store.versionsOf(c.id).length + 1 : 1,
     id: c.id, name: c.name, description: c.description, global: c.global, options: c.options,
@@ -331,18 +338,25 @@ function schView(store: Store, s: ScheduleRow, viewer?: string) {
   };
 }
 
-/** What this person can see: their private-chat commands, groups they are in, and global commands. */
+/** What this person can see: their own commands (in their private chat and in groups they are in) and global
+ *  commands (#4). An admin also sees everyone's commands, in every group, to look at and take offline. */
 async function overview(store: Store, deps: WebDeps, unionId: string) {
   const groups: { chatId: string; name: string; commands: unknown[]; schedules: unknown[] }[] = [];
+  const admin = deps.isAdmin(unionId);
   let membershipUnknown = false;
   for (const chatId of store.groupChatsWithContent()) {
-    const m = await deps.isMember(chatId, unionId);
-    if (m === undefined) { membershipUnknown = true; continue; }
-    if (!m) continue;
+    if (!admin) {
+      const m = await deps.isMember(chatId, unionId);
+      if (m === undefined) { membershipUnknown = true; continue; }
+      if (!m) continue;
+    }
+    const commands = store.listActiveByChat(chatId).filter(c => c.scopeType === 'group' && (admin || c.ownerUnionId === unionId));
+    const schedules = store.schedulesInChat(chatId);
+    if (!commands.length && !schedules.length) continue;
     groups.push({
       chatId, name: (await deps.chatName(chatId)) ?? chatId,
-      commands: store.listActiveByChat(chatId).filter(c => c.scopeType === 'group').map(c => cmdView(c, unionId, deps.isAdmin, store)),
-      schedules: store.schedulesInChat(chatId).map(s => schView(store, s, unionId)),
+      commands: commands.map(c => cmdView(c, unionId, deps.isAdmin, store)),
+      schedules: schedules.map(s => schView(store, s, unionId)),
     });
   }
   return {

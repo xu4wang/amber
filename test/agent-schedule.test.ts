@@ -10,11 +10,11 @@ const ctx = (env: any, u?: any) => ({ chatId: GROUP, chatType: 'group', label: '
 test('agent: identity-free commands run directly; confirm commands need the named person to click', async () => {
   const env = await makeEnv();
   try {
-    await activate(env, { chatId: GROUP, chatType: 'group', name: '直接', params: [], script: script('print("direct ok")') }, env.alice);
-    await activate(env, { chatId: GROUP, chatType: 'group', name: '确认', params: [{ name: 'n', label: '数', type: 'integer', required: true }], script: script('import json,sys\nprint("n=" + json.load(sys.stdin)["params"]["n"])'), options: { confirm: true } }, env.alice, { n: '1' });
-    const list = await env.api('POST', '/v1/commands/list', ctx(env));
+    await activate(env, { chatId: GROUP, chatType: 'group', name: '直接', params: [], script: script('print("direct ok")') }, env.bob);
+    await activate(env, { chatId: GROUP, chatType: 'group', name: '确认', params: [{ name: 'n', label: '数', type: 'integer', required: true }], script: script('import json,sys\nprint("n=" + json.load(sys.stdin)["params"]["n"])'), options: { confirm: true } }, env.bob, { n: '1' });
+    const list = await env.api('POST', '/v1/commands/list', ctx(env, env.bob));
     assert.deepEqual(list.body.commands.map((c: any) => [c.name, c.run]).sort(), [['直接', 'direct'], ['确认', 'confirm_card']]);
-    const d = await env.api('POST', '/v1/runs', { ...ctx(env), command: '直接' });
+    const d = await env.api('POST', '/v1/runs', { ...ctx(env, env.bob), command: '直接' });
     assert.equal(d.body.mode, 'direct');
     assert.equal(d.body.markdown, 'direct ok');
     // Bad args are refused before anyone is asked.
@@ -47,7 +47,7 @@ test('agent: identity-free commands run directly; confirm commands need the name
 test('agent: run output cannot be read back through the API; ids are long', async () => {
   const env = await makeEnv();
   try {
-    await activate(env, { chatId: GROUP, chatType: 'group', name: '确认', params: [], script: script('print("secret-42")'), options: { confirm: true } }, env.alice);
+    await activate(env, { chatId: GROUP, chatType: 'group', name: '确认', params: [], script: script('print("secret-42")'), options: { confirm: true } }, env.bob);
     const r = await env.api('POST', '/v1/runs', { ...ctx(env, env.bob), command: '确认' });
     assert.ok(r.body.requestId.length >= 32, 'request ids are full random ids');
     const card = env.fake.sent.at(-1)!;
@@ -66,7 +66,7 @@ test('agent: run output cannot be read back through the API; ids are long', asyn
 test('agent: a person can cancel a request', async () => {
   const env = await makeEnv();
   try {
-    await activate(env, { chatId: GROUP, chatType: 'group', name: '确认', params: [], script: script('print(1)'), options: { confirm: true } }, env.alice);
+    await activate(env, { chatId: GROUP, chatType: 'group', name: '确认', params: [], script: script('print(1)'), options: { confirm: true } }, env.bob);
     const r = await env.api('POST', '/v1/runs', { ...ctx(env, env.bob), command: '确认' });
     const card = env.fake.sent.at(-1)!;
     await env.click(env.bob, card.id, button(card.card, 'req_no')!);
@@ -74,12 +74,12 @@ test('agent: a person can cancel a request', async () => {
   } finally { await env.close(); }
 });
 
-test('schedules: created by a click, run as the creator, silent when empty, paused after 3 failures or when the creator leaves', async () => {
+test('schedules: created by a click, run as the creator, silent when empty, paused after 3 failures or when the creator leaves, and nobody else takes it over', async () => {
   const env = await makeEnv();
   try {
     const code = 'import json,sys\nm=json.load(sys.stdin)["params"].get("mode","")\nif m=="fail": sys.exit("boom")\nif m!="quiet": print("hi")';
-    await activate(env, { chatId: GROUP, chatType: 'group', name: '报告', params: [{ name: 'mode', label: '模式', type: 'string' }], script: script(code), options: { schedulable: true } }, env.alice);
-    await activate(env, { chatId: GROUP, chatType: 'group', name: '不可定时', params: [], script: script('print(1)'), options: { schedulable: false } }, env.alice);
+    await activate(env, { chatId: GROUP, chatType: 'group', name: '报告', params: [{ name: 'mode', label: '模式', type: 'string' }], script: script(code), options: { schedulable: true } }, env.bob);
+    await activate(env, { chatId: GROUP, chatType: 'group', name: '不可定时', params: [], script: script('print(1)'), options: { schedulable: false } }, env.bob);
     assert.match((await env.api('POST', '/v1/schedules', { ...ctx(env, env.bob), command: '不可定时', at: '每天 09:00' })).body.message, /没有允许定时/);
     assert.match((await env.api('POST', '/v1/schedules', { ...ctx(env, env.bob), command: '报告', at: '每 3 分钟' })).body.message, /最短 5 分钟/);
     const mk = async (mode: string) => {
@@ -112,36 +112,19 @@ test('schedules: created by a click, run as the creator, silent when empty, paus
     await tickAt(t);
     assert.equal(env.amber.store.getSchedule(normal)!.status, 'paused');
     assert.match(env.amber.store.getSchedule(normal)!.pauseReason!, /不在群里/);
-    // D45: the group is told, and any member can take the schedule over as themselves.
-    const notice = env.fake.sent.filter(p => p.to.chatId === GROUP && button(p.card, 'sch_takeover')?.s === normal);
-    assert.equal(notice.length, 1, 'one takeover notice in the group');
-    const take = button(notice[0].card, 'sch_takeover')!;
-    await env.click(env.carol, notice[0].id, take);           // carol is not in the group
+    // Only the creator runs their command (#4): nobody in the group can take it over, and the group gets no card.
+    assert.equal(env.fake.sent.filter(p => p.to.chatId === GROUP && button(p.card, 'sch_takeover')).length, 0);
+    assert.ok(env.fake.sent.some(p => p.to.unionId === env.bob.unionId && /你已不在这个群里/.test(FakeFeishu.text(p.card))), 'the creator is told privately');
+    const old = await env.click(env.alice, env.fake.sent.at(-1)!.id, { a: 'sch_takeover', s: normal });
+    assert.match(JSON.stringify(old), /不能接手/, 'a takeover card from before cannot be used');
     assert.equal(env.amber.store.getSchedule(normal)!.status, 'paused');
-    // A schedule paused for another reason (3 failures) cannot be taken over through a forged value.
-    const forged = await env.click(env.alice, notice[0].id, { a: 'sch_takeover', s: failing });
-    assert.match(JSON.stringify(forged), /不需要接手/);
-    assert.equal(env.amber.store.getSchedule(failing)!.status, 'paused');
-    const old = env.amber.store.getSchedule(normal)!;
-    const res = await env.click(env.alice, notice[0].id, take);
-    assert.match(JSON.stringify(res), /已接手/);
-    assert.equal(env.amber.store.getSchedule(normal)?.status ?? 'deleted', 'deleted');
-    const mine = env.amber.store.schedulesInChat(GROUP).filter(x => x.creatorUnionId === env.alice.unionId && x.status === 'active');
-    assert.equal(mine.length, 1);
-    assert.deepEqual([mine[0].commandId, mine[0].args, mine[0].rule], [old.commandId, old.args, old.rule]);
-    const again = await env.click(env.alice, notice[0].id, take);
-    assert.match(JSON.stringify(again), /已经被接手/);
-    assert.equal(env.amber.store.schedulesInChat(GROUP).filter(x => x.creatorUnionId === env.alice.unionId && x.status === 'active').length, 1, 'no second copy');
-    await tickAt(mine[0].nextRunAt + 1000);
-    const run2 = env.amber.store.getRun(env.amber.store.getSchedule(mine[0].id)!.lastRunId!)!;
-    assert.equal(run2.callerUnionId, env.alice.unionId, 'runs as the person who took over');
   } finally { await env.close(); }
 });
 
 test('schedules: runs missed while Amber was down are skipped, not caught up', async () => {
   const env = await makeEnv();
   try {
-    await activate(env, { chatId: GROUP, chatType: 'group', name: '报告', params: [], script: script('print("x")'), options: { schedulable: true } }, env.alice);
+    await activate(env, { chatId: GROUP, chatType: 'group', name: '报告', params: [], script: script('print("x")'), options: { schedulable: true } }, env.bob);
     const r = await env.api('POST', '/v1/schedules', { ...ctx(env, env.bob), command: '报告', at: '每天 09:00' });
     const card = env.fake.sent.at(-1)!;
     await env.click(env.bob, card.id, button(card.card, 'req_ok')!);
@@ -165,10 +148,11 @@ test('agent: retire a command — creator or admin clicks; others are refused up
     const before = env.fake.sent.length;
     const bad = await env.api('POST', '/v1/commands/retire', { ...ctx(env, env.carol), command: '报表' });
     assert.equal(bad.body.ok, false);
-    assert.match(bad.body.message, /创建人或管理员/);
+    assert.match(bad.body.message, /没有找到指令/, 'others do not even see it');
     assert.equal(env.fake.sent.length, before);
-    // Unnamed request: a card anyone sees, but only the creator or an admin may confirm.
-    const r = await env.api('POST', '/v1/commands/retire', { ...ctx(env), command: '报表' });
+    // Without a named person nobody's commands are visible.
+    assert.match((await env.api('POST', '/v1/commands/retire', { ...ctx(env), command: '报表' })).body.message, /没有找到指令/);
+    const r = await env.api('POST', '/v1/commands/retire', { ...ctx(env, env.bob), command: '报表' });
     assert.equal(r.body.mode, 'confirm_card');
     const card = env.fake.sent.at(-1)!;
     assert.match(FakeFeishu.text(card.card), /下线/);
@@ -217,7 +201,8 @@ test('agent: global / local need an admin click', async () => {
     // bob is the creator but not an admin.
     const bad = await env.api('POST', '/v1/commands/scope', { ...ctx(env, env.bob), command: '汇率', global: true });
     assert.match(bad.body.message, /只有管理员/);
-    const r = await env.api('POST', '/v1/commands/scope', { ...ctx(env), command: '汇率', global: true });
+    // An admin sees anyone's command for managing it (not for running it).
+    const r = await env.api('POST', '/v1/commands/scope', { ...ctx(env, env.alice), command: '汇率', global: true });
     const card = env.fake.sent.at(-1)!;
     assert.match(FakeFeishu.text(card.card), /全局/);
     assert.match(JSON.stringify(await env.click(env.bob, card.id, button(card.card, 'req_ok')!)), /只有管理员/);
@@ -232,7 +217,7 @@ test('agent: global / local need an admin click', async () => {
     assert.equal(env.amber.store.getCommand(id)!.global, false);
     assert.equal((await env.api('GET', `/v1/requests/${r2.body.requestId}`)).body.status, 'done');
     // Cancel leaves it unchanged.
-    await env.api('POST', '/v1/commands/scope', { ...ctx(env), command: '汇率', global: true });
+    await env.api('POST', '/v1/commands/scope', { ...ctx(env, env.alice), command: '汇率', global: true });
     const c3 = env.fake.sent.at(-1)!;
     await env.click(env.alice, c3.id, button(c3.card, 'req_no')!);
     assert.equal(env.amber.store.getCommand(id)!.global, false);

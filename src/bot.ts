@@ -1,7 +1,7 @@
 import * as lark from '@larksuiteoapi/node-sdk';
 import type { Store, CommandRow, ScopeType } from './db.ts';
 import type { Caller, Block } from './engine.ts';
-import { visibleCommands, findVisible, runCommand, AmberError, secretVault, dropOrphanSettings, runParams } from './engine.ts';
+import { visibleCommands, findVisible, findManageable, runCommand, AmberError, secretVault, dropOrphanSettings, runParams } from './engine.ts';
 import { Mentions, listCard, formCard, runningCard, resultCard, errorCard, infoCard, retireConfirmCard, closedCard, secretFormCard, secretPickCard, executorApprovalCard, executorDecidedCard, executorListCard, executorFollowCard } from './cards.ts';
 import { ExecutorHub } from './executors.ts';
 import type { AmberConfig } from './config.ts';
@@ -379,7 +379,7 @@ export class AmberBot {
   }
 
   private scopeLabel(caller: Caller): string {
-    return caller.chatType === 'p2p' ? '你的私聊里' : '本群';
+    return caller.chatType === 'p2p' ? '你的私聊里' : '你在本群';
   }
 
   private async replyCard(messageId: string, inThread: boolean, card: object): Promise<void> {
@@ -423,7 +423,7 @@ export class AmberBot {
     }
     if (parts.length === 2 && ['下线', 'retire'].includes(parts[0].toLowerCase())) {
       try {
-        const cmd = findVisible(this.store, caller, parts[1]);
+        const cmd = findManageable(this.store, caller, parts[1], this.isAdmin(caller.unionId));
         // Check the permission now so nobody gets a confirmation they cannot use (D44).
         if (cmd.ownerUnionId !== caller.unionId && !this.isAdmin(caller.unionId)) throw new AmberError('forbidden', '只有指令的创建人或管理员可以下线');
         const schedules = this.store.schedulesOfCommand(cmd.id).length;
@@ -553,7 +553,7 @@ export class AmberBot {
     try {
       const r = await runCommand(this.store, cmd, raw, caller, { city: () => this.cityOf(caller.unionId), signer: this.signer }, { viaForm });
       if (!r.ok) return errorCard(cmd.name, `执行失败：${r.error}`, cmd.id);
-      return resultCard(cmd.name, caller.openId, r.blocks, r.runId, r.elapsedMs, cmd.id, cmd.scopeType !== 'p2p' && !!cmd.script.secrets?.length, await this.mentionsFor(caller.chatId, caller.chatType, r.blocks));
+      return resultCard(cmd.name, caller.openId, r.blocks, r.runId, r.elapsedMs, cmd.id, cmd.global && !!cmd.script.secrets?.length, await this.mentionsFor(caller.chatId, caller.chatType, r.blocks));
     } catch (e) {
       return errorCard(cmd.name, e instanceof AmberError ? e.message : `出错了：${(e as Error).message}`, cmd.id);
     }
@@ -669,11 +669,8 @@ export class AmberBot {
         this.scheduler.remove(s, caller.unionId);
         return raw(infoCard('定时任务已删除', `定时任务 ${s.id} 已删除。`));
       }
-      if (value.a === 'sch_takeover') {
-        const { next } = await this.scheduler.takeover(String(value.s), caller);
-        const v = this.scheduler.view(next);
-        return raw(closedCard('定时任务已接手', 'green', `定时任务「${v.name}」（${v.ruleText}）已由 <at id=${caller.openId}></at> 接手，之后以接手人的身份运行。下次运行：${v.nextText}。`));
-      }
+      // Cards from before #4: a schedule can no longer be taken over, only its creator can run the command.
+      if (value.a === 'sch_takeover') return raw(closedCard('不能接手', 'grey', '指令只有创建人自己能执行，定时任务不能再由别人接手。需要的话，等这条指令上架后从 Amber Store 安装一份，再建自己的定时任务。'));
       if (typeof value.a === 'string' && value.a.startsWith('sch_')) {
         const s = this.store.getSchedule(String(value.s));
         if (!s) throw new AmberError('not_found', '定时任务已不存在');
