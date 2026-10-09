@@ -417,6 +417,10 @@ function cmdPane(key, { c, scope }) {
     </div>
     <div class="result-area"><h3 class="note" style="margin:0 0 8px">执行结果</h3>
     <div class="output wait" id="out">${last ? '' : '还没有在这里执行过。'}</div></div>
+    ${(c.config || []).length ? `<div class="manage"><h3 class="note">配置项</h3>
+      <p class="note">这些值不用每次执行时填：在这里设置一次，以后每次执行（包括定时任务）都会自动带上，执行的人不能临时修改。${c.canManage ? '' : '<br>只有创建人或管理员可以设置。'}</p>
+      ${c.config.map(x => `<div class="field"><label>${esc(x.label)}${x.required ? ' *' : ''}</label><span class="examples">${c.canManage ? `<input data-config-input="${esc(x.name)}" ${x.type === 'integer' ? 'inputmode="numeric"' : ''} value="${esc(x.value ?? '')}" placeholder="${x.default != null ? '不填则用默认：' + esc(x.default) : x.required ? '必填' : '可不填'}"> <button type="button" class="btn small" data-config="${esc(x.name)}:set">保存</button>${x.value != null ? ` <button type="button" class="btn small" data-config="${esc(x.name)}:delete">清除</button>` : ''}<br>` : ''}<span class="note">${x.value != null ? '当前值：<code>' + esc(x.value) + '</code>' : x.default != null ? '未设置，使用默认值 <code>' + esc(x.default) + '</code>' : x.required ? '<span style="color:var(--warn)">未设置，设置之前这条指令不能执行</span>' : '未设置'}</span></span></div>`).join('')}
+    </div>` : ''}
     ${(c.secrets || []).length ? `<div class="manage"><h3 class="note">密钥</h3>
       <p class="note">这条指令运行时需要下面的密钥。值加密保存在 Amber 里，只交给这条指令使用，设置后不能再查看。${scope.startsWith('group:') || scope === 'global' ? '<br><b>群里（或全局）每个执行它的人都会用到同一份密钥</b>，请只填权限够用的凭证。' : ''}${c.canManage ? '' : '<br>只有创建人或管理员可以设置。'}</p>
       ${c.secrets.map(x => `<div class="field"><label>${esc(x.name)}</label><span class="examples">${c.canManage ? `<input type="password" autocomplete="new-password" data-secret-input="${esc(x.name)}" placeholder="${x.set ? '留空不修改' : '填写值（至少 6 个字符）'}"> <button type="button" class="btn small" data-secret="${esc(x.name)}:set">保存</button>${x.set ? ` <button type="button" class="btn small" data-secret="${esc(x.name)}:delete">删除</button>` : ''}<br>` : ''}<span class="note">${x.set ? `已设置${x.last4 ? ' · 末尾 ' + esc(x.last4) : ''}` : '<span style="color:var(--warn)">未设置</span>'}</span></span></div>`).join('')}
@@ -628,6 +632,18 @@ document.addEventListener('click', async ev => {
     history.replaceState(null, '', '#');
     await reload(null);
     welcome();
+    return;
+  }
+  const cfg = ev.target.closest('[data-config]');
+  if (cfg) {
+    const { c, scope } = ITEMS.get(SEL);
+    const [name, op] = cfg.dataset.config.split(':');
+    const input = document.querySelector(`[data-config-input="${CSS.escape(name)}"]`);
+    if (op === 'set' && !(input && input.value.trim())) { alert('请先填写值'); return; }
+    cfg.disabled = true;
+    const r = await post(`/web/api/commands/${encodeURIComponent(c.id)}/config`, op === 'set' ? { scope, name, value: input.value } : { scope, name, delete: true });
+    if (!r.ok) { alert(r.message || r.error); cfg.disabled = false; return; }
+    await reload(SEL);
     return;
   }
   const sec = ev.target.closest('[data-secret]');

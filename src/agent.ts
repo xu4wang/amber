@@ -7,7 +7,7 @@
 //      card in the chat; whoever clicks it is the identity, taken from the Feishu event.
 import type { Store, CommandRow, RequestRow, RequestKind, ScopeType } from './db.ts';
 import type { Caller, Block } from './engine.ts';
-import { visibleCommands, findVisible, runCommand, validateArgs, AmberError, missingSecrets } from './engine.ts';
+import { visibleCommands, findVisible, runCommand, validateArgs, AmberError, missingSecrets, runParams, configParams, configValues, missingConfig, missingConfigMessage } from './engine.ts';
 import type { Signer } from './identity.ts';
 import { requestCard, runningCard, resultCard, errorCard, closedCard, person, sanitizeMarkdown, type Mentions } from './cards.ts';
 import { parseRule, validateRule, nextRun, describeRule, formatAt, defaultTz } from './schedule-rule.ts';
@@ -56,8 +56,10 @@ export function needsPerson(c: CommandRow): boolean {
 }
 
 /** Checks the given arguments before asking a person; values taken from the clicker (city) are filled in later. */
-async function precheck(cmd: CommandRow, args: Record<string, string>): Promise<void> {
-  await validateArgs(cmd.params.map(p => (p.defaultFrom ? { ...p, required: false } : p)), args);
+async function precheck(store: Store, cmd: CommandRow, args: Record<string, string>): Promise<void> {
+  await validateArgs(runParams(cmd.params).map(p => (p.defaultFrom ? { ...p, required: false } : p)), args);
+  const unset = missingConfig(store, cmd);
+  if (unset.length) throw new AmberError('missing_config', missingConfigMessage(unset));
   const missing = missingSecrets(cmd);
   if (missing.length) throw new AmberError('missing_secret', `还没设置密钥：${missing.join('、')}。请指令创建人或管理员先私聊 Amber 发「设置密钥 ${cmd.name}」`);
 }
@@ -95,12 +97,14 @@ export class AgentGate {
   private describe(c: CommandRow): object {
     return {
       id: c.id, name: c.name, description: c.description, global: c.global,
-      params: c.params.map(p => ({ name: p.name, label: p.label, type: p.type, required: !!p.required, default: p.default, defaultFrom: p.defaultFrom, min: p.min, max: p.max, maxLength: p.maxLength, pattern: p.pattern })),
+      params: runParams(c.params).map(p => ({ name: p.name, label: p.label, type: p.type, required: !!p.required, default: p.default, defaultFrom: p.defaultFrom, min: p.min, max: p.max, maxLength: p.maxLength, pattern: p.pattern })),
       options: c.options,
       // How `amber run` will behave for this command.
       run: needsPerson(c) ? 'confirm_card' : 'direct',
       // Names only; values are never exposed through the agent interface (D48).
       ...(c.script.secrets?.length ? { secrets: c.script.secrets, secretsMissing: missingSecrets(c) } : {}),
+      // Configuration items (#3): set once on the website, not passed by the agent. Values are not secret.
+      ...(configParams(c.params).length ? { config: (v => configParams(c.params).map(p => ({ name: p.name, label: p.label, value: v[p.name] ?? null, default: p.default })))(configValues(this.store, c)), configMissing: missingConfig(this.store, c) } : {}),
       ...(c.script.env ? { env: c.script.env } : {}),
     };
   }
@@ -125,7 +129,7 @@ export class AgentGate {
       return { mode: 'direct', runId: r.runId, status: r.ok ? 'ok' : 'failed', markdown: r.markdown, error: r.error, elapsedMs: r.elapsedMs };
     }
     // Check the arguments now, so the person is not asked to confirm something that cannot run.
-    await precheck(cmd, cleanArgs);
+    await precheck(this.store, cmd, cleanArgs);
     const req = await this.post(ctx, 'run', cmd, cleanArgs, {});
     return { mode: 'confirm_card', requestId: req.id, status: 'awaiting', message: `已在飞书发出确认卡片，等${ctx.user ? ` ${ctx.user.email} ` : '群里有人'}点「执行」。用 amber wait ${req.id} 查看是否完成；结果只显示在飞书卡片上，不返回给 agent。` };
   }
@@ -136,7 +140,7 @@ export class AgentGate {
     if (this.store.schedulesInChat(ctx.chatId).length >= MAX_PER_CHAT) throw new AmberError('too_many', `这里已有 ${MAX_PER_CHAT} 个定时任务`);
     const rule = parseRule(String(at ?? ''), tz || defaultTz());
     const cleanArgs = this.cleanArgs(args);
-    await precheck(cmd, cleanArgs);
+    await precheck(this.store, cmd, cleanArgs);
     const req = await this.post(ctx, 'schedule', cmd, cleanArgs, { rule });
     return { mode: 'confirm_card', requestId: req.id, status: 'awaiting', rule: describeRule(rule), firstRun: formatAt(nextRun(rule, Date.now()), rule.tz), message: `已在飞书发出确认卡片，点「创建定时任务」后生效。用 amber wait ${req.id} 查看结果。` };
   }

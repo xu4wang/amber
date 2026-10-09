@@ -113,6 +113,7 @@ amber global 天气 --user user@example.com          # 设为全局 / amber loca
 - 群里提交时也建议带上 `"claimer"`（让你固化的那个人的邮箱或 union_id）：认领卡会 @ 他，提醒他来认领；这只是提醒，群里其他人照样能认领。
 - 想让认领卡出现在当前话题里，加 `"originMessageId": "<话题里的消息 id>", "inThread": true`；不加就发在群主时间线上。
 - 参数类型：`string`（可加 `maxLength`、`pattern`）或 `integer`（可加 `min`、`max`）；`"defaultFrom": "caller.city"` 表示不填时用执行人的办公城市。
+- **配置项**：每次执行都一样、不该由执行人填的值（要检查的仓库、通知哪个机器人等），在参数上加 `"scope": "config"`。值由创建人或管理员在网站上设置一次，脚本照常从 `params` 里取；执行人、表单、`amber run` 都传不进来。试运行时在认领卡的试运行表单里填（只用于这次试运行）；生效后提醒用户去网站上这条指令页面底部的「配置项」设置，没设置时执行会被拒绝。不要把值写死在代码里，也不要用配置项放 token、密码（用密钥）。配置项不能用 `defaultFrom`。`amber show` 会列出配置项、当前值和还没设置的项（`configMissing`）。
 - `options.confirm`：执行前必须确认（会改数据、有风险时打开）。
 - `options.schedulable`：允许定时执行。**不写时默认为 true**；不适合定时的（比如有副作用、或结果每次都需要人看着执行的）请显式写 `false`。
 - `script.kind` 只能用 `script`（所有指令都在沙箱里运行）。不要写 `sandbox` 字段（会被拒绝），访问数据靠 `env`，见上面「要访问数据时」。

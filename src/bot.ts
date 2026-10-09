@@ -1,7 +1,7 @@
 import * as lark from '@larksuiteoapi/node-sdk';
 import type { Store, CommandRow, ScopeType } from './db.ts';
 import type { Caller, Block } from './engine.ts';
-import { visibleCommands, findVisible, runCommand, AmberError, secretVault, dropOrphanSecrets } from './engine.ts';
+import { visibleCommands, findVisible, runCommand, AmberError, secretVault, dropOrphanSettings, runParams } from './engine.ts';
 import { Mentions, listCard, formCard, runningCard, resultCard, errorCard, infoCard, retireConfirmCard, closedCard, secretFormCard, secretPickCard, executorApprovalCard, executorDecidedCard, executorListCard, executorFollowCard } from './cards.ts';
 import { ExecutorHub } from './executors.ts';
 import type { AmberConfig } from './config.ts';
@@ -95,7 +95,7 @@ export class AmberBot {
     this.store.setStatus(c.id, 'retired');
     this.store.audit(actor.unionId, 'command.retire', { id: c.id, name: c.name, specHash: c.specHash });
     log('command retired', c.id, c.name);
-    dropOrphanSecrets(this.store, c.chatId, c.name, actor.unionId);
+    dropOrphanSettings(this.store, c.chatId, c.name, actor.unionId);
     const schedules = await this.scheduler.onCommandRetired(c, byLabel);
     return { name: c.name, schedules };
   }
@@ -455,9 +455,10 @@ export class AmberBot {
     }
     const positional = parts.slice(1);
     const raw: Record<string, string> = {};
-    cmd.params.forEach((p, i) => { if (positional[i] !== undefined) raw[p.name] = positional[i]; });
+    const params = runParams(cmd.params);
+    params.forEach((p, i) => { if (positional[i] !== undefined) raw[p.name] = positional[i]; });
     // confirm = true: never run from a one-line shortcut; show the confirmation form, prefilled.
-    if (cmd.options.confirm || (positional.length === 0 && cmd.params.some(p => p.required && p.default === undefined))) {
+    if (cmd.options.confirm || (positional.length === 0 && params.some(p => p.required && p.default === undefined))) {
       await this.replyCard(msg.message_id, inThread, formCard(cmd, raw));
       return;
     }

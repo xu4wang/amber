@@ -17,6 +17,9 @@ export interface ParamDef {
   pattern?: string;
   min?: number;
   max?: number;
+  /** "config" (#3): a configuration item, not asked at each run. The person in charge sets its value once on the
+   *  website; every run gets it. Name and type are reviewed with the code, the value is not. */
+  scope?: 'config';
 }
 
 export type { Script } from './runner.ts';
@@ -172,6 +175,16 @@ export class Store {
       name TEXT NOT NULL,
       cipher TEXT NOT NULL,
       last4 TEXT NOT NULL DEFAULT '',
+      set_by TEXT NOT NULL,
+      updated_at INTEGER NOT NULL,
+      PRIMARY KEY (chat_id, cmd_name, name)
+    )`);
+    // Configuration items (#3): plain values, keyed like secrets by the command's lineage (chat + name).
+    this.db.exec(`CREATE TABLE IF NOT EXISTS command_config (
+      chat_id TEXT NOT NULL,
+      cmd_name TEXT NOT NULL,
+      name TEXT NOT NULL,
+      value TEXT NOT NULL,
       set_by TEXT NOT NULL,
       updated_at INTEGER NOT NULL,
       PRIMARY KEY (chat_id, cmd_name, name)
@@ -656,6 +669,25 @@ export class Store {
 
   deleteSecretsOf(chatId: string, cmdName: string): number {
     return Number(this.db.prepare(`DELETE FROM command_secrets WHERE chat_id = ? AND cmd_name = ?`).run(chatId, cmdName).changes);
+  }
+
+  putConfig(chatId: string, cmdName: string, name: string, value: string, by: string): void {
+    this.db.prepare(`INSERT INTO command_config (chat_id, cmd_name, name, value, set_by, updated_at) VALUES (?, ?, ?, ?, ?, ?)
+      ON CONFLICT (chat_id, cmd_name, name) DO UPDATE SET value = excluded.value, set_by = excluded.set_by, updated_at = excluded.updated_at`)
+      .run(chatId, cmdName, name, value, by, Date.now());
+  }
+
+  configRows(chatId: string, cmdName: string): { name: string; value: string; setBy: string; updatedAt: number }[] {
+    return (this.db.prepare(`SELECT name, value, set_by, updated_at FROM command_config WHERE chat_id = ? AND cmd_name = ? ORDER BY name`).all(chatId, cmdName) as Record<string, unknown>[])
+      .map(r => ({ name: String(r.name), value: String(r.value), setBy: String(r.set_by), updatedAt: Number(r.updated_at) }));
+  }
+
+  deleteConfig(chatId: string, cmdName: string, name: string): boolean {
+    return Number(this.db.prepare(`DELETE FROM command_config WHERE chat_id = ? AND cmd_name = ? AND name = ?`).run(chatId, cmdName, name).changes) > 0;
+  }
+
+  deleteConfigOf(chatId: string, cmdName: string): number {
+    return Number(this.db.prepare(`DELETE FROM command_config WHERE chat_id = ? AND cmd_name = ?`).run(chatId, cmdName).changes);
   }
 
   private executorRow(r: Record<string, unknown> | undefined): ExecutorRow | undefined {

@@ -11,7 +11,7 @@ import { validateScript, describeServices } from './runner.ts';
 import { describeSecrets } from './secrets.ts';
 import type { FeishuReview } from './feishu-review.ts';
 import type { Caller, CallerFacts, Block } from './engine.ts';
-import { runCommand, AmberError, dropOrphanSecrets, executorHub } from './engine.ts';
+import { runCommand, AmberError, dropOrphanSettings, executorHub } from './engine.ts';
 import { sanitizeMarkdown, person, renderBlocks, buttonRow } from './cards.ts';
 import { lineDiff } from './diff.ts';
 
@@ -44,14 +44,23 @@ function btn(text: string, value: Record<string, string>, type: 'primary' | 'def
   return { tag: 'button', text: { tag: 'plain_text', content: text }, type, behaviors: [{ type: 'callback', value }], ...extra };
 }
 
+/** Only what Amber understands: unknown scopes, and a configuration item that would take the caller's city, are refused. */
+function checkParams(params: ParamDef[]): void {
+  if (!Array.isArray(params)) throw new AmberError('bad_params', 'params 必须是数组');
+  for (const p of params) {
+    if (p.scope !== undefined && p.scope !== 'config') throw new AmberError('bad_params', `参数 ${p.name} 的 scope 只能是 "config"（配置项）或不写`);
+    if (p.scope === 'config' && p.defaultFrom) throw new AmberError('bad_params', `配置项 ${p.name} 不能用 defaultFrom：配置项的值由负责人设置，不随执行人变化`);
+  }
+}
+
 function scriptLabel(_k: string): string {
   return '脚本（沙盒运行）';
 }
 
 function specSummary(c: CommandRow): string {
-  const params = c.params.length
-    ? c.params.map(p => `${p.label ?? p.name}（${p.type === 'integer' ? '整数' : '文本'}${p.defaultFrom === 'caller.city' ? '，默认办公城市' : p.default !== undefined ? `，默认 ${p.default}` : ''}${p.required ? '，必填' : ''}）`).join('、')
-    : '无';
+  const desc = (p: ParamDef) => `${p.label ?? p.name}（${p.type === 'integer' ? '整数' : '文本'}${p.defaultFrom === 'caller.city' ? '，默认办公城市' : p.default !== undefined ? `，默认 ${p.default}` : ''}${p.required ? '，必填' : ''}）`;
+  const run = c.params.filter(p => p.scope !== 'config'), cfg = c.params.filter(p => p.scope === 'config');
+  const params = run.length ? run.map(desc).join('、') : '无';
   const s = c.script;
   const how = `${scriptLabel(s.kind)}${s.network ? '，可访问外网' : ''}${s.services && Object.keys(s.services).length ? `，以执行人身份调用：${describeServices(s)}（不能访问外网）` : ''}`;
   return [
@@ -59,6 +68,7 @@ function specSummary(c: CommandRow): string {
     `**说明**：${sanitizeMarkdown(c.description || '（无）', 200)}`,
     `**范围**：${c.scopeType === 'p2p' ? '私聊（只有创建人）' : '本群'}`,
     `**参数**：${sanitizeMarkdown(params, 300)}`,
+    ...(cfg.length ? [`**配置项**：${sanitizeMarkdown(cfg.map(desc).join('、'), 300)}（生效后由创建人或管理员在网站上设置，每次执行自动带上）`] : []),
     `**选项**：${c.options.confirm ? '<font color="red">执行前需要确认</font>' : '直接执行'}；${c.options.schedulable ? '允许定时执行' : '不允许定时执行'}`,
     `**运行方式**：${how}`,
     ...(s.secrets?.length ? [`**密钥**：${sanitizeMarkdown(describeSecrets(c), 400)}`] : []),
@@ -133,7 +143,7 @@ export function claimCard(c: CommandRow, trial?: { by?: string; blocks?: Block[]
     els.push({
       tag: 'form', name: 'trial', elements: [
         ...c.params.map(p => ({
-          tag: 'input', name: p.name, label: { tag: 'plain_text', content: p.label ?? p.name }, label_position: 'left',
+          tag: 'input', name: p.name, label: { tag: 'plain_text', content: p.scope === 'config' ? `${p.label ?? p.name}（配置项）` : p.label ?? p.name }, label_position: 'left',
           placeholder: { tag: 'plain_text', content: p.defaultFrom === 'caller.city' ? '不填则用你的办公城市' : p.default !== undefined ? `默认：${p.default}` : (p.required ? '必填' : '可不填') },
           ...(p.default !== undefined && !p.defaultFrom ? { default_value: p.default } : {}),
         })),
@@ -260,6 +270,7 @@ export class Flow {
     if (!d.name || d.name.length > 40 || /\s/.test(d.name)) throw new AmberError('bad_name', '名称不能为空、不能有空格、最多 40 个字');
     if ((d as any).steps !== undefined) throw new AmberError('bad_script', '指令不再有「步骤」：请提交一段 script（参数 + 一段脚本）');
     try { d.script = validateScript(d.script); } catch (e) { throw new AmberError('bad_script', (e as Error).message); }
+    checkParams(d.params ?? []);
     if (this.store.nameInProgress(d.chatId, d.name)) throw new AmberError('name_taken', `「${d.name}」已有一个版本在认领或审核中，请等它结束（或在认领卡上丢弃）后再提交`);
     // Same name as an active command here = a new version of it (D38).
     const prev = this.store.activeByName(d.chatId, d.name);
@@ -337,7 +348,7 @@ export class Flow {
       await note(`**${new Date().toISOString().slice(0, 16).replace('T', ' ')} UTC：飞书审批通过，指令已生效。**`);
     } else if (inst.status === 'REJECTED' || inst.status === 'CANCELED' || inst.status === 'DELETED') {
       this.store.setStatus(c.id, 'rejected');
-      dropOrphanSecrets(this.store, c.chatId, c.name, null);
+      dropOrphanSettings(this.store, c.chatId, c.name, null);
       const why = inst.status === 'REJECTED' ? `审核人驳回${inst.comments.length ? `：${inst.comments.join('；')}` : ''}` : '审批已撤回';
       this.store.audit(null, 'review.feishu_closed', { id: c.id, instanceCode, status: inst.status });
       if (meta.claimMessageId) await this.patch(meta.claimMessageId, shell(`未通过：${c.name}`, 'red', [{ tag: 'markdown', content: sanitizeMarkdown(why, 500) }]));
@@ -397,7 +408,7 @@ export class Flow {
     if (action === 'claim_drop') {
       this.store.setStatus(c.id, 'rejected');
       this.store.audit(caller.unionId, 'draft.drop', { id: c.id });
-      dropOrphanSecrets(this.store, c.chatId, c.name, caller.unionId);
+      dropOrphanSettings(this.store, c.chatId, c.name, caller.unionId);
       return shell(`已丢弃：${c.name}`, 'grey', [{ tag: 'markdown', content: `由 ${person(caller.openId)} 丢弃。` }]);
     }
     if (action !== 'claim_drop') this.checkOwnerForNewVersion(c, caller);
@@ -466,7 +477,7 @@ export class Flow {
     const meta = this.store.getMeta(c.id);
     if (decision === 'reject') {
       this.store.setStatus(c.id, 'rejected');
-      dropOrphanSecrets(this.store, c.chatId, c.name, caller.unionId);
+      dropOrphanSettings(this.store, c.chatId, c.name, caller.unionId);
       if (meta.claimMessageId) await this.patch(meta.claimMessageId, shell(`已驳回：${c.name}`, 'red', [{ tag: 'markdown', content: `审核人驳回：${sanitizeMarkdown(reason.trim(), 300)}` }]));
     } else if (approved >= this.reviewers.length) {
       await this.activate(c, { via: 'card_review' });

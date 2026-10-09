@@ -84,14 +84,16 @@ export function formCard(c: CommandRow, prefill: Record<string, string> = {}): o
   const runText = isWrite ? '确认执行' : '执行';
   const runType = isWrite ? 'danger' : 'primary';
   const warn = isWrite ? [{ tag: 'markdown', content: '<font color="red">⚠️ 这条指令要求执行前确认，请核对参数后再点「确认执行」。</font>' }] : [];
-  if (c.params.length === 0) {
+  // Configuration items (#3) are set on the website, never asked here.
+  const params = c.params.filter(p => p.scope !== 'config');
+  if (params.length === 0) {
     return shell(`Amber · ${c.name}`, isWrite ? 'red' : 'orange', [
       { tag: 'markdown', content: sanitizeMarkdown(c.description || '') || '这条指令没有参数。' },
       ...warn,
       buttonRow([btn(runText, { a: 'run', c: c.id }, runType), btn('返回', { a: 'list' })]),
     ]);
   }
-  const inputs = c.params.map(p => ({
+  const inputs = params.map(p => ({
     tag: 'input',
     name: p.name,
     label: { tag: 'plain_text', content: p.label ?? p.name },
@@ -252,7 +254,7 @@ export function infoCard(title: string, markdown: string): object {
 // ---------- agent requests (D33) and schedules (D32)
 
 function argLines(c: CommandRow, args: Record<string, string>): string {
-  const lines = c.params.map(p => `- ${sanitizeMarkdown(p.label ?? p.name, 40)}：${args[p.name] !== undefined && args[p.name] !== '' ? sanitizeMarkdown(args[p.name], 200) : '<font color="grey">（不填，按默认）</font>'}`);
+  const lines = c.params.filter(p => p.scope !== 'config').map(p => `- ${sanitizeMarkdown(p.label ?? p.name, 40)}：${args[p.name] !== undefined && args[p.name] !== '' ? sanitizeMarkdown(args[p.name], 200) : '<font color="grey">（不填，按默认）</font>'}`);
   return lines.length ? lines.join('\n') : '（无参数）';
 }
 

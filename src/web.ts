@@ -10,7 +10,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Store, CommandRow, ScheduleRow } from './db.ts';
 import type { Caller } from './engine.ts';
-import { runCommand, AmberError, secretVault } from './engine.ts';
+import { runCommand, AmberError, secretVault, runParams, configParams, configValues, validateArgs } from './engine.ts';
 import type { Signer } from './identity.ts';
 import type { Scheduler } from './scheduler.ts';
 import { envsHash, effectiveAccess, credentialPaths, type ExecutorHub } from './executors.ts';
@@ -238,6 +238,26 @@ export function startWeb(port: number, store: Store, deps: WebDeps): import('nod
           }
           return json(res, 200, { ok: true, secrets: vault.info(c, c.script.secrets!) });
         }
+        if ((m = /^\/web\/api\/commands\/([A-Za-z0-9-]{1,40})\/config$/.exec(url.pathname))) {
+          // Configuration items (#3) are set here only: by the command's creator or an admin.
+          const t = await target(store, deps, who.unionId, String(body.scope ?? ''), m[1]);
+          const c = t.cmd;
+          if (c.ownerUnionId !== who.unionId && !deps.isAdmin(who.unionId)) throw new AmberError('forbidden', '只有指令的创建人或管理员可以设置配置项');
+          const p = configParams(c.params).find(x => x.name === String(body.name ?? ''));
+          if (!p) throw new AmberError('bad_config', `这条指令没有配置项 ${String(body.name ?? '').slice(0, 40)}`);
+          if (body.delete === true) {
+            store.deleteConfig(c.chatId, c.name, p.name);
+            store.audit(who.unionId, 'config.delete', { commandId: c.id, chatId: c.chatId, name: c.name, item: p.name, via: 'web' });
+          } else {
+            const value = String(body.value ?? '').trim();
+            if (!value) throw new AmberError('bad_config', '请填写值；要清空请点「清除」');
+            // Same checks as a run (type, range, length, pattern), without the required/default rules.
+            const ok = await validateArgs([{ ...p, required: true, default: undefined }], { [p.name]: value.slice(0, 2000) });
+            store.putConfig(c.chatId, c.name, p.name, ok[p.name], who.unionId);
+            store.audit(who.unionId, 'config.set', { commandId: c.id, chatId: c.chatId, name: c.name, item: p.name, value: ok[p.name], via: 'web' });
+          }
+          return json(res, 200, { ok: true });
+        }
         if ((m = /^\/web\/api\/executors\/([0-9a-f]{16})\/(approve|reject|revoke)$/.exec(url.pathname))) {
           if (!deps.isAdmin(who.unionId) || !deps.hub) throw new AmberError('forbidden', '只有管理员可以管理执行端');
           if (body.confirm !== true) throw new AmberError('needs_confirm', '请确认后再操作');
@@ -293,7 +313,9 @@ function cmdView(c: CommandRow, viewer?: string, isAdmin?: (u: string) => boolea
     secrets,
     version: store ? store.versionsOf(c.id).length + 1 : 1,
     id: c.id, name: c.name, description: c.description, global: c.global, options: c.options,
-    params: c.params.map(p => ({ name: p.name, label: p.label ?? p.name, type: p.type, required: !!p.required, default: p.default, fromCity: p.defaultFrom === 'caller.city' })),
+    params: runParams(c.params).map(p => ({ name: p.name, label: p.label ?? p.name, type: p.type, required: !!p.required, default: p.default, fromCity: p.defaultFrom === 'caller.city' })),
+    // Configuration items (#3): values are not secret, everyone who sees the command sees them.
+    config: (v => configParams(c.params).map(p => ({ name: p.name, label: p.label ?? p.name, type: p.type, required: !!p.required, default: p.default ?? null, value: v[p.name] ?? null })))(store ? configValues(store, c) : {}),
   };
 }
 

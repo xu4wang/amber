@@ -10,6 +10,28 @@ let HUB: ExecutorHub | undefined;
 export function setExecutorHub(h: ExecutorHub): void { HUB = h; }
 export function executorHub(): ExecutorHub | undefined { return HUB; }
 
+let WEB_URL = '';
+/** The website, for "set it there" hints (#3); set once at startup. */
+export function setWebUrl(u: string): void { WEB_URL = u; }
+
+/** Parameters asked at each run, and configuration items (#3) set once on the website. */
+export const runParams = (params: ParamDef[]): ParamDef[] => params.filter(p => p.scope !== 'config');
+export const configParams = (params: ParamDef[]): ParamDef[] => params.filter(p => p.scope === 'config');
+
+/** Stored configuration values of a command line (chat + name). Callers read only the items the version declares. */
+export function configValues(store: Store, c: { chatId: string; name: string }): Record<string, string> {
+  return Object.fromEntries(store.configRows(c.chatId, c.name).map(r => [r.name, r.value]));
+}
+
+/** Required configuration items with neither a value nor a default. */
+export function missingConfig(store: Store, c: { chatId: string; name: string; params: ParamDef[] }, values = configValues(store, c)): string[] {
+  return configParams(c.params).filter(p => p.required && p.default === undefined && !(values[p.name] ?? '').trim()).map(p => p.label ?? p.name);
+}
+
+export function missingConfigMessage(missing: string[]): string {
+  return `还没设置配置项：${missing.join('、')}。请指令创建人或管理员在网站${WEB_URL ? `（${WEB_URL}）` : ''}的指令页面设置`;
+}
+
 let VAULT: SecretVault | undefined;
 /** The secret store used for runs (D48); set once at startup. */
 export function setSecretVault(v: SecretVault): void { VAULT = v; }
@@ -24,9 +46,12 @@ export function missingSecrets(c: { chatId: string; name: string; script: { secr
 }
 
 /** After a command line ends (retired, or a draft dropped / rejected with nothing active left under that
- *  name), its secrets go too, so a later, unrelated command with the same name cannot inherit them. */
-export function dropOrphanSecrets(store: Store, chatId: string, name: string, actor: string | null): void {
-  if (!VAULT || store.activeByName(chatId, name) || store.nameInProgress(chatId, name)) return;
+ *  name), its secrets and configuration values go too, so a later, unrelated command with the same name cannot inherit them. */
+export function dropOrphanSettings(store: Store, chatId: string, name: string, actor: string | null): void {
+  if (store.activeByName(chatId, name) || store.nameInProgress(chatId, name)) return;
+  const c = store.deleteConfigOf(chatId, name);
+  if (c) store.audit(actor, 'config.drop_all', { chatId, name, count: c });
+  if (!VAULT) return;
   const n = VAULT.deleteAll({ chatId, name });
   if (n) store.audit(actor, 'secret.drop_all', { chatId, name, count: n });
 }
@@ -117,7 +142,17 @@ export async function runCommand(store: Store, cmd: CommandRow, rawArgs: Record<
   try { script = validateScript(cmd.script); } catch (e) { throw new AmberError('invalid_script', `指令定义不合规，已拒绝执行：${(e as Error).message}`); }
   // confirm = true: only runnable from the confirmation form, never from a one-line shortcut (D30).
   if (cmd.options.confirm && !opts.trial && !opts.viaForm) throw new AmberError('needs_confirm', '这条指令需要在表单卡片上确认后执行');
-  const args = await validateArgs(cmd.params, rawArgs, facts);
+  const args = await validateArgs(runParams(cmd.params), rawArgs, facts);
+  // Configuration items (#3): the stored values, never the caller's. A trial run (the command is not live yet, so
+  // nothing can be stored) takes them from the trial form instead.
+  let config: Record<string, string> = {};
+  if (configParams(cmd.params).length) {
+    const stored = configValues(store, cmd);
+    const raw = opts.trial ? { ...stored, ...Object.fromEntries(configParams(cmd.params).filter(p => (rawArgs[p.name] ?? '').trim()).map(p => [p.name, rawArgs[p.name]!])) } : stored;
+    const missing = missingConfig(store, cmd, raw);
+    if (missing.length) throw new AmberError('missing_config', opts.trial ? `试运行需要填写配置项：${missing.join('、')}` : missingConfigMessage(missing));
+    config = await validateArgs(configParams(cmd.params), raw);
+  }
   // Command secrets (D48): all declared names must be set before anything runs.
   let secrets: Record<string, string> | undefined;
   if (script.secrets?.length) {
@@ -140,7 +175,7 @@ export async function runCommand(store: Store, cmd: CommandRow, rawArgs: Record<
     store.audit(caller.unionId, 'identity.issue', { runId, service: name, aud: d.audience, count: use.calls });
     services[name] = { tokens, ...(d.tcpPort ? { tcpPort: d.tcpPort } : {}), ...(d.unixSocket ? { unixSocket: d.unixSocket } : {}) };
   }
-  const input = { params: args, caller: { unionId: caller.unionId, chatId: caller.chatId, channel: caller.channel, city }, runId, ...(Object.keys(services).length ? { services } : {}), ...(secrets ? { secrets } : {}) };
+  const input = { params: { ...args, ...config }, caller: { unionId: caller.unionId, chatId: caller.chatId, channel: caller.channel, city }, runId, ...(Object.keys(services).length ? { services } : {}), ...(secrets ? { secrets } : {}) };
   // script.env (D50): on the executor that holds the data, never here.
   const raw = script.env
     ? (HUB ? await HUB.run(script, { name: cmd.name, params: cmd.params, script: cmd.script, options: cmd.options }, cmd.specHash, input) : { ok: false, content: '', error: '执行端服务不可用' })

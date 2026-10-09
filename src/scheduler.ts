@@ -4,7 +4,7 @@
 import type { Store, ScheduleRow, RequestRow, CommandRow } from './db.ts';
 import { computeSpecHash } from './db.ts';
 import type { Caller } from './engine.ts';
-import { findVisible, runCommand, validateArgs, AmberError } from './engine.ts';
+import { findVisible, runCommand, validateArgs, AmberError, runParams, missingConfig, missingConfigMessage } from './engine.ts';
 import { validateRule, nextRun, describeRule, formatAt } from './schedule-rule.ts';
 import type { Rule } from './schedule-rule.ts';
 import { scheduleResultCard, errorCard, scheduleListCard, rebindCard, closedCard, takeoverCard } from './cards.ts';
@@ -158,7 +158,9 @@ export class Scheduler {
     if (this.store.schedulesInChat(o.chatId).length >= MAX_PER_CHAT) throw new AmberError('too_many', `这里已有 ${MAX_PER_CHAT} 个定时任务，请先删除一些`);
     const rule = validateRule(o.rule);
     // Validate now with the creator's facts; the stored args are what every run will use.
-    await validateArgs(cmd.params, o.args, { city: () => this.deps.cityOf(creator.unionId) });
+    await validateArgs(runParams(cmd.params), o.args, { city: () => this.deps.cityOf(creator.unionId) });
+    const unset = missingConfig(this.store, cmd);
+    if (unset.length) throw new AmberError('missing_config', missingConfigMessage(unset));
     const s = this.store.insertSchedule({
       commandId: cmd.id, specHash: cmd.specHash, chatId: o.chatId, chatType: o.chatType, replyTo: o.replyTo, inThread: o.inThread,
       creatorUnionId: creator.unionId, creatorOpenId: creator.openId ?? null, args: o.args, rule, nextRunAt: nextRun(rule, Date.now()), requestedBy: o.requestedBy,

@@ -20,7 +20,7 @@ const FENCE = '`'.repeat(3);
 function docMarkdown(c: CommandRow, opts: { creator: string; submittedBy?: string; trial?: string; prev?: CommandRow }): string {
   const params = c.params.length
     ? ['| 参数 | 显示名 | 类型 | 默认值 | 必填 |', '|---|---|---|---|---|',
-       ...c.params.map(p => `| ${p.name} | ${p.label ?? ''} | ${p.type === 'integer' ? '整数' : '文本'} | ${p.defaultFrom === 'caller.city' ? '执行人办公城市' + (p.default ? `（兜底 ${p.default}）` : '') : (p.default ?? '')} | ${p.required ? '是' : '否'} |`)].join('\n')
+       ...c.params.map(p => `| ${p.name}${p.scope === 'config' ? '（配置项）' : ''} | ${p.label ?? ''} | ${p.type === 'integer' ? '整数' : '文本'} | ${p.defaultFrom === 'caller.city' ? '执行人办公城市' + (p.default ? `（兜底 ${p.default}）` : '') : (p.default ?? '')} | ${p.required ? '是' : '否'} |`)].join('\n')
     : '无参数。';
   const s = c.script;
   const how = '沙盒脚本';
