@@ -19,7 +19,7 @@
 - **一条指令 = 在哪里跑（`env`，可不写）+ 代码**。指令里**不写任何路径**，能访问什么完全由运行环境决定。
 - **不写 `env` 的指令**在 Amber 本机跑，不访问任何业务数据：系统目录和常用工具链只读；只能读写本次运行的临时目录（也是当前目录和 `HOME`）。
 - **运行环境不会自动创建**：指令只能引用已经登记、批准过的环境；引用不存在的环境，认领卡上会提示，执行时失败。
-- **同一个运行环境里的指令权限相同**。需要区分时，就登记不同的环境，比如同一个机器人登记「象钱看」（可读写）和「象钱看-只读」两个环境，报表类指令用只读的那个。
+- **同一个运行环境里的指令权限相同**。需要区分时，就登记不同的环境，比如同一个机器人登记「结算助手」（可读写）和「结算助手-只读」两个环境，报表类指令用只读的那个。
 - **两类运行环境**：
   - **目录环境**：`{WORKDIR}` 这一个目录可读写（或只读）。
   - **机器人环境**：从 botmux 机器人导出，和这个机器人在 botmux 沙箱里能访问的数据完全一样（工作目录、角色库、机器人目录、bots.json 里配的路径、它自己的 lark-cli 飞书身份），只去掉 botmux 的发消息凭证。脚本里用 lark-cli，用的就是这个机器人的身份，和它的会话一致。
@@ -67,7 +67,7 @@ node ~/amber/client/amber-executor/amber-executor.mjs init --name ledger-mac
 #  a. 目录环境：这个目录可读写（加 --readonly 就是只读）；需要第三方包时用 --python 指定解释器
 node ~/amber/client/amber-executor/amber-executor.mjs env set 台账 /Users/me/bots/ledger --python /Users/me/venvs/ledger/bin/python3
 #  b. 机器人环境：从 botmux 导出某个机器人的访问权限，再导入
-node ~/amber/client/amber-executor/export-botmux-env.mjs --bot cli_xxxx --name 象钱看 --python /opt/homebrew/bin/python3 > /tmp/env.json
+node ~/amber/client/amber-executor/export-botmux-env.mjs --bot cli_xxxx --name 结算助手 --python /opt/homebrew/bin/python3 > /tmp/env.json
 node ~/amber/client/amber-executor/amber-executor.mjs env import /tmp/env.json
 #     只读版本：导出时加 --readonly，用另一个名字导入
 #  查看：… env show
@@ -103,7 +103,7 @@ node ~/amber/client/amber-executor/amber-executor.mjs status
 
 ```json
 {
-  "name": "象钱看",
+  "name": "结算助手",
   "workdir": "/Users/me/clearing-settlement",
   "python": "/opt/homebrew/bin/python3",
   "access": {
@@ -129,7 +129,7 @@ node ~/amber/client/amber-executor/amber-executor.mjs status
 ```json
 "script": {
   "kind": "script", "lang": "python",
-  "env": "dev-prem/象钱看",
+  "env": "ledger-mac/结算助手",
   "code": "import os\nroot = os.environ['WORKDIR']\n…"
 }
 ```
