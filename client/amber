@@ -19,6 +19,8 @@ usage:
   amber retire <command>                       take a command offline; its creator or an admin confirms on a card
   amber global <command> | local <command>     make a command usable everywhere / only where it was made;
                                                an admin confirms on a card
+  amber envs [--mine]                          approved run environments to name in script.env ("executor/env");
+                                               --mine: only those exported from this bot ($BOTMUX_LARK_APP_ID)
   amber info                                   the Amber service this machine uses, and its website
   amber config set-url <url>                   set the Amber service address for this machine
 
@@ -88,6 +90,8 @@ def parse(argv):
         a = argv[i]
         if a == "--json":
             opts["json"] = True
+        elif a == "--mine":
+            opts["mine"] = True
         elif a in ("-h", "--help"):
             raise Usage()
         elif a in flags:
@@ -163,6 +167,32 @@ def main(argv):
     if cmd == "info":
         r = call("GET", "/v1/info")
         return out(r, opts, "Amber 服务：%s\n网站：%s\n本机名称：%s" % (BASE, r.get("webUrl"), r.get("machine")))
+    if cmd == "envs":
+        r = call("GET", "/v1/envs")
+        if not r.get("ok"):
+            return out(r, opts, "")
+        app = os.environ.get("BOTMUX_LARK_APP_ID", "")
+        mine = "mine" in opts
+        if mine and not app:
+            print("amber: 没有 $BOTMUX_LARK_APP_ID，判断不了哪个是自己的环境；去掉 --mine 看全部", file=sys.stderr)
+            return 2
+        rows = []
+        for ex in r.get("executors") or []:
+            for e in ex.get("envs") or []:
+                src = e.get("source") or ""
+                if mine and src not in ("botmux:" + app, "botmux:%s（只读）" % app):
+                    continue
+                rows.append((e["ref"], "在线" if ex.get("online") else "离线", src or "-", e.get("workdir", ""), "自己的" if app and src.startswith("botmux:" + app) else ""))
+        if "json" in opts:
+            print(json.dumps(r, ensure_ascii=False, indent=2))
+            return 0
+        if not rows:
+            print("没有找到%s运行环境。需要访问本机数据时，请用户找管理员为你登记一个（见文档「执行端」）。" % ("属于你的" if mine else "已批准的"))
+            return 0
+        print("草稿里写 \"env\": \"<下面第一列>\"；能访问的数据由环境决定，草稿不写路径。\n")
+        for ref, st, src, wd, own in rows:
+            print("%s\t%s\t来源 %s\tWORKDIR %s%s" % (ref, st, src, wd, "\t← 你自己的环境" if own else ""))
+        return 0
     if cmd == "submit":
         if len(pos) < 2:
             raise Usage()

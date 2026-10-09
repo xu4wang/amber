@@ -270,6 +270,15 @@ export class ExecutorHub {
     j.resolve(r);
   }
 
+  /** For agents choosing script.env (`amber envs`): approved executors and their environments. Names, where
+   *  they run and where they come from — not the full path lists (those are for admins). */
+  agentList(): { name: string; machine: string; online: boolean; envs: { env: string; ref: string; workdir: string; source: string | null; realHome: boolean }[] }[] {
+    return this.store.listExecutors().filter(e => e.status === 'approved').map(e => ({
+      name: e.name, machine: e.machine, online: this.online(e),
+      envs: Object.entries(e.envs).map(([k, v]) => ({ env: k, ref: `${e.name}/${k}`, workdir: v.workdir, source: v.source ?? null, realHome: v.realHome === true })),
+    }));
+  }
+
   /** Where a command's script.env points, for cards and review documents. */
   describe(env: string): string {
     const p = parseEnv(env);

@@ -68,6 +68,7 @@ amber submit draft.json                      提交新指令草稿（同名即�
 amber retire <指令>                          下线指令，需要创建人或管理员在卡片上确认
 amber global <指令>                          设为全局，需要管理员在卡片上确认
 amber local <指令>                           取消全局，需要管理员在卡片上确认
+amber envs [--mine]                          已批准的运行环境（草稿里 env 写第一列）；--mine 只看从本机器人导出的
 amber info                                   本机连的 Amber 服务、网站地址
 amber config set-url <地址>                  设置本机的 Amber 服务地址
 ```

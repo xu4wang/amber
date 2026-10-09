@@ -361,7 +361,7 @@ test('executor: admins see and decide executors on the website; nobody else can'
     const k = newExecutorKeys();
     const signPub = pubB64(createPublicKey(keyFromPem(k.signKey))), boxPub = pubB64(createPublicKey(keyFromPem(k.boxKey)));
     const id = fingerprint(signPub, boxPub).slice(0, 16);
-    const body = JSON.stringify({ name: 'web-box', envs: { e: { workdir: '/tmp/x' } }, signPub, boxPub });
+    const body = JSON.stringify({ name: 'web-box', envs: { e: { workdir: '/tmp/x' }, mine: { workdir: '/tmp/y', source: 'botmux:cli_me', realHome: true, access: { readWrite: ['/tmp/y', '/tmp/secret-list'] } } }, signPub, boxPub });
     const reg = await fetch(`http://127.0.0.1:${env.apiPort}/v1/executor/register`, { method: 'POST', body, headers: signRequest(keyFromPem(k.signKey), id, 'POST', '/v1/executor/register', body) }).then(x => x.json());
     assert.equal(reg.status, 'pending');
     // Amber checks an environment's shape too: reserved variables, relative paths, root.
@@ -383,11 +383,26 @@ test('executor: admins see and decide executors on the website; nobody else can'
     const view = await get(aliceC);
     const ex = view.executors.find((e: any) => e.id === id);
     assert.equal(ex.status, 'pending');
+    assert.deepEqual((await fetch(`http://127.0.0.1:${env.apiPort}/v1/envs`).then(x => x.json())).executors, [], 'pending executors are not offered to agents');
     assert.equal(ex.fingerprint, showFingerprint(fingerprint(signPub, boxPub)));
     assert.equal((await post(aliceC, `/web/api/executors/${id}/approve`, { h: ex.h })).status, 400, 'needs confirm');
     assert.match((await post(aliceC, `/web/api/executors/${id}/approve`, { confirm: true, h: '0'.repeat(16) })).body.message, /已经变了/);
     assert.equal((await post(aliceC, `/web/api/executors/${id}/approve`, { confirm: true, h: ex.h })).body.status, 'approved');
     assert.equal(env.amber.store.approvedExecutor('web-box')?.id, id);
+    // Agents list environments by name (amber envs): approved only, no path lists; --mine picks the bot's own.
+    const envsApi = await fetch(`http://127.0.0.1:${env.apiPort}/v1/envs`).then(x => x.json());
+    assert.deepEqual(envsApi.executors.map((x: any) => x.name), ['web-box']);
+    assert.ok(!JSON.stringify(envsApi).includes('/tmp/secret-list'), 'no access lists for agents');
+    const cliEnv = { ...process.env, AMBER_URL: `http://127.0.0.1:${env.apiPort}`, BOTMUX_LARK_APP_ID: 'cli_me' };
+    const all = (await promisify(execFile)('python3', [join(ROOT, 'client', 'amber'), 'envs'], { env: cliEnv, encoding: 'utf8' })).stdout;
+    assert.match(all, /web-box\/e\t/);
+    assert.match(all, /web-box\/mine\t在线|web-box\/mine\t离线/);
+    assert.match(all, /web-box\/mine.*← 你自己的环境/);
+    const mineOut = (await promisify(execFile)('python3', [join(ROOT, 'client', 'amber'), 'envs', '--mine'], { env: cliEnv, encoding: 'utf8' })).stdout;
+    assert.match(mineOut, /web-box\/mine/);
+    assert.doesNotMatch(mineOut, /web-box\/e\t/);
+    const other = (await promisify(execFile)('python3', [join(ROOT, 'client', 'amber'), 'envs', '--mine'], { env: { ...cliEnv, BOTMUX_LARK_APP_ID: 'cli_other' }, encoding: 'utf8' })).stdout;
+    assert.match(other, /没有找到属于你的运行环境/);
     // The Feishu card for the same registration is now stale.
     const card = fake.sent.find(s => s.to.unionId === alice.unionId && /执行端申请登记/.test(FakeFeishu.text(s.card)))!;
     assert.match(JSON.stringify(await env.click(alice, card.id, button(card.card, 'exe_ok')!)), /已经批准/);
