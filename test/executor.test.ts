@@ -392,8 +392,8 @@ test('export-botmux-env: a bot\'s access as an environment definition, mirroring
       { larkAppId: 'cli_y', workingDir: '/elsewhere' },
     ]));
     const exp = async (...a: string[]) => JSON.parse((await promisify(execFile)(process.execPath, [join(ROOT, 'client', 'amber-executor', 'export-botmux-env.mjs'), ...a], { env: { ...process.env, HOME: home }, encoding: 'utf8' })).stdout);
-    const d = await exp('--bot', 'cli_x', '--name', '象钱看');
-    assert.equal(d.name, '象钱看');
+    const d = await exp('--bot', 'cli_x', '--name', '结算助手');
+    assert.equal(d.name, '结算助手');
     assert.equal(d.workdir, work);
     assert.deepEqual(d.access.readWrite.sort(), [work, extra, join(home, '.botmux/bots/cli_x'), join(home, 'botmux-roles/cli_x'), join(home, '.lark-cli-bots/cli_x')].sort());
     assert.ok(d.access.readOnly.includes('/opt/shared'));
