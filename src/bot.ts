@@ -1,7 +1,7 @@
 import * as lark from '@larksuiteoapi/node-sdk';
 import type { Store, CommandRow, ScopeType } from './db.ts';
 import type { Caller, Block } from './engine.ts';
-import { visibleCommands, findVisible, findManageable, runCommand, AmberError, secretVault, lineOf, dropOrphanSettings, runParams } from './engine.ts';
+import { ENV_NOT_GLOBAL, visibleCommands, findVisible, findManageable, runCommand, AmberError, secretVault, lineOf, dropOrphanSettings, runParams } from './engine.ts';
 import { Mentions, reassignCard, listCard, formCard, runningCard, resultCard, errorCard, infoCard, retireConfirmCard, closedCard, secretFormCard, secretPickCard, executorApprovalCard, executorDecidedCard, executorListCard, executorFollowCard } from './cards.ts';
 import { ExecutorHub } from './executors.ts';
 import { AppStore } from './apps.ts';
@@ -496,6 +496,10 @@ export class AmberBot {
       return true;
     }
     const toGlobal = verb === '全局' || verb === '设为全局';
+    if (toGlobal && cmd.script.env) {
+      await this.replyCard(messageId, inThread, errorCard('Amber', ENV_NOT_GLOBAL));
+      return true;
+    }
     if (toGlobal && !cmd.global && this.store.listActiveGlobal().some(g => g.name === cmd!.name)) {
       await this.replyCard(messageId, inThread, errorCard('Amber', `已经有一个全局应用叫「${cmd.name}」，不能重名`));
       return true;

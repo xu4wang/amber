@@ -110,6 +110,10 @@ export function findVisible(store: Store, caller: Caller, idOrName: string): Com
   return c;
 }
 
+/** An app that runs in an executor environment (script.env) can never be global: that would let everyone run
+ *  code in a bot's environment, with whatever data it can reach. Who may use an environment is #8. */
+export const ENV_NOT_GLOBAL = '在执行端环境里运行的应用（写了 env）不能设为全局：那等于让所有人都能在这个环境里执行、访问它能访问的数据';
+
 /** For managing (take offline, change scope): what the caller can run, and for an admin also anyone's
  *  command by id, or by name in this chat. Never for running. */
 export function findManageable(store: Store, caller: Caller, idOrName: string, admin: boolean): CommandRow {
@@ -159,6 +163,8 @@ export async function runCommand(store: Store, cmd: CommandRow, rawArgs: Record<
   // together with internet, unknown services … are all refused before any run record or token exists.
   let script;
   try { script = validateScript(cmd.script); } catch (e) { throw new AmberError('invalid_script', `应用定义不合规，已拒绝执行：${(e as Error).message}`); }
+  // Belt and braces for ENV_NOT_GLOBAL: a global app with an environment runs for its creator only.
+  if (cmd.global && script.env && caller.unionId !== cmd.ownerUnionId) throw new AmberError('forbidden', ENV_NOT_GLOBAL);
   // confirm = true: only runnable from the confirmation form, never from a one-line shortcut (D30).
   if (cmd.options.confirm && !opts.trial && !opts.viaForm) throw new AmberError('needs_confirm', '这个应用需要在表单卡片上确认后执行');
   const args = await validateArgs(runParams(cmd.params), rawArgs, facts);

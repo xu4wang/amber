@@ -159,3 +159,27 @@ test('visibility: only the creator sees and runs a command; an admin looks and r
     assert.equal(env.amber.store.getCommand(id)!.status, 'retired');
   } finally { await env.close(); }
 });
+
+test('global: an app that runs in an executor environment cannot be made global, nor run by others if it somehow is', async () => {
+  const env = await makeEnv();
+  const { fake, alice, bob, carol } = env;
+  try {
+    fake.chats.get(GROUP)!.members.add(carol.unionId);
+    const id = await activate(env, { chatId: GROUP, chatType: 'group', name: '台账', params: [], script: script('print(1)') }, bob);
+    // Make it an environment app (as if submitted that way), keeping its stored hash consistent.
+    const { computeSpecHash } = await import('../src/db.ts');
+    const c = env.amber.store.getCommand(id)!;
+    const withEnv = { ...c, script: { ...c.script, env: 'box/e' } };
+    (env.amber.store as any).db.prepare('UPDATE commands SET script_json = ?, spec_hash = ? WHERE id = ?').run(JSON.stringify(withEnv.script), computeSpecHash(withEnv), id);
+    await env.say(alice, GROUP, '全局 台账');
+    assert.match(FakeFeishu.text(fake.sent.at(-1)!.card), /写了 env）不能设为全局/);
+    const r = await env.api('POST', '/v1/commands/scope', { chatId: GROUP, chatType: 'group', label: 'TestBot', user: alice.email, command: '台账', global: true });
+    assert.match(r.body.message, /不能设为全局/);
+    assert.equal(env.amber.store.getCommand(id)!.global, false);
+    // Already global somehow: only its creator can run it.
+    env.amber.store.setGlobal(id, true);
+    const before = fake.sent.length;
+    await env.say(carol, GROUP, '台账');
+    await env.waitFor(() => fake.sent.slice(before).some(s => /不能设为全局/.test(FakeFeishu.text(fake.cardOf(s.id)))) || undefined);
+  } finally { await env.close(); }
+});

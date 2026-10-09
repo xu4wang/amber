@@ -395,7 +395,8 @@ export class Flow {
     if (prev) {
       // Retire first: only one active command per name per chat.
       this.store.setStatus(prev.id, 'retired');
-      if (prev.global) this.store.setGlobal(c.id, true);
+      // A new version stays global, unless it now runs in an executor environment (ENV_NOT_GLOBAL).
+      if (prev.global && !c.script.env) this.store.setGlobal(c.id, true);
       this.store.audit(null, 'command.replace', { old: prev.id, oldSpec: prev.specHash, new: c.id, newSpec: c.specHash });
     }
     this.store.setStatus(c.id, 'active');
