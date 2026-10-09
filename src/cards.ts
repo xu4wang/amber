@@ -329,6 +329,22 @@ export function retireConfirmCard(c: CommandRow, schedules: number, requester: s
   ]);
 }
 
+/** #4: an admin offers an orphaned command (its creator left the group) to a member, who must accept it. */
+export function reassignCard(o: { requestId: string; name: string; chatName: string; adminOpenId?: string; schedules: { ruleText: string; args: Record<string, string> }[]; secrets: number; config: number }): object {
+  const sch = o.schedules.length
+    ? `\n\n原来挂在它上面的 **${o.schedules.length} 个定时任务**：\n${o.schedules.map(s => `- ${sanitizeMarkdown(s.ruleText, 60)}${Object.keys(s.args).length ? `（${sanitizeMarkdown(Object.entries(s.args).map(([k, v]) => `${k}=${v}`).join(' '), 120)}）` : ''}`).join('\n')}\n接收时可以选择以你的身份重建它们（时间、参数不变）；不重建就会删除。`
+    : '';
+  const kept = [o.secrets ? `${o.secrets} 个密钥` : '', o.config ? `${o.config} 个配置项` : ''].filter(Boolean).join('、');
+  return shell(`Amber · 请你接手指令：${o.name}`, 'orange', [
+    { tag: 'markdown', content: `${o.adminOpenId ? person(o.adminOpenId) : '管理员'} 请你接手群「${sanitizeMarkdown(o.chatName, 40)}」里的指令「**${sanitizeMarkdown(o.name, 40)}**」：它的创建人已不在这个群里。\n\n接收后你就是这条指令的创建人：只有你能执行它，执行时用你的身份和数据权限。${kept ? `原来设置的${kept}会保留，可以在网站上修改。` : ''}${sch}` },
+    buttonRow([
+      ...(o.schedules.length ? [btn('接收，并重建定时任务', { a: 'rs_ok', r: o.requestId, s: '1' }, 'primary')] : []),
+      btn(o.schedules.length ? '只接收指令' : '接收', { a: 'rs_ok', r: o.requestId, s: '0' }, o.schedules.length ? 'default' : 'primary'),
+      btn('不接收', { a: 'rs_no', r: o.requestId }, 'danger'),
+    ]),
+  ]);
+}
+
 export function closedCard(title: string, template: string, md: string): object {
   return shell(`Amber · ${title}`, template, [{ tag: 'markdown', content: md }]);
 }

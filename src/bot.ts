@@ -2,7 +2,7 @@ import * as lark from '@larksuiteoapi/node-sdk';
 import type { Store, CommandRow, ScopeType } from './db.ts';
 import type { Caller, Block } from './engine.ts';
 import { visibleCommands, findVisible, findManageable, runCommand, AmberError, secretVault, dropOrphanSettings, runParams } from './engine.ts';
-import { Mentions, listCard, formCard, runningCard, resultCard, errorCard, infoCard, retireConfirmCard, closedCard, secretFormCard, secretPickCard, executorApprovalCard, executorDecidedCard, executorListCard, executorFollowCard } from './cards.ts';
+import { Mentions, reassignCard, listCard, formCard, runningCard, resultCard, errorCard, infoCard, retireConfirmCard, closedCard, secretFormCard, secretPickCard, executorApprovalCard, executorDecidedCard, executorListCard, executorFollowCard } from './cards.ts';
 import { ExecutorHub } from './executors.ts';
 import type { AmberConfig } from './config.ts';
 import { Flow } from './flow.ts';
@@ -26,6 +26,9 @@ export function splitArgs(text: string): string[] {
   while ((m = re.exec(text))) out.push(m[1] ?? m[2] ?? m[3]);
   return out;
 }
+
+/** #4: how long an offer to take over an orphaned command stays open. */
+const REASSIGN_TTL_MS = 7 * 24 * 3600_000;
 
 /** D44: how long a Feishu retire confirmation stays usable. */
 const RETIRE_CONFIRM_MS = 5 * 60_000;
@@ -193,6 +196,97 @@ export class AmberBot {
   private memberCache = new Map<string, { ids: Set<string>; at: number }>();
 
   /** Whether a person is in a group. undefined when Amber cannot tell (needs im:chat.members:read). */
+  /** #4: a group command whose creator is no longer in its group. undefined = cannot tell. */
+  async isOrphan(c: CommandRow): Promise<boolean | undefined> {
+    if (c.scopeType !== 'group') return false;   // no owner on record counts as gone
+    const m = await this.isMember(c.chatId, c.ownerUnionId);
+    return m === undefined ? undefined : !m;
+  }
+
+  /** People in a group, for an admin choosing who takes over an orphaned command. */
+  async groupMembers(chatId: string): Promise<{ unionId: string; name: string }[]> {
+    const out: { unionId: string; name: string }[] = [];
+    let pageToken: string | undefined;
+    for (let i = 0; i < 50; i++) {
+      const r = await this.client.request({ method: 'GET', url: `/open-apis/im/v1/chats/${chatId}/members`, params: { member_id_type: 'union_id', page_size: 100, ...(pageToken ? { page_token: pageToken } : {}) } }) as any;
+      for (const m of r?.data?.items ?? []) if (m.member_id) out.push({ unionId: String(m.member_id), name: String(m.name ?? '') });
+      if (!r?.data?.has_more) break;
+      pageToken = r.data.page_token;
+    }
+    return out;
+  }
+
+  /** #4: an admin offers an orphaned command to a group member; it changes hands only when that person accepts. */
+  async requestReassign(cmdId: string, toUnionId: string, admin: { unionId: string; openId?: string }): Promise<{ requestId: string }> {
+    if (!this.isAdmin(admin.unionId)) throw new AmberError('forbidden', '只有管理员可以重新分配指令');
+    const c = this.store.getCommand(cmdId);
+    if (!c || c.status !== 'active' || c.scopeType !== 'group') throw new AmberError('not_found', '没有找到这条群指令');
+    const orphan = await this.isOrphan(c);
+    if (orphan === undefined) throw new AmberError('unknown_membership', 'Amber 暂时无法确认创建人是否还在群里（缺少「获取群成员」权限）');
+    if (!orphan) throw new AmberError('not_orphan', '创建人还在群里：只有创建人已不在群里的指令才能重新分配');
+    if (await this.isMember(c.chatId, toUnionId) !== true) throw new AmberError('bad_target', '只能分配给这个群的成员');
+    // One open offer at a time: a new one replaces the old.
+    for (const r of this.store.awaitingReassigns(c.id)) this.store.transitionRequest(r.id, 'awaiting', 'canceled', { actorUnionId: admin.unionId });
+    const req = this.store.insertRequest({ kind: 'reassign', commandId: c.id, specHash: c.specHash, chatId: c.chatId, chatType: 'group', targetUnionId: toUnionId,
+      args: {}, rule: null, scheduleId: null, requestedBy: admin.unionId, replyTo: null, inThread: false });
+    const schedules = this.store.schedulesOfCommand(c.id).filter(s => s.creatorUnionId === c.ownerUnionId).map(s => this.scheduler.view(s));
+    const card = reassignCard({ requestId: req.id, name: c.name, chatName: (await this.chatName(c.chatId)) ?? '这个群', adminOpenId: admin.openId,
+      schedules, secrets: this.store.secretRows(c.chatId, c.name).filter(r => (c.script.secrets ?? []).includes(r.name)).length,
+      config: this.store.configRows(c.chatId, c.name).filter(r => c.params.some(p => p.scope === 'config' && p.name === r.name)).length });
+    try {
+      const mid = await this.flow.send({ unionId: toUnionId }, card);
+      if (mid) this.store.setRequestMessage(req.id, mid);
+    } catch (e) {
+      this.store.transitionRequest(req.id, 'awaiting', 'failed', { error: 'card_failed' });
+      throw new AmberError('send_failed', '没能把确认卡发给对方，请稍后再试');
+    }
+    this.store.audit(admin.unionId, 'command.reassign_request', { commandId: c.id, name: c.name, chatId: c.chatId, from: c.ownerUnionId, to: toUnionId, requestId: req.id });
+    return { requestId: req.id };
+  }
+
+  /** The person an orphaned command was offered to clicks: accept (optionally rebuilding its schedules as them) or decline. */
+  private async onReassignClick(value: Record<string, string>, caller: Caller): Promise<object> {
+    const req = this.store.getRequest(String(value.r));
+    if (!req || req.kind !== 'reassign') throw new AmberError('not_found', '这个请求已不存在');
+    if (req.targetUnionId !== caller.unionId) throw new AmberError('forbidden', '这张卡片是发给别人的');
+    if (req.status !== 'awaiting') throw new AmberError('closed', '这个请求已经处理过或被取消了');
+    const c = req.commandId ? this.store.getCommand(req.commandId) : undefined;
+    if (value.a === 'rs_no') {
+      this.store.transitionRequest(req.id, 'awaiting', 'canceled', { actorUnionId: caller.unionId });
+      this.store.audit(caller.unionId, 'command.reassign_decline', { requestId: req.id, commandId: req.commandId });
+      try { await this.flow.send({ unionId: req.requestedBy }, infoCard('对方没有接收', `${c?.name ?? '指令'}：对方选择了不接收。`)); } catch { /* best effort */ }
+      return closedCard('没有接收', 'grey', `你没有接收「${c?.name ?? '指令'}」。`);
+    }
+    if (Date.now() - req.createdAt > REASSIGN_TTL_MS) {
+      this.store.transitionRequest(req.id, 'awaiting', 'expired');
+      throw new AmberError('expired', '这张卡片已超过 7 天，请管理员重新发起');
+    }
+    const fail = (why: string) => { this.store.transitionRequest(req.id, 'awaiting', 'failed', { error: why }); return closedCard('没有接收', 'red', why); };
+    if (!c || c.status !== 'active' || c.specHash !== req.specHash) return fail('这条指令在发起之后已经更新或下线，请管理员重新发起。');
+    if (await this.isOrphan(c) !== true) return fail('原创建人已经回到群里（或暂时无法确认），这条指令不再需要重新分配。');
+    if (await this.isMember(c.chatId, caller.unionId) !== true) return fail('你已不在这个群里，不能接手。');
+    if (!this.store.transitionRequest(req.id, 'awaiting', 'running', { actorUnionId: caller.unionId })) throw new AmberError('closed', '这个请求已经处理过了');
+    const from = c.ownerUnionId;
+    const old = this.store.schedulesOfCommand(c.id).filter(s => s.creatorUnionId === from);
+    this.store.setMeta(c.id, { ownerUnionId: caller.unionId, ownerOpenId: caller.openId ?? null });
+    const now = this.store.getCommand(c.id)!;
+    const rebuilt: string[] = [], failed: string[] = [];
+    for (const s of old) {
+      this.scheduler.remove(s, caller.unionId);
+      if (value.s !== '1') continue;
+      try {
+        const n = await this.scheduler.create({ cmd: now, chatId: s.chatId, chatType: s.chatType, replyTo: s.replyTo, inThread: s.inThread,
+          creator: { ...caller, chatId: s.chatId, chatType: s.chatType, channel: 'bot' }, args: s.args, rule: s.rule, requestedBy: '重新分配', via: { reassignFrom: s.id } });
+        rebuilt.push(n.id);
+      } catch (e) { failed.push(`${s.id}：${e instanceof AmberError ? e.message : '出错了'}`); }
+    }
+    this.store.transitionRequest(req.id, 'running', 'done', { actorUnionId: caller.unionId });
+    this.store.audit(caller.unionId, 'command.reassign', { requestId: req.id, commandId: c.id, name: c.name, chatId: c.chatId, from, to: caller.unionId, schedulesDeleted: old.map(s => s.id), schedulesRebuilt: rebuilt });
+    const note = `${old.length ? (value.s === '1' ? `原来的 ${old.length} 个定时任务已以你的身份重建 ${rebuilt.length} 个${failed.length ? `；没能重建：${failed.join('；')}` : ''}。` : `原来的 ${old.length} 个定时任务已删除。`) : ''}`;
+    try { await this.flow.send({ unionId: req.requestedBy }, infoCard('指令已接手', `「${c.name}」已由新的负责人接收。${note}`)); } catch { /* best effort */ }
+    return closedCard(`已接手：${c.name}`, 'green', `你现在是「${c.name}」的创建人。在网站上可以查看和修改它的配置项、密钥。${note}`);
+  }
+
   async isMember(chatId: string, unionId: string): Promise<boolean | undefined> {
     const hit = this.memberCache.get(chatId);
     if (hit && Date.now() - hit.at < 10 * 60_000) return hit.ids.has(unionId);
@@ -661,6 +755,7 @@ export class AmberBot {
       if (value.a === 'req_ok' || value.a === 'req_no') {
         return raw(await this.agent.onClick(value.a === 'req_ok', String(value.r), caller, chatId, messageId));
       }
+      if (value.a === 'rs_ok' || value.a === 'rs_no') return raw(await this.onReassignClick(value, caller));
       if (value.a === 'sch_rebind' || value.a === 'sch_drop') {
         const s = this.store.getSchedule(String(value.s));
         if (!s) throw new AmberError('not_found', '定时任务已不存在');

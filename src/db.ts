@@ -86,7 +86,7 @@ export interface RunRow {
   status: string; result: string | null; error: string | null; startedAt: number; finishedAt: number | null;
 }
 
-export type RequestKind = 'run' | 'schedule' | 'schedule_resume' | 'schedule_delete' | 'retire' | 'scope_global' | 'scope_local';
+export type RequestKind = 'run' | 'schedule' | 'schedule_resume' | 'schedule_delete' | 'retire' | 'scope_global' | 'scope_local' | 'reassign';
 export type RequestStatus = 'awaiting' | 'running' | 'done' | 'failed' | 'canceled' | 'expired';
 export interface RequestRow {
   id: string; kind: RequestKind; commandId: string | null; specHash: string | null; chatId: string; chatType: ScopeType;
@@ -516,6 +516,11 @@ export class Store {
       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(row.id, row.kind, row.commandId, row.specHash, row.chatId, row.chatType, row.targetUnionId,
       JSON.stringify(row.args), row.rule ? JSON.stringify(row.rule) : null, row.scheduleId, row.requestedBy, row.replyTo, row.inThread ? 1 : 0, row.status, row.createdAt);
     return row;
+  }
+
+  /** Reassignments of a command still waiting for the new owner's click. */
+  awaitingReassigns(commandId: string): RequestRow[] {
+    return (this.db.prepare(`SELECT id FROM requests WHERE kind = 'reassign' AND command_id = ? AND status = 'awaiting'`).all(commandId) as { id: string }[]).map(r => this.getRequest(r.id)!);
   }
 
   getRequest(id: string): RequestRow | undefined {

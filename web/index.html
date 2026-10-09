@@ -304,7 +304,7 @@ function cmdLeaf(c, scope) {
   const key = 'c:' + scope + ':' + c.id;
   ITEMS.set(key, { kind: 'cmd', c, scope });
   return `<div class="leaf" data-key="${esc(key)}" data-search="${esc((c.name + ' ' + (c.description || '')).toLowerCase())}">
-    <span class="name">${esc(c.name)}</span>${c.options.confirm ? '<span class="chip warn">需确认</span>' : ''}</div>`;
+    <span class="name">${esc(c.name)}</span>${c.orphan ? '<span class="chip warn">创建人已离群</span>' : ''}${c.options.confirm ? '<span class="chip warn">需确认</span>' : ''}</div>`;
 }
 
 // A schedule sits under the command it runs: the command is "what", the schedule is "when".
@@ -427,11 +427,24 @@ function cmdPane(key, { c, scope }) {
       <p class="note">这条指令运行时需要下面的密钥。值加密保存在 Amber 里，只交给这条指令使用，设置后不能再查看。${c.global ? '<br><b>这是全局指令，每个执行它的人都会用到同一份密钥</b>，请只填权限够用的凭证。' : ''}${c.canManage ? '' : '<br>只有创建人或管理员可以设置。'}</p>
       ${c.secrets.map(x => `<div class="field"><label>${esc(x.name)}</label><span class="examples">${c.canManage ? `<input type="password" autocomplete="new-password" data-secret-input="${esc(x.name)}" placeholder="${x.set ? '留空不修改' : '填写值（至少 6 个字符）'}"> <button type="button" class="btn small" data-secret="${esc(x.name)}:set">保存</button>${x.set ? ` <button type="button" class="btn small" data-secret="${esc(x.name)}:delete">删除</button>` : ''}<br>` : ''}<span class="note">${x.set ? `已设置${x.last4 ? ' · 末尾 ' + esc(x.last4) : ''}` : '<span style="color:var(--warn)">未设置</span>'}</span></span></div>`).join('')}
     </div>` : ''}
+    ${c.orphan ? `<div class="manage"><h3 class="note">重新分配</h3>
+      <p class="note">这条指令的创建人已不在群里，现在没人能执行它。可以把它交给群里的另一个人：Amber 私聊发确认卡，对方点「接收」后成为创建人，原来的配置项和密钥保留；原来的定时任务由对方选择是否以他的身份重建。</p>
+      <div class="field"><label>交给</label><span class="examples"><select data-reassign-to><option value="">读取群成员中……</option></select> <button type="button" class="btn small" data-reassign="1">发送确认卡</button></span></div></div>` : ''}
     ${c.canManage ? `<div class="manage"><h3 class="note">管理</h3>
       <p class="note">要修改这条指令，跟你的 agent 说改什么，它会提交新版本，审核通过后自动替换。不再需要时可以下线：下线后不能再执行，它的定时任务会暂停。</p>
       <button class="btn" data-retire="1">下线这条指令</button></div>` : ''}`;
   if (last && c.canRun) showOutput(document.getElementById('out'), last.r, last.meta);
   if (!c.canRun) loadSource();
+  if (c.orphan) loadMembers(scope);
+}
+
+async function loadMembers(scope) {
+  const sel = document.querySelector('[data-reassign-to]');
+  const chat = scope.replace(/^group:/, '');
+  const x = await fetch(`/web/api/groups/${encodeURIComponent(chat)}/members`).then(r => r.json()).catch(() => ({ ok: false }));
+  if (!sel) return;
+  if (!x.ok) { sel.innerHTML = '<option value="">读取失败</option>'; return; }
+  sel.innerHTML = '<option value="">选择群成员</option>' + x.members.map(m => `<option value="${esc(m.unionId)}">${esc(m.name || m.unionId)}</option>`).join('');
 }
 
 function schPane({ s, scope }) {
@@ -635,6 +648,18 @@ document.addEventListener('click', async ev => {
     history.replaceState(null, '', '#');
     await reload(null);
     welcome();
+    return;
+  }
+  const ra = ev.target.closest('[data-reassign]');
+  if (ra) {
+    const { c, scope } = ITEMS.get(SEL);
+    const sel = document.querySelector('[data-reassign-to]');
+    if (!sel || !sel.value) { alert('请先选择群成员'); return; }
+    if (!confirm(`把「${c.name}」交给 ${sel.options[sel.selectedIndex].text}？对方在飞书上点「接收」后才生效。`)) return;
+    ra.disabled = true;
+    const r = await post(`/web/api/commands/${encodeURIComponent(c.id)}/reassign`, { scope, to: sel.value });
+    ra.disabled = false;
+    alert(r.ok ? '已私聊发出确认卡，对方接收后生效。' : (r.message || r.error));
     return;
   }
   const cfg = ev.target.closest('[data-config]');

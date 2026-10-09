@@ -42,6 +42,10 @@ export interface WebDeps {
   /** Take a command offline (creator or admin only; schedules pause). */
   retire(cmdId: string, actor: { unionId: string }, byLabel: string): Promise<{ name: string; schedules: number }>;
   isAdmin(unionId: string): boolean;
+  /** #4 orphans: is the command's creator gone from its group; who is in a group; offer a command to a member. */
+  isOrphan(c: CommandRow): Promise<boolean | undefined>;
+  groupMembers(chatId: string): Promise<{ unionId: string; name: string }[]>;
+  requestReassign(cmdId: string, toUnionId: string, admin: { unionId: string; openId?: string }): Promise<{ requestId: string }>;
   /** Executors (D50): admins see and decide them on the website too. */
   hub?: ExecutorHub;
   /** Origin of the site, e.g. http://amber.example.com — POSTs from anywhere else are refused. */
@@ -176,6 +180,12 @@ export function startWeb(port: number, store: Store, deps: WebDeps): import('nod
           return json(res, 200, { ok: true, name: (await deps.nameOf(who.unionId)) ?? '', unionId: who.unionId });
         }
         if (req.method === 'GET' && url.pathname === '/web/api/overview') return json(res, 200, { ok: true, ...(await overview(store, deps, who.unionId)), timezones: timezones() });
+        if (req.method === 'GET' && url.pathname.startsWith('/web/api/groups/')) {
+          // Members of a group, for an admin offering an orphaned command to someone (#4).
+          const g = /^\/web\/api\/groups\/(oc_[A-Za-z0-9]+)\/members$/.exec(url.pathname);
+          if (!g || !deps.isAdmin(who.unionId)) return json(res, 404, { ok: false, error: 'not_found' });
+          return json(res, 200, { ok: true, members: await deps.groupMembers(g[1]) });
+        }
         if (req.method === 'GET' && url.pathname === '/web/api/runs') {
           return json(res, 200, { ok: true, runs: store.runsByCaller(who.unionId, 30).map(r => ({
             id: r.id, command: r.commandName, channel: r.channel, status: r.status, startedAt: r.startedAt, elapsedMs: r.finishedAt ? r.finishedAt - r.startedAt : null, args: r.args, scheduleId: r.scheduleId,
@@ -242,6 +252,12 @@ export function startWeb(port: number, store: Store, deps: WebDeps): import('nod
             store.audit(who.unionId, 'secret.set', { commandId: c.id, chatId: c.chatId, name: c.name, secrets: [name], via: 'web' });
           }
           return json(res, 200, { ok: true, secrets: vault.info(c, c.script.secrets!) });
+        }
+        if ((m = /^\/web\/api\/commands\/([A-Za-z0-9-]{1,40})\/reassign$/.exec(url.pathname))) {
+          if (!deps.isAdmin(who.unionId)) throw new AmberError('forbidden', '只有管理员可以重新分配指令');
+          const t = await target(store, deps, who.unionId, String(body.scope ?? ''), m[1], true);
+          const r = await deps.requestReassign(t.cmd.id, String(body.to ?? ''), { unionId: who.unionId, openId: who.openId ?? undefined });
+          return json(res, 200, { ok: true, ...r });
         }
         if ((m = /^\/web\/api\/commands\/([A-Za-z0-9-]{1,40})\/config$/.exec(url.pathname))) {
           // Configuration items (#3) are set here only: by the command's creator or an admin.
@@ -354,11 +370,14 @@ async function overview(store: Store, deps: WebDeps, unionId: string) {
       if (!m) continue;
     }
     const commands = store.listActiveByChat(chatId).filter(c => c.scopeType === 'group' && (admin || c.ownerUnionId === unionId));
+    // For admins: which of them lost their creator (#4), so they can be offered to someone else.
+    const orphans = new Set<string>();
+    if (admin) for (const c of commands) if (await deps.isOrphan(c) === true) orphans.add(c.id);
     const schedules = store.schedulesInChat(chatId).filter(s => admin || s.creatorUnionId === unionId);
     if (!commands.length && !schedules.length) continue;
     groups.push({
       chatId, name: (await deps.chatName(chatId)) ?? chatId,
-      commands: commands.map(c => cmdView(c, unionId, deps.isAdmin, store)),
+      commands: commands.map(c => ({ ...cmdView(c, unionId, deps.isAdmin, store), orphan: orphans.has(c.id) })),
       schedules: schedules.map(s => schView(store, s, unionId, deps.isAdmin)),
     });
   }

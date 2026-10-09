@@ -46,6 +46,9 @@ export async function startAmber(cfg: AmberConfig, opts: { apiPort: number; webP
     retire: (id, actor, by) => bot.retire(id, actor, by),
     isAdmin: u => bot.isAdminPublic(u),
     hub: bot.hub,
+    isOrphan: c => bot.isOrphan(c),
+    groupMembers: c => bot.groupMembers(c),
+    requestReassign: (id, to, admin) => bot.requestReassign(id, to, admin),
   });
   const closeServer = (s: Server) => new Promise<void>(r => { s.close(() => r()); s.closeAllConnections(); });
   return { bot, store, api, web, hub, close: async () => { hub.close(); await Promise.all([closeServer(api), closeServer(web)]); } };

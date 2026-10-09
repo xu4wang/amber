@@ -94,7 +94,7 @@ export class FakeFeishu {
       if (params?.member_id_type === 'open_id') {
         return { data: { items: people.map(u => { const x = this.userByUnion(u); return { member_id: x?.openId ?? u, name: x?.name ?? '' }; }), has_more: this.memberListEndless, page_token: 'next' } };
       }
-      return { data: { items: people.map(u => ({ member_id: u })), has_more: false } };
+      return { data: { items: people.map(u => ({ member_id: u, name: this.userByUnion(u)?.name ?? '' })), has_more: false } };
     }
     if ((m = /^\/open-apis\/im\/v1\/chats\/([^/]+)\/members\/bots$/.exec(url))) {
       if (!this.membersApiAllowed) this.fail(99991672, 'Access denied');
