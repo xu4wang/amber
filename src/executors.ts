@@ -30,6 +30,7 @@ export const PICKUP_MS = 30_000;
 export const RESULT_GRACE_MS = 30_000;
 const MAX_ENVS = 20;
 const MAX_PENDING = 10;
+const MAX_NONCES = 50_000;
 /** Jobs waiting for or running on one executor; more fail at once instead of piling up. */
 export const MAX_JOBS_PER_EXECUTOR = 20;
 
@@ -62,6 +63,8 @@ export class ExecutorHub {
     const now = Date.now();
     for (const [k, t] of this.nonces) if (now - t > 2 * REQUEST_SKEW_MS) this.nonces.delete(k);
     if (this.nonces.has(nonce)) return false;
+    // Bounded: registration requests from any allowed IP with a fresh key also land here. Full = refuse (fail closed).
+    if (this.nonces.size >= MAX_NONCES) throw new AmberError('busy', '请求太多，请稍后再试');
     this.nonces.set(nonce, now);
     return true;
   }
