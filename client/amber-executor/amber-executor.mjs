@@ -152,12 +152,20 @@ export async function startRelays(cfg, me, jobId, services) {
   if (!names.length) return { ports: [], close() {} };
   const servers = [], out = {};
   for (const name of names) {
+    // Only the job's own script holds its tokens: a request must present one it has not used yet, so
+    // other processes on this machine cannot use the port or spend the job's calls.
+    const unused = new Set(services[name]?.tokens ?? []);
     const srv = createServer((req, res) => {
       const chunks = [];
-      let n = 0;
-      req.on('data', c => { n += c.length; if (n > RELAY_MAX_REQUEST) req.destroy(); else chunks.push(c); });
+      let n = 0, big = false;
+      const reply = (status, type, body) => { if (!res.headersSent) { res.writeHead(status, { 'content-type': type }); res.end(body); } };
+      req.on('data', c => { n += c.length; if (n > RELAY_MAX_REQUEST) { big = true; chunks.length = 0; } else if (!big) chunks.push(c); });
       req.on('end', async () => {
-        const reply = (status, type, body) => { res.writeHead(status, { 'content-type': type }); res.end(body); };
+        if (big) return reply(413, 'application/json', JSON.stringify({ error: 'too_large', message: `请求超过 ${RELAY_MAX_REQUEST / 1024}KB` }));
+        const auth = typeof req.headers.authorization === 'string' ? req.headers.authorization : '';
+        const tok = [...unused].find(t => auth === `Amber ${t}` || auth.endsWith(` ${t}`));
+        if (!tok) return reply(403, 'application/json', JSON.stringify({ error: 'relay_refused', message: '请求没有带这次任务未用过的凭证' }));
+        unused.delete(tok);
         try {
           const headers = {};
           for (const k of ['authorization', 'content-type', 'accept']) if (typeof req.headers[k] === 'string') headers[k] = req.headers[k];
@@ -169,6 +177,10 @@ export async function startRelays(cfg, me, jobId, services) {
         }
       });
     });
+    // Bounded: a few connections, and requests that do not finish in time are dropped.
+    srv.maxConnections = 8;
+    srv.headersTimeout = 10_000;
+    srv.requestTimeout = 30_000;
     await new Promise((resolve, reject) => { srv.once('error', reject); srv.listen(0, '127.0.0.1', resolve); });
     servers.push(srv);
     out[name] = { tokens: services[name]?.tokens ?? [], tcpPort: srv.address().port };

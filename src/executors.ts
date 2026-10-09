@@ -45,6 +45,8 @@ export const envsHash = (name: string, envs: Record<string, ExecutorEnv>) => cre
 
 interface Waiter { resolve: (jobs: JobEnvelope[]) => void; timer: NodeJS.Timeout }
 interface PendingJob { executorId: string; envelope: JobEnvelope; picked: boolean; resolve: (r: ScriptResult) => void; timer: NodeJS.Timeout;
+  /** Service requests in flight for this job; cancelled when the job ends (D52). */
+  inflight?: Set<import('node:http').ClientRequest>;
   /** Relay calls left per declared service (D52): at most the declared count, one per token. */
   calls: Record<string, number> }
 
@@ -233,6 +235,7 @@ export class ExecutorHub {
       if (['authorization', 'content-type', 'accept'].includes(key) && typeof v === 'string' && v.length < 8192 && !/[\r\n]/.test(v)) headers[key] = v;
     }
     j.calls[name]--;
+    const inflight = j.inflight ?? (j.inflight = new Set());
     this.store.audit(null, 'executor.relay', { jobId: b.jobId, executor: e.id, service: name, method, path: path.split('?')[0] });
     return await new Promise(resolve => {
       const req = httpRequest({ ...(d.unixSocket ? { socketPath: d.unixSocket } : { host: '127.0.0.1', port: d.tcpPort }), method, path, headers: { ...headers, 'content-length': String(body.length) }, timeout: RELAY_TIMEOUT_MS }, res => {
@@ -241,6 +244,8 @@ export class ExecutorHub {
         res.on('data', (c: Buffer) => { n += c.length; if (n > RELAY_MAX_RESPONSE) { req.destroy(); resolve({ ok: false, error: 'too_large', message: `服务 ${name} 的响应超过 ${RELAY_MAX_RESPONSE / 1024 / 1024}MB` }); } else chunks.push(c); });
         res.on('end', () => { if (n <= RELAY_MAX_RESPONSE) resolve({ ok: true, status: res.statusCode ?? 502, contentType: String(res.headers['content-type'] ?? ''), body: Buffer.concat(chunks).toString('base64') }); });
       });
+      inflight.add(req);
+      req.on('close', () => inflight.delete(req));
       req.on('timeout', () => req.destroy(new Error('timeout')));
       req.on('error', err => resolve({ ok: false, error: 'service_unavailable', message: `服务 ${name} 不可用：${err.message}` }));
       req.end(body);
@@ -252,6 +257,8 @@ export class ExecutorHub {
     if (!j) return;
     clearTimeout(j.timer);
     this.jobs.delete(jobId);
+    // A job that ended (result, timeout, revocation) stops its service requests too.
+    for (const req of j.inflight ?? []) req.destroy(new Error('job ended'));
     j.resolve(r);
   }
 
