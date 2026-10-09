@@ -460,7 +460,7 @@ function exePane({ e }) {
       ${v.access.deny?.length ? `<dt>禁止</dt><dd>${pathList(v.access.deny, new Set())}</dd>` : ''}
       ${vars.length ? `<dt>环境变量</dt><dd><ul class="paths">${vars.map(([n, x]) => `<li><code>${esc(n)}=${esc(x)}</code></li>`).join('')}</ul></dd>` : ''}
       ${v.realHome ? '<dt>HOME</dt><dd>用户主目录（能访问的仍只有上面这些路径）</dd>' : ''}
-      ${v.follow ? `<dt>跟随</dt><dd><code>${esc(v.follow)}</code><br><span class="note">这个文件里的路径、环境变量、Python 变了会自动生效，并通知管理员</span></dd>` : ''}
+      ${v.follow ? `<dt>定义文件</dt><dd><code>${esc(v.follow)}</code><br><span class="note">它的路径、环境变量、Python 变了会自动生效，并通知管理员</span></dd>` : ''}
     </dl>${cred.size ? '<p class="note cred">⚠️ 标记的是凭证路径：这个环境里的指令能使用这些凭证。</p>' : ''}</div>`;
   }).join('');
   document.getElementById('pane').innerHTML = `${backBtn}

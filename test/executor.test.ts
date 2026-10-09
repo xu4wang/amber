@@ -197,11 +197,11 @@ test('executor: offline fails the run at once; a changed environment needs appro
     assert.deepEqual(printed, { format: 'amber-env/1', name: 'e', workdir: data, access: { readOnly: ['{WORKDIR}'] } });
     await cli(dir, 'env', 'set', 'e', data, '--readonly');
     const exported = JSON.parse(await cli(dir, 'env', 'export', 'e'));
-    assert.deepEqual(exported, { format: 'amber-env/1', name: 'e', workdir: data, access: { readOnly: [data] } });
+    assert.deepEqual(exported, printed, 'the file in envs/ is the definition itself');
     writeFileSync(join(base, 'e.json'), JSON.stringify(exported));
-    const before = readFileSync(join(dir, 'config.json'), 'utf8');
+    const before = readFileSync(join(dir, 'envs', 'e.json'), 'utf8');
     await cli(dir, 'env', 'import', join(base, 'e.json'));
-    assert.equal(readFileSync(join(dir, 'config.json'), 'utf8'), before, 'export → import is a no-op');
+    assert.equal(readFileSync(join(dir, 'envs', 'e.json'), 'utf8'), before, 'export → import is a no-op');
     writeFileSync(join(base, 'e2.json'), JSON.stringify({ ...exported, format: 'amber-env/2' }));
     await assert.rejects(cli(dir, 'env', 'import', join(base, 'e2.json')), /不认识的格式版本/);
     // The checklist in docs/environment-format.md, at import.
@@ -657,6 +657,9 @@ test('followed environments (D53): changes within the approved follow apply at o
   for (const bad of [{ ...base0, workdir: '/other' }, { ...base0, follow: '/g.json' }, { ...base0, source: 'botmux:cli_y' }, { ...base0, realHome: true }]) assert.equal(followDiff({ e: base0 }, { e: bad }), null, JSON.stringify(bad));
   assert.equal(followDiff({ e: { workdir: '/w' } }, { e: { workdir: '/w', access: { readWrite: ['/w', '/x'] } } }), null, 'not following: approval');
   assert.equal(followDiff({ e: base0 }, { e: base0, f: { workdir: '/z' } }), null, 'a new environment: approval');
+  assert.deepEqual(followDiff({ e: base0, f: { workdir: '/z' } }, { e: base0 }), [{ env: 'f', added: {}, removed: {}, vars: [], removedEnv: true }], 'removing one: allowed');
+  assert.deepEqual(followDiff({ e: { workdir: '/w' } }, { e: { workdir: '/w', follow: '/envs/e.json' } }), [], 'moving to the folder with the same content: silent');
+  assert.equal(followDiff({ e: { workdir: '/w' } }, { e: { workdir: '/w', follow: '/envs/e.json', access: { readWrite: ['/'] } } }), null, '…but not with other changes');
   assert.equal(followDiff({ e: base0 }, { e: { ...base0, access: { readWrite: ['/w', '/n'] } }, f: { workdir: '/z' } }), null, 'a followed change plus a new environment: approval');
 
   const env = await makeEnv();
@@ -668,14 +671,17 @@ test('followed environments (D53): changes within the approved follow apply at o
     const { alice, bob, fake } = env;
     env.amber.hub.pollWaitMs = 300;
     await cli(dir, 'init', '--name', 'followbox', '--amber', `http://127.0.0.1:${env.apiPort}`);
-    const defFile = join(base, 'bot-env.json');
+    // Environments are the files in envs/: the folder is all the executor reads.
+    mkdirSync(join(dir, 'envs'), { recursive: true });
+    const defFile = join(dir, 'envs', 'bot.json');
     const def = { format: 'amber-env/1', name: 'bot', workdir: data, access: { readWrite: [data] }, source: 'botmux:cli_x' };
     writeFileSync(defFile, JSON.stringify(def));
-    assert.match(await cli(dir, 'env', 'follow', defFile), /跟随/);
     child = spawn(process.execPath, [EXE, 'run'], { env: { ...process.env, AMBER_EXECUTOR_DIR: dir, AMBER_EXECUTOR_FOLLOW_MS: '400' } });
+    let execOut = '';
+    child.stdout!.on('data', b => { execOut += b; });
     const cards = (re: RegExp) => fake.sent.filter(s => s.to.unionId === alice.unionId && re.test(FakeFeishu.text(s.card)));
     const reg = await env.waitFor(() => cards(/执行端申请登记/)[0]);
-    assert.match(FakeFeishu.text(reg.card), /跟随/);
+    assert.match(FakeFeishu.text(reg.card), /定义文件/);
     await env.click(alice, reg.id, button(reg.card, 'exe_ok')!);
     const id = env.amber.store.approvedExecutor('followbox')!.id;
     // The followed file gains a path: applied without approval, admins told what changed.
@@ -688,25 +694,55 @@ test('followed environments (D53): changes within the approved follow apply at o
     assert.deepEqual(row.envs.bot.access?.readOnly, [extra]);
     // The revoke button on the notice: admins only.
     assert.match(JSON.stringify(await env.click(bob, notice.id, button(notice.card, 'exe_rv')!)), /只有管理员/);
-    // A broken file is ignored (the last approved entry stays, still approved).
-    const before = readFileSync(join(dir, 'config.json'), 'utf8');
+    // A broken file is ignored (the last good version stays, still approved, nothing registered).
+    const envsBefore = JSON.stringify(env.amber.store.getExecutor(id)!.envs);
     writeFileSync(defFile, '{ not json');
     await new Promise(r => setTimeout(r, 1500));
-    assert.equal(readFileSync(join(dir, 'config.json'), 'utf8'), before);
+    assert.equal(JSON.stringify(env.amber.store.getExecutor(id)!.envs), envsBefore);
+    assert.match(execOut, /env file not valid, keeping the last good version bot\.json/);
+    assert.doesNotMatch(execOut, /environments changed: none/);
     assert.equal(env.amber.store.getExecutor(id)!.status, 'approved');
+    writeFileSync(defFile, JSON.stringify({ ...def, access: { readWrite: [data], readOnly: [extra] } }));
+    // A second file: a new environment needs approval; removing it again only shrinks access and applies at once.
+    writeFileSync(join(dir, 'envs', 'more.json'), JSON.stringify({ workdir: extra }));
+    await env.waitFor(() => env.amber.store.getExecutor(id)!.status === 'pending');
+    await env.click(alice, (await env.waitFor(() => cards(/执行端申请登记/)[1])).id, button(cards(/执行端申请登记/)[1].card, 'exe_ok')!);
+    await env.waitFor(() => env.amber.store.getExecutor(id)!.status === 'approved' && 'more' in env.amber.store.getExecutor(id)!.envs);
+    rmSync(join(dir, 'envs', 'more.json'));
+    const gone = await env.waitFor(() => cards(/已删除/)[0]);
+    assert.match(FakeFeishu.text(gone.card), /环境「more」已删除/);
+    assert.equal(env.amber.store.getExecutor(id)!.status, 'approved');
+    assert.ok(!('more' in env.amber.store.getExecutor(id)!.envs));
     // A change outside the follow (WORKDIR) needs approval again.
     writeFileSync(defFile, JSON.stringify({ ...def, workdir: extra, access: { readWrite: [extra] } }));
     await env.waitFor(() => env.amber.store.getExecutor(id)!.status === 'pending');
-    await env.waitFor(() => cards(/执行端申请登记/).length === 2);
+    await env.waitFor(() => cards(/执行端申请登记/).length === 3);
     // While pending, even a followable change is not applied on its own: it is a new request to approve.
     writeFileSync(defFile, JSON.stringify({ ...def, workdir: extra, access: { readWrite: [extra], readOnly: [data] } }));
-    await env.waitFor(() => cards(/执行端申请登记/).length === 3);
+    await env.waitFor(() => cards(/执行端申请登记/).length === 4);
     assert.equal(env.amber.store.getExecutor(id)!.status, 'pending');
   } finally {
     child?.kill('SIGKILL');
     await env.close();
     rmSync(base, { recursive: true, force: true });
   }
+});
+
+test('executor: environments kept in config.json by older versions move to the envs/ folder unchanged', async () => {
+  const { mkdtempSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const dir = mkdtempSync(join(tmpdir(), 'amber-migrate-'));
+  const data = mkdtempSync(join(tmpdir(), 'amber-migrate-data-'));
+  try {
+    const k = newExecutorKeys();
+    writeFileSync(join(dir, 'sign-key.pem'), k.signKey); writeFileSync(join(dir, 'box-key.pem'), k.boxKey);
+    writeFileSync(join(dir, 'config.json'), JSON.stringify({ amber: 'http://127.0.0.1:9', name: 'old', envs: { 台账: { workdir: data }, 只读: { workdir: data, access: { readOnly: [data] }, interpreter: '/usr/bin/python3' } } }));
+    const out = await cli(dir, 'env', 'show');
+    assert.match(out, /台账：/); assert.match(out, /只读：/);
+    const cfg = JSON.parse(readFileSync(join(dir, 'config.json'), 'utf8'));
+    assert.equal(cfg.envs, undefined, 'moved out of config.json');
+    assert.deepEqual(JSON.parse(readFileSync(join(dir, 'envs', '只读.json'), 'utf8')), { format: 'amber-env/1', name: '只读', workdir: data, python: '/usr/bin/python3', access: { readOnly: [data] } });
+  } finally { rmSync(dir, { recursive: true, force: true }); rmSync(data, { recursive: true, force: true }); }
 });
 
 test('export-botmux-env --out: writes the file only when the definition changed', async () => {

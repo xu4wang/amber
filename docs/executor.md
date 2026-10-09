@@ -64,15 +64,14 @@ git clone https://github.com/xu4wang/amber.git ~/amber
 node ~/amber/client/amber-executor/amber-executor.mjs init --name ledger-mac
 #    输出里有「公钥指纹」，记下来，等会儿要和管理员核对
 
-# 3. 登记运行环境（二选一，可以都有）
+# 3. 放运行环境：~/.config/amber-executor/envs/ 里一个 <环境名>.json 就是一个环境。下面几种方式都只是往这里写文件
 #  a. 用一个目录生成：这个目录可读写（加 --readonly 就是只读）；需要第三方包时用 --python 指定解释器
 node ~/amber/client/amber-executor/amber-executor.mjs env set 台账 /Users/me/bots/ledger --python /Users/me/venvs/ledger/bin/python3
-#  b. 从 botmux 导出某个机器人的访问权限，再导入
-node ~/amber/client/amber-executor/export-botmux-env.mjs --bot cli_xxxx --name 结算助手 --python /opt/homebrew/bin/python3 > /tmp/env.json
-node ~/amber/client/amber-executor/amber-executor.mjs env import /tmp/env.json
-#     只读版本：导出时加 --readonly，用另一个名字导入
-#  查看：… env show；导出某个环境的 JSON（可以改完再 import）：… env export 台账
-#  env set 只是生成一份最简单的定义再导入；加 --print 只打印这份 JSON 不保存
+#  b. 从 botmux 导出某个机器人的访问权限，直接写进文件夹
+node ~/amber/client/amber-executor/export-botmux-env.mjs --bot cli_xxxx --name 结算助手 --python /opt/homebrew/bin/python3 --out ~/.config/amber-executor/envs/结算助手.json
+#     只读版本：导出时加 --readonly，写成另一个文件名
+#  c. 手写或别处生成的定义：… env import 文件.json（先校验再放进文件夹），或者直接复制进去
+#  查看：… env show；看某个环境的文件：… env export 台账；删除：… env rm 台账（或直接删文件）
 
 # 4. 常驻运行（launchd，开机自动启动），同时向 Amber 申请登记
 node ~/amber/client/amber-executor/amber-executor.mjs install-launchd
@@ -88,27 +87,26 @@ node ~/amber/client/amber-executor/amber-executor.mjs status
 - 最稳妥的做法是给执行端单独建一个系统用户，用它安装、运行（数据目录给这个用户读权限）；
 - 如果装在和机器人相同的用户下，就等于信任这个用户下的所有进程，只适合这些进程本来就可信的机器；或者它们都在沙箱里，并且确认沙箱挡住了 `~/.config/amber-executor/`。批准时管理员要知道是哪种情况。
 
-### 跟随 botmux 机器人的配置
+### 环境文件夹：改了怎么生效
 
-机器人环境可以「跟随」一个定义文件：第一次批准之后，这个文件里的路径、环境变量、Python 有变化，会自动生效，不需要重新批准；Amber 会给管理员发一张变化通知卡（新增的凭证路径标红，卡上可以直接撤销这个执行端）。
+执行端每 5 分钟读一次 `~/.config/amber-executor/envs/`，有变化就重新登记到 Amber：
 
-```bash
-# 1. 导出到一个文件（只有内容变了才会改写这个文件）
-node ~/amber/client/amber-executor/export-botmux-env.mjs --bot cli_xxxx --name 结算助手 --python /opt/homebrew/bin/python3 --out ~/.config/amber-envs/结算助手.json
-# 2. 让执行端跟随这个文件（之后这个环境的内容以文件为准），然后等管理员批准这一次
-node ~/amber/client/amber-executor/amber-executor.mjs env follow ~/.config/amber-envs/结算助手.json
-launchctl kickstart -k gui/$(id -u)/com.amber.executor
-```
+| 文件夹里的变化 | 结果 |
+|---|---|
+| 新放进一个文件 | 新增环境，**要管理员批准**（批准前这个执行端的所有环境暂停） |
+| 改了已有文件里的路径、环境变量、Python | **直接生效**，Amber 给管理员发变化通知卡：新增和去掉了哪些路径，新增的凭证路径标红，卡上可以直接撤销这个执行端 |
+| 改了已有文件里的 `workdir`、`source`、`realHome` | **要管理员批准** |
+| 删掉一个文件 | 去掉这个环境（只会缩小权限），**直接生效**，通知管理员 |
+| 文件损坏或校验不通过 | 保留它上一次的有效内容，在执行端日志里记一条，不登记变化 |
 
-之后 **botmux 里这个机器人的配置改了，手工再跑一次第 1 步的导出命令**。执行端每 5 分钟检查一次跟随的文件，有变化就自动更新；想马上生效，就重启执行端服务（`launchctl kickstart -k gui/$(id -u)/com.amber.executor`）。
+想马上生效，不等 5 分钟：`launchctl kickstart -k gui/$(id -u)/com.amber.executor`。等待批准期间文件又变了，新的申请里会带上最新内容。
 
-可选：不想手工导出，可以在导出命令后面加 `--install-launchd`，装成每 5 分钟自动导出一次的定时任务（`--uninstall-launchd` 移除）。
+**跟随 botmux 机器人的配置**：机器人在 botmux 里的配置改了以后，**手工再跑一次导出命令**（上面安装第 3 步 b，`--out` 写回同一个文件），执行端会按上表自动处理；导出工具只有内容真的变了才会改写文件。可选：在导出命令后面加 `--install-launchd`，装成每 5 分钟自动导出一次的定时任务（`--uninstall-launchd` 移除）。
 
-自动生效的范围：同一个环境、同一个跟随文件、同一个来源、同一个 `{WORKDIR}`、HOME 方式不变，只是路径、环境变量、Python 变了。下面这些仍然要管理员重新批准：增加或删除环境、改了 `{WORKDIR}` 或来源、换了跟随的文件、换了执行端密钥。等待批准期间，文件的后续变化会一起体现在新的申请里。文件损坏或校验不通过时，执行端保留上一次的内容，并在日志里记一条。
+执行端只认这个文件夹里的文件，不知道 botmux 的存在；`export-botmux-env.mjs` 是 botmux 的适配层，以后 botmux 能直接输出这个文件，就不需要它了。
 
-执行端只读这个文件，不知道 botmux 的存在；`export-botmux-env.mjs` 是 botmux 的适配层，以后 botmux 能直接输出这个文件，就不需要它了。
+旧版本把环境记在 `config.json` 里，升级后执行端第一次启动会把它们原样搬进这个文件夹，内容不变，不需要重新批准。
 
-改了环境（`env set` / `env rm`）之后，重启服务让它重新申请：`launchctl kickstart -k gui/$(id -u)/com.amber.executor`，然后等管理员批准。
 
 初始化时执行端会记下 Amber 的签名公钥，之后只接受这把钥匙签的任务。Amber 换了签名密钥时，执行端会拒绝所有任务；确认是 Amber 自己换的之后，重新运行 `init … --repin`。
 
@@ -121,7 +119,7 @@ launchctl kickstart -k gui/$(id -u)/com.amber.executor
 
 ## 环境定义文件
 
-运行环境用一份 JSON 定义，`env import` 导入；`env set` 和 `export-botmux-env.mjs` 只是生成它的两种快捷方式，`env export` 可以把已登记的环境导出来改。格式的完整说明（字段、路径解析、规则优先级、强制拒绝、校验清单、怎么映射到沙箱）见 **[运行环境定义格式](environment-format.md)**。这是一份独立于 Amber 的格式，其他 agent 平台、沙箱都可以照着生成或使用。
+运行环境用一份 JSON 定义，放在执行端的 `envs/` 文件夹里；`env set`、`env import` 和 `export-botmux-env.mjs --out` 只是往这个文件夹写文件的几种方式，`env export` 打印某个环境的文件。格式的完整说明（字段、路径解析、规则优先级、强制拒绝、校验清单、怎么映射到沙箱）见 **[运行环境定义格式](environment-format.md)**。这是一份独立于 Amber 的格式，其他 agent 平台、沙箱都可以照着生成或使用。
 
 ## 写指令（给 agent）
 

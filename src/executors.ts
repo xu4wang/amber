@@ -41,18 +41,28 @@ const RELAY_MAX_REQUEST = 512 * 1024;
 const RELAY_MAX_RESPONSE = 4 * 1024 * 1024;
 const RELAY_TIMEOUT_MS = 60_000;
 
-/** What changed in one followed environment (D53), for the admin notice. */
-export interface FollowChange { env: string; added: Record<string, string[]>; removed: Record<string, string[]>; vars: string[]; python?: [string | null, string | null] }
+/** What changed in one followed environment (D53), for the admin notice. `removedEnv`: the whole environment went away. */
+export interface FollowChange { env: string; added: Record<string, string[]>; removed: Record<string, string[]>; vars: string[]; python?: [string | null, string | null]; removedEnv?: boolean }
 
-/** Changes allowed without a new approval: the same environments, each changed one following the same file with
- *  the same source, WORKDIR and HOME mode, and only its paths, variables or Python different. Null otherwise. */
+/** Changes allowed without a new approval (D53), or null when a new approval is needed:
+ *  - a followed environment whose file changed only its paths, variables or Python (same file, source, WORKDIR, HOME mode);
+ *  - an environment removed (access only shrinks);
+ *  - an environment that starts following its file with otherwise identical content (moving to the folder layout).
+ *  New environments always need approval. Returns null when nothing changed at all. */
 export function followDiff(prev: Record<string, ExecutorEnv>, next: Record<string, ExecutorEnv>): FollowChange[] | null {
-  const a = Object.keys(prev).sort(), b = Object.keys(next).sort();
-  if (JSON.stringify(a) !== JSON.stringify(b)) return null;
+  if (Object.keys(next).some(k => !(k in prev))) return null;
   const out: FollowChange[] = [];
-  for (const k of a) {
+  let changed = false;
+  for (const k of Object.keys(prev).sort()) {
     const o = prev[k], n = next[k];
+    if (!n) { out.push({ env: k, added: {}, removed: {}, vars: [], removedEnv: true }); changed = true; continue; }
     if (JSON.stringify(o) === JSON.stringify(n)) continue;
+    changed = true;
+    if (!o.follow && n.follow) {
+      const { follow: _f, ...rest } = n;
+      if (JSON.stringify(rest) === JSON.stringify(o)) continue;   // same content, now read from its file
+      return null;
+    }
     if (!o.follow || n.follow !== o.follow || (n.source ?? null) !== (o.source ?? null) || n.workdir !== o.workdir || !!n.realHome !== !!o.realHome) return null;
     const ea = effectiveAccess(o), eb = effectiveAccess(n);
     const added: Record<string, string[]> = {}, removed: Record<string, string[]> = {};
@@ -66,7 +76,7 @@ export function followDiff(prev: Record<string, ExecutorEnv>, next: Record<strin
     const vars = [...new Set([...Object.keys(ov), ...Object.keys(nv)])].filter(v => ov[v] !== nv[v]).sort();
     out.push({ env: k, added, removed, vars, ...((o.interpreter ?? null) !== (n.interpreter ?? null) ? { python: [o.interpreter ?? null, n.interpreter ?? null] as [string | null, string | null] } : {}) });
   }
-  return out.length ? out : null;
+  return changed ? out : null;
 }
 
 export const envsHash = (name: string, envs: Record<string, ExecutorEnv>) => createHash('sha256').update(JSON.stringify({ name, envs })).digest('hex').slice(0, 16);
@@ -151,7 +161,8 @@ export class ExecutorHub {
         this.store.updateExecutorEnvs(id, envs, machine, version);
         this.store.touchExecutor(id);
         this.store.audit(null, 'executor.follow', { id, name, changes: diff });
-        await this.notifyAdmins(this.followCard(this.store.getExecutor(id)!, diff)).catch(() => {});
+        // An empty list: only moved to the folder layout, nothing for admins to look at.
+        if (diff.length) await this.notifyAdmins(this.followCard(this.store.getExecutor(id)!, diff)).catch(() => {});
         return { id, status: 'approved', fingerprint: fp };
       }
     }

@@ -5,12 +5,12 @@
 //   amber-executor init --name <name> [--amber <url>]     keys + config (once)
 //   amber-executor env import <file.json> [--name <env>]  an environment from a definition file (D51): the one format,
 //                                                         e.g. exported from a botmux bot by export-botmux-env.mjs
-//   amber-executor env set <env> <dir> [--python <p>] [--readonly] [--print]
-//                                                         shorthand: the definition {WORKDIR} read-write (or read-only);
-//                                                         --print only prints it
-//   amber-executor env follow <file.json> [--name <env>]  like import, and keeps following the file: once approved,
-//                                                         changes to its paths / vars / Python apply automatically (D53)
-//   amber-executor env export <env>                       a stored environment as a definition (edit, then import)
+//   Environments are the files in ~/.config/amber-executor/envs/: <name>.json, one definition each (D51/D53).
+//   The executor re-reads the folder every 5 minutes: a new file is a new environment (needs approval); changes
+//   to an existing one's paths / vars / Python apply at once (admins notified); other changes need approval.
+//   amber-executor env set <env> <dir> [--python <p>] [--readonly] [--print]   writes the simplest definition
+//   amber-executor env import <file.json> [--name <env>]  checks a definition and puts it in the folder
+//   amber-executor env export <env>                       prints an environment's file
 //   amber-executor env show | env rm <env>
 //   amber-executor status                                  register / show fingerprint and approval
 //   amber-executor run                                     long-poll Amber and run jobs (launchd runs this)
@@ -20,7 +20,7 @@
 // running, the executor checks the signature, the addressee, the expiry, that it has not seen the job
 // before, and recomputes the spec hash; then runs the code in a sandbox built from the environment's
 // approved access (same rules as Amber, lib/ is generated from Amber's sources). Commands declare no paths.
-import { readFileSync, writeFileSync, existsSync, mkdirSync, chmodSync, renameSync, unlinkSync, realpathSync, statSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync, mkdirSync, chmodSync, renameSync, unlinkSync, realpathSync, statSync, readdirSync } from 'node:fs';
 import { createPublicKey } from 'node:crypto';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
@@ -34,7 +34,8 @@ import { runSandboxed } from './lib/sandbox-run.mjs';
 
 export const VERSION = '1';
 const DIR = process.env.AMBER_EXECUTOR_DIR ?? join(homedir(), '.config', 'amber-executor');
-const P = { config: join(DIR, 'config.json'), sign: join(DIR, 'sign-key.pem'), box: join(DIR, 'box-key.pem'), amber: join(DIR, 'amber-key.json'), seen: join(DIR, 'seen-jobs.json') };
+const ENV_DIR = join(DIR, 'envs');
+const P = { envCache: join(DIR, 'envs.last-good.json'), config: join(DIR, 'config.json'), sign: join(DIR, 'sign-key.pem'), box: join(DIR, 'box-key.pem'), amber: join(DIR, 'amber-key.json'), seen: join(DIR, 'seen-jobs.json') };
 const DEFAULT_PYTHON = '/usr/bin/python3';
 const MAX_PARALLEL = 4;
 const FOLLOW_MS = Number(process.env.AMBER_EXECUTOR_FOLLOW_MS) || 300_000;
@@ -49,7 +50,36 @@ const writePrivate = (p, s) => { const t = `${p}.tmp`; writeFileSync(t, s, { mod
 function loadConfig() {
   const c = readJson(P.config, null);
   if (!c) die(`还没初始化：先运行 amber-executor init --name <名称>（配置目录 ${DIR}）`);
+  // Environments live in the envs/ folder, one definition file each (D53). Older configs kept them inside
+  // config.json: move them out once, unchanged.
+  if (c.envs && Object.keys(c.envs).length) {
+    mkdirSync(ENV_DIR, { recursive: true, mode: 0o700 });
+    for (const [name, v] of Object.entries(c.envs)) {
+      const f = join(ENV_DIR, `${name}.json`);
+      if (!existsSync(f)) writePrivate(f, JSON.stringify(toDef(name, v), null, 2) + '\n');
+    }
+    delete c.envs;
+    writePrivate(P.config, JSON.stringify(c, null, 2));
+  }
+  c.envs = loadEnvs();
   return c;
+}
+
+/** The environments: every <name>.json in envs/. A file that does not pass the checks keeps its last good
+ *  version (logged); a file that is gone removes its environment. Each entry records the file it came from. */
+export function loadEnvs() {
+  const cache = readJson(P.envCache, {});
+  const out = {};
+  let files = [];
+  try { files = readdirSync(ENV_DIR).filter(f => f.endsWith('.json')).sort(); } catch { /* no folder yet */ }
+  for (const f of files) {
+    const name = f.slice(0, -5), file = join(ENV_DIR, f);
+    if (!ENV_NAME.test(name)) { log('env file skipped (bad name)', f); continue; }
+    try { out[name] = { ...buildEntry(JSON.parse(readFileSync(file, 'utf8'))), follow: file }; }
+    catch (e) { log('env file not valid, keeping the last good version', f, e.message); if (cache[name]) out[name] = cache[name]; }
+  }
+  if (JSON.stringify(out) !== JSON.stringify(cache)) { mkdirSync(DIR, { recursive: true, mode: 0o700 }); writePrivate(P.envCache, JSON.stringify(out)); }
+  return out;
 }
 
 export function identity() {
@@ -210,7 +240,7 @@ async function runLoop() {
   setSandboxContext({ configDir: DIR });
   log(`amber-executor ${cfg.name} (${me.id}) → ${cfg.amber}; environments: ${Object.keys(cfg.envs ?? {}).join(', ') || 'none'}`);
   let running = 0, lastStatus = '', lastFollow = Date.now();
-  refreshFollowed(cfg);
+  refreshEnvs(cfg);
   /** Starts every job in a poll answer, whatever state we thought we were in. */
   const take = r => {
     for (const job of r?.jobs ?? []) {
@@ -223,7 +253,7 @@ async function runLoop() {
   for (;;) {
     try {
       // Followed files are re-read in every state, so a pending request carries the latest content.
-      if (Date.now() - lastFollow > FOLLOW_MS) { lastFollow = Date.now(); refreshFollowed(cfg); }
+      if (Date.now() - lastFollow > FOLLOW_MS) { lastFollow = Date.now(); refreshEnvs(cfg); }
       const reg = await register(cfg, me);
       if (reg.status !== 'approved') {
         if (reg.status !== lastStatus) log(`status: ${reg.status}; fingerprint ${showFingerprint(me.fp)}`);
@@ -242,7 +272,7 @@ async function runLoop() {
         take(r);
         if (r.status !== 'approved') break;
         // Followed files: re-read now and then; a change goes back through register (Amber applies or asks).
-        if (Date.now() - lastFollow > FOLLOW_MS) { lastFollow = Date.now(); if (refreshFollowed(cfg)) break; }
+        if (Date.now() - lastFollow > FOLLOW_MS) { lastFollow = Date.now(); if (refreshEnvs(cfg)) break; }
       }
     } catch (e) {
       log('error', e.message);
@@ -272,7 +302,7 @@ async function init(args) {
   const prev = readJson(P.amber, null);
   if (prev && prev.x !== jwk.x && !args.includes('--repin')) die('Amber 的公钥和之前记下的不一样。确认 Amber 换过签名密钥后，加 --repin 重新记录');
   writePrivate(P.amber, JSON.stringify({ kty: jwk.kty, crv: jwk.crv, x: jwk.x }));
-  const cfg = { ...readJson(P.config, { envs: {} }), amber: url, name };
+  const cfg = { ...readJson(P.config, {}), amber: url, name };
   writePrivate(P.config, JSON.stringify(cfg, null, 2));
   const me = identity();
   console.log(`已初始化 ${DIR}\n执行端：${name}\nAmber：${url}（签名公钥 ${jwk.kid ?? ''} 已记录）\n公钥指纹：${showFingerprint(me.fp)}\n\n下一步：amber-executor env set <环境名> <目录>，然后 amber-executor status 申请登记。`);
@@ -300,29 +330,24 @@ export function buildEntry(def) {
   return { workdir, ...(interpreter ? { interpreter } : {}), access, ...(def.vars && Object.keys(def.vars).length ? { vars: def.vars } : {}), ...(def.source ? { source: def.source.slice(0, 200) } : {}), ...(def.realHome === true ? { realHome: true } : {}) };
 }
 
-function importDef(cfg, def, nameOverride, follow) {
-  const envName = nameOverride ?? def?.name;
-  if (!envName || !ENV_NAME.test(envName)) die('环境名不对：用 --name 指定，或写在定义里的 name');
+/** Writes a definition into envs/ after checking it (the running executor picks it up). */
+function writeDef(def, name) {
+  if (!name || !ENV_NAME.test(name)) die('环境名不对：用 --name 指定，或写在定义里的 name');
   let entry;
   try { entry = buildEntry(def); } catch (e) { die(e.message); }
-  cfg.envs = { ...cfg.envs, [envName]: { ...entry, ...(follow ? { follow } : {}) } };
+  mkdirSync(ENV_DIR, { recursive: true, mode: 0o700 });
+  writePrivate(join(ENV_DIR, `${name}.json`), JSON.stringify({ ...def, name }, null, 2) + '\n');
   const cred = credentialGrants(entry.access);
-  console.log(`环境「${envName}」：${describeAccess(entry.access)}${cred.length ? `\n注意：含凭证路径 ${cred.join('、')}` : ''}${follow ? `\n跟随：${follow}（之后它变了会自动更新，不需要重新批准）` : ''}`);
+  console.log(`环境「${name}」：${describeAccess(entry.access)}${cred.length ? `\n注意：含凭证路径 ${cred.join('、')}` : ''}\n已写入 ${join(ENV_DIR, `${name}.json`)}`);
 }
 
-/** Followed environments (D53): re-read each followed file; a valid change replaces the entry (keeping the follow).
- *  Returns true when anything changed (the caller re-registers; Amber decides whether it needs approval). */
-export function refreshFollowed(cfg) {
-  let changed = false;
-  for (const [name, v] of Object.entries(cfg.envs ?? {})) {
-    if (!v.follow) continue;
-    let entry;
-    try { entry = { ...buildEntry(JSON.parse(readFileSync(v.follow, 'utf8'))), follow: v.follow }; }
-    catch (e) { log('follow skipped', name, e.message); continue; }   // keep the approved entry
-    if (JSON.stringify(entry) !== JSON.stringify(v)) { cfg.envs[name] = entry; changed = true; log('follow updated', name); }
-  }
-  if (changed) writePrivate(P.config, JSON.stringify(cfg, null, 2));
-  return changed;
+/** Re-reads envs/; true when anything changed (the caller re-registers; Amber applies or asks for approval). */
+export function refreshEnvs(cfg) {
+  const next = loadEnvs();
+  if (JSON.stringify(next) === JSON.stringify(cfg.envs ?? {})) return false;
+  log('environments changed:', Object.keys(next).join(', ') || 'none');
+  cfg.envs = next;
+  return true;
 }
 
 /** A stored environment as a definition (the same JSON format; re-importable). */
@@ -341,31 +366,27 @@ function envCmd(args) {
     const def = { format: 'amber-env/1', name, workdir: normalizePath(dir), ...(python ? { python: normalizePath(python) } : {}),
       access: args.includes('--readonly') ? { readOnly: ['{WORKDIR}'] } : { readWrite: ['{WORKDIR}'] } };
     if (args.includes('--print')) return void console.log(JSON.stringify(def, null, 2));
-    importDef(cfg, def);
+    writeDef(def, name);
   } else if (op === 'import') {
     if (!name || !existsSync(name)) die('用法：amber-executor env import <定义文件.json> [--name <环境名>]');
     let def;
     try { def = JSON.parse(readFileSync(name, 'utf8')); } catch (e) { die(`定义文件不是合法的 JSON：${e.message}`); }
-    importDef(cfg, def, flag(args, '--name'));
-  } else if (op === 'follow') {
-    // Like import, but keeps following the file: later changes to it apply without a new approval (D53).
-    if (!name || !existsSync(name)) die('用法：amber-executor env follow <定义文件.json> [--name <环境名>]');
-    const file = realpathSync(name);
-    let def;
-    try { def = JSON.parse(readFileSync(file, 'utf8')); } catch (e) { die(`定义文件不是合法的 JSON：${e.message}`); }
-    importDef(cfg, def, flag(args, '--name'), file);
+    writeDef(def, flag(args, '--name') ?? def?.name);
   } else if (op === 'export') {
-    if (!cfg.envs?.[name]) die(`没有环境「${name}」`);
-    return void console.log(JSON.stringify(toDef(name, cfg.envs[name]), null, 2));
+    const f = join(ENV_DIR, `${name}.json`);
+    if (!name || !existsSync(f)) die(`没有环境「${name}」`);
+    return void console.log(readFileSync(f, 'utf8').trimEnd());
   } else if (op === 'show') {
+    console.log(`环境文件夹：${ENV_DIR}`);
     for (const [k, v] of Object.entries(cfg.envs ?? {})) console.log(`${k}：{WORKDIR} = ${v.workdir}；${describeAccess(v.access ?? { readWrite: [v.workdir] })}${v.vars ? `；变量 ${Object.keys(v.vars).join('、')}` : ''}${v.source ? `（${v.source}）` : ''}`);
     return;
   } else if (op === 'rm') {
-    if (!cfg.envs?.[name]) die(`没有环境「${name}」`);
-    delete cfg.envs[name];
-  } else die('用法：amber-executor env set|import|follow|export|show|rm …');
-  writePrivate(P.config, JSON.stringify(cfg, null, 2));
-  console.log(`已保存。环境变了要重新批准：运行 amber-executor status 申请（正在运行的服务会自动重新申请，请重启它：launchctl kickstart -k gui/${process.getuid()}/${LABEL}）`);
+    const f = join(ENV_DIR, `${name}.json`);
+    if (!name || !existsSync(f)) die(`没有环境「${name}」`);
+    unlinkSync(f);
+    console.log(`已删除 ${f}`);
+  } else die('用法：amber-executor env set|import|export|show|rm …');
+  console.log(`环境文件夹 ${ENV_DIR} 里的文件就是全部环境。正在运行的执行端 5 分钟内会自动读到变化；要马上生效，重启它：launchctl kickstart -k gui/${process.getuid()}/${LABEL}。新增的环境和超出范围的修改要管理员批准。`);
 }
 
 async function status() {
