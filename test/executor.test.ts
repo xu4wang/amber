@@ -296,3 +296,46 @@ test('executor: its own checks — replay, spec hash, environment — before any
     rmSync(work, { recursive: true, force: true });
   }
 });
+
+test('executor: admins see and decide executors on the website; nobody else can', async () => {
+  const env = await makeEnv();
+  try {
+    const { alice, bob, fake } = env;
+    const { urlButton } = await import('./env.ts');
+    const base = `http://127.0.0.1:${env.webPort}`;
+    const login = async (u: any) => { await env.dm(u, '登录'); const r = await fetch(urlButton(fake.sent.at(-1)!.card)!, { redirect: 'manual' }); return r.headers.get('set-cookie')!.split(';')[0]; };
+    const get = (cookie: string) => fetch(`${base}/web/api/overview`, { headers: { cookie } }).then(x => x.json());
+    const post = (cookie: string, path: string, body: unknown) => fetch(base + path, { method: 'POST', headers: { cookie, origin: base, 'content-type': 'application/json' }, body: JSON.stringify(body) }).then(async x => ({ status: x.status, body: await x.json() }));
+    // An executor registers (signed with its own new key).
+    const k = newExecutorKeys();
+    const signPub = pubB64(createPublicKey(keyFromPem(k.signKey))), boxPub = pubB64(createPublicKey(keyFromPem(k.boxKey)));
+    const id = fingerprint(signPub, boxPub).slice(0, 16);
+    const body = JSON.stringify({ name: 'web-box', envs: { e: { workdir: '/tmp/x' } }, signPub, boxPub });
+    const reg = await fetch(`http://127.0.0.1:${env.apiPort}/v1/executor/register`, { method: 'POST', body, headers: signRequest(keyFromPem(k.signKey), id, 'POST', '/v1/executor/register', body) }).then(x => x.json());
+    assert.equal(reg.status, 'pending');
+    // Not an admin: nothing listed, nothing allowed.
+    const bobC = await login(bob);
+    const bobView = await get(bobC);
+    assert.equal(bobView.isAdmin, false);
+    assert.equal(bobView.executors, undefined);
+    assert.equal((await post(bobC, `/web/api/executors/${id}/approve`, { confirm: true, h: 'x' })).status, 403);
+    // Admin: listed with the fingerprint; a decision is bound to what the page showed and needs confirming.
+    const aliceC = await login(alice);
+    const view = await get(aliceC);
+    const ex = view.executors.find((e: any) => e.id === id);
+    assert.equal(ex.status, 'pending');
+    assert.equal(ex.fingerprint, showFingerprint(fingerprint(signPub, boxPub)));
+    assert.equal((await post(aliceC, `/web/api/executors/${id}/approve`, { h: ex.h })).status, 400, 'needs confirm');
+    assert.match((await post(aliceC, `/web/api/executors/${id}/approve`, { confirm: true, h: '0'.repeat(16) })).body.message, /已经变了/);
+    assert.equal((await post(aliceC, `/web/api/executors/${id}/approve`, { confirm: true, h: ex.h })).body.status, 'approved');
+    assert.equal(env.amber.store.approvedExecutor('web-box')?.id, id);
+    // The Feishu card for the same registration is now stale.
+    const card = fake.sent.find(s => s.to.unionId === alice.unionId && /执行端申请登记/.test(FakeFeishu.text(s.card)))!;
+    assert.match(JSON.stringify(await env.click(alice, card.id, button(card.card, 'exe_ok')!)), /已经批准/);
+    // Revoke: once.
+    assert.equal((await post(bobC, `/web/api/executors/${id}/revoke`, { confirm: true })).status, 403);
+    assert.equal((await post(aliceC, `/web/api/executors/${id}/revoke`, { confirm: true })).body.status, 'revoked');
+    assert.equal(env.amber.store.approvedExecutor('web-box'), undefined);
+    assert.equal((await post(aliceC, `/web/api/executors/${id}/revoke`, { confirm: true })).status, 400);
+  } finally { await env.close(); }
+});

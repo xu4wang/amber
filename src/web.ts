@@ -13,6 +13,8 @@ import type { Caller } from './engine.ts';
 import { runCommand, AmberError, secretVault } from './engine.ts';
 import type { Signer } from './identity.ts';
 import type { Scheduler } from './scheduler.ts';
+import { envsHash, type ExecutorHub } from './executors.ts';
+import { showFingerprint } from './exec-proto.ts';
 import { describeRule, formatAt, defaultTz, timezones } from './schedule-rule.ts';
 
 export const LOGIN_TTL_MS = 5 * 60_000;
@@ -40,6 +42,8 @@ export interface WebDeps {
   /** Take a command offline (creator or admin only; schedules pause). */
   retire(cmdId: string, actor: { unionId: string }, byLabel: string): Promise<{ name: string; schedules: number }>;
   isAdmin(unionId: string): boolean;
+  /** Executors (D50): admins see and decide them on the website too. */
+  hub?: ExecutorHub;
   /** Origin of the site, e.g. http://amber.example.com — POSTs from anywhere else are refused. */
   origin: string;
 }
@@ -234,6 +238,19 @@ export function startWeb(port: number, store: Store, deps: WebDeps): import('nod
           }
           return json(res, 200, { ok: true, secrets: vault.info(c, c.script.secrets!) });
         }
+        if ((m = /^\/web\/api\/executors\/([0-9a-f]{16})\/(approve|reject|revoke)$/.exec(url.pathname))) {
+          if (!deps.isAdmin(who.unionId) || !deps.hub) throw new AmberError('forbidden', '只有管理员可以管理执行端');
+          if (body.confirm !== true) throw new AmberError('needs_confirm', '请确认后再操作');
+          if (m[2] === 'revoke') {
+            const e = deps.hub.revokeId(m[1], who.unionId);
+            if (!e) throw new AmberError('stale', '这个执行端现在不是已批准状态');
+            return json(res, 200, { ok: true, status: e.status });
+          }
+          const r = deps.hub.decide(m[1], String(body.h ?? ''), m[2] === 'approve', who.unionId);
+          if (!r.ok) throw new AmberError('stale', r.message);
+          store.audit(who.unionId, 'web.executor_decide', { id: m[1], approve: m[2] === 'approve' });
+          return json(res, 200, { ok: true, status: r.row!.status });
+        }
         if ((m = /^\/web\/api\/commands\/([A-Za-z0-9-]{1,40})\/retire$/.exec(url.pathname))) {
           const t = await target(store, deps, who.unionId, String(body.scope ?? ''), m[1]);
           if (body.confirm !== true) throw new AmberError('needs_confirm', '请确认后再下线');
@@ -314,5 +331,22 @@ async function overview(store: Store, deps: WebDeps, unionId: string) {
     groups,
     global: store.listActiveGlobal().map(c => cmdView(c, unionId, deps.isAdmin, store)),
     membershipUnknown,
+    isAdmin: deps.isAdmin(unionId),
+    ...(deps.isAdmin(unionId) && deps.hub ? { executors: await executorViews(store, deps) } : {}),
   };
+}
+
+/** Admins only: every executor with what the approval card shows. */
+async function executorViews(store: Store, deps: WebDeps) {
+  const out = [];
+  for (const e of store.listExecutors()) {
+    out.push({
+      id: e.id, name: e.name, machine: e.machine, version: e.version, status: e.status, online: e.status === 'approved' && deps.hub!.online(e),
+      envs: e.envs, fingerprint: showFingerprint(e.fingerprint), createdAt: e.createdAt, lastSeen: e.lastSeen, decidedAt: e.decidedAt,
+      decidedBy: e.decidedBy ? (await deps.nameOf(e.decidedBy)) ?? e.decidedBy : null,
+      // Binds a decision to what the page showed, like the card.
+      ...(e.status === 'pending' ? { h: envsHash(e.name, e.envs) } : {}),
+    });
+  }
+  return out;
 }

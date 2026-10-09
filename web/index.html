@@ -327,6 +327,16 @@ function renderTree() {
   html += folder('我的私聊', 'p2p', o.p2p.commands, o.p2p.schedules, true);
   for (const g of o.groups) html += folder(`群：${g.name}`, 'group:' + g.chatId, g.commands, g.schedules, true);
   html += folder('全局指令', 'global', o.global, [], true);
+  if (o.isAdmin && o.executors) {
+    const ST = { pending: '待批准', approved: '已批准', rejected: '已拒绝', revoked: '已撤销' };
+    const pending = o.executors.filter(e => e.status === 'pending').length;
+    html += `<details class="node" ${pending ? 'open' : ''}><summary>执行端（管理员）<span class="count">${o.executors.length}</span></summary>${o.executors.map(e => {
+      const key = 'e:' + e.id;
+      ITEMS.set(key, { kind: 'exe', e });
+      const state = e.status === 'approved' ? (e.online ? '在线' : '离线') : ST[e.status] || e.status;
+      return `<div class="leaf" data-key="${esc(key)}" data-search="${esc(e.name)}"><span class="dot ${e.status === 'approved' ? (e.online ? 'ok' : 'failed') : 'running'}"></span><span class="name">${esc(e.name)}</span>${e.status === 'pending' ? '<span class="chip warn">待批准</span>' : `<span class="sub">${esc(state)}</span>`}</div>`;
+    }).join('') || '<div class="empty-leaf">还没有执行端登记</div>'}</details>`;
+  }
   html += `<details class="node"><summary>最近运行<span class="count">${RUNS.length}</span></summary>${RUNS.map(r => {
     const key = 'r:' + r.id;
     ITEMS.set(key, { kind: 'run', r });
@@ -354,6 +364,7 @@ function select(key, push = true) {
   app.classList.add('detail');
   if (it.kind === 'cmd') cmdPane(key, it);
   else if (it.kind === 'sch') schPane(it);
+  else if (it.kind === 'exe') exePane(it);
   else runPane(it);
 }
 
@@ -428,6 +439,26 @@ function schPane({ s, scope }) {
     <div class="output wait" id="out" style="display:none"></div>`;
 }
 
+function exePane({ e }) {
+  const ST = { pending: '等待管理员批准', approved: '已批准', rejected: '已拒绝', revoked: '已撤销' };
+  const envs = Object.entries(e.envs).map(([k, v]) => `<dt>环境「${esc(k)}」</dt><dd>{WORKDIR} = <code>${esc(v.workdir)}</code>${v.interpreter ? `<br>Python <code>${esc(v.interpreter)}</code>` : ''}</dd>`).join('');
+  document.getElementById('pane').innerHTML = `${backBtn}
+    <div class="pane-head"><h1>${esc(e.name)}</h1><span class="chip">${esc(ST[e.status] || e.status)}${e.status === 'approved' ? (e.online ? ' · 在线' : ' · 离线') : ''}</span></div>
+    <div class="where">执行端 ${esc(e.id)} · 来源机器 ${esc(e.machine)}${e.version ? ' · 版本 ' + esc(e.version) : ''}</div>
+    <div class="box" style="margin-top:16px"><dl class="kv">
+      <dt>公钥指纹</dt><dd><code>${esc(e.fingerprint)}</code></dd>
+      ${envs}
+      <dt>申请时间</dt><dd>${fmtTime(e.createdAt)}</dd>
+      <dt>最后在线</dt><dd>${e.lastSeen ? fmtTime(e.lastSeen) : '从未'}</dd>
+      ${e.decidedBy ? `<dt>处理</dt><dd>${esc(e.decidedBy)} · ${fmtTime(e.decidedAt)}</dd>` : ''}
+    </dl>
+    ${e.status === 'pending' ? `<p class="note">批准前请先和安装的人核对公钥指纹（执行端安装时会打印出来）。批准后，声明了 <code>env: "${esc(e.name)}/环境名"</code> 并通过审核的指令会在这台机器上按各自的沙箱策略执行。</p>
+      <div class="actions"><button class="btn primary" data-exe="approve">批准</button> <button class="btn" data-exe="reject">拒绝</button></div>` : ''}
+    ${e.status === 'approved' ? `<p class="note">撤销后立即生效：不再给它派任务，正在等结果的任务立即失败。要恢复，需要在那台机器上重新生成密钥并再次批准。</p>
+      <div class="actions"><button class="btn" data-exe="revoke">撤销</button></div>` : ''}
+    </div>`;
+}
+
 async function runPane({ r }) {
   document.getElementById('pane').innerHTML = `${backBtn}
     <div class="pane-head"><h1>${esc(r.command)}</h1><span class="chip">${esc(CH[r.channel] || r.channel)}</span>
@@ -494,6 +525,19 @@ async function reload(keepKey) {
 }
 
 document.addEventListener('click', async ev => {
+  const exeBtn = ev.target.closest('[data-exe]');
+  if (exeBtn) {
+    const it = ITEMS.get(SEL);
+    if (!it || it.kind !== 'exe') return;
+    const op = exeBtn.dataset.exe, e = it.e;
+    const ask = { approve: `批准执行端「${e.name}」？\n\n请确认公钥指纹和安装人报给你的一致：\n${e.fingerprint}`, reject: `拒绝执行端「${e.name}」的登记？`, revoke: `撤销执行端「${e.name}」？撤销后不能恢复，要重新登记。` }[op];
+    if (!confirm(ask)) return;
+    try {
+      const r = await post(`/web/api/executors/${encodeURIComponent(e.id)}/${op}`, { confirm: true, ...(e.h ? { h: e.h } : {}) });
+      if (!r.ok) alert(r.message || '操作失败');
+    } catch (err) { alert(err.message); }
+    return reload(SEL);
+  }
   const leaf = ev.target.closest('#tree .leaf');
   if (leaf) return select(leaf.dataset.key);
   if (ev.target.closest('[data-back]')) { history.replaceState(null, '', '#'); return welcome(); }

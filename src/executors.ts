@@ -135,9 +135,15 @@ export class ExecutorHub {
 
   revoke(name: string, admin: string): ExecutorRow | undefined {
     const e = this.store.approvedExecutor(name);
-    if (!e) return undefined;
+    return e ? this.revokeId(e.id, admin) : undefined;
+  }
+
+  /** Only an approved executor can be revoked. */
+  revokeId(id: string, admin: string): ExecutorRow | undefined {
+    const e = this.store.getExecutor(id);
+    if (!e || e.status !== 'approved') return undefined;
     this.store.setExecutorStatus(e.id, 'revoked', admin);
-    this.store.audit(admin, 'executor.revoke', { id: e.id, name });
+    this.store.audit(admin, 'executor.revoke', { id: e.id, name: e.name });
     this.dropQueue(e.id);
     return this.store.getExecutor(e.id);
   }
