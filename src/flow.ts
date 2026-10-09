@@ -116,7 +116,7 @@ function changePanels(c: CommandRow, prev: CommandRow): unknown[] {
 export function claimCard(c: CommandRow, trial?: { by?: string; blocks?: Block[]; error?: string }, submittedBy?: string, prev?: CommandRow, notifyOpenId?: string): object {
   const who = (submittedBy ? `**${sanitizeMarkdown(submittedBy, 80)}**` : 'agent') + (notifyOpenId ? `（替 ${person(notifyOpenId)}）` : '');
   const intro = prev
-    ? `${who} 提交了「${sanitizeMarkdown(c.name, 40)}」的**新版本**，等待认领。审核通过后会替换当前版本（${prev.specHash.slice(0, 8)}）。只有原创建人或管理员可以认领。\n<font color="grey">请确认这是你让 agent 做的；不认识的草稿直接点「丢弃」。</font>`
+    ? `${who} 提交了「${sanitizeMarkdown(c.name, 40)}」的**新版本**，等待认领。审核通过后会替换当前版本（${prev.specHash.slice(0, 8)}）。只有原创建人可以认领。\n<font color="grey">请确认这是你让 agent 做的；不认识的草稿直接点「丢弃」。</font>`
     : `${who} 提交了一条新指令，等待认领。认领人会成为这条指令的创建人，提交后由审核人审核。\n<font color="grey">请确认这是你让 agent 做的；不认识的草稿直接点「丢弃」。</font>`;
   const els: unknown[] = [
     { tag: 'markdown', content: intro },
@@ -285,7 +285,7 @@ export class Flow {
       const { ids } = await this.resolveEmails([d.claimer]);
       if (!ids[0]) throw new AmberError('claimer_unresolved', `找不到认领人 ${d.claimer}`);
       expectedClaimer = ids[0];
-      if (prev && prev.ownerUnionId !== expectedClaimer && !this.isAdmin(expectedClaimer)) throw new AmberError('not_owner', `「${d.name}」的新版本只能由原创建人或管理员认领`);
+      if (prev && prev.ownerUnionId !== expectedClaimer) throw new AmberError('not_owner', `「${d.name}」的新版本只能由原创建人认领`);
       // Anti-spam: an agent picks the claimer for p2p drafts, so cap how many claim cards one person can receive.
       if (this.store.recentDraftsFor(expectedClaimer, 3600_000) >= 5) throw new AmberError('rate_limited', '这位认领人一小时内已收到 5 张认领卡，请稍后再提交');
     }
@@ -373,11 +373,12 @@ export class Flow {
     return p && p.status === 'active' ? p : undefined;
   }
 
-  /** A new version takes over someone's command: only its creator (or an admin) may claim it. */
+  /** A new version keeps the command's secrets and configuration: only its creator may claim (and trial-run) it.
+   *  Not an admin either (#4): claiming would make them the owner, running it with the creator's settings. */
   private checkOwnerForNewVersion(c: CommandRow, caller: Caller): void {
     const prev = this.prevOf(c.id);
-    if (prev && prev.ownerUnionId !== caller.unionId && !this.isAdmin(caller.unionId)) {
-      throw new AmberError('not_owner', `这是「${c.name}」的新版本，只有原创建人或管理员可以认领`);
+    if (prev && prev.ownerUnionId !== caller.unionId) {
+      throw new AmberError('not_owner', `这是「${c.name}」的新版本，只有原创建人可以认领`);
     }
   }
 

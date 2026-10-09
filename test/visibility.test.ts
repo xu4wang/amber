@@ -120,6 +120,12 @@ test('visibility: only the creator sees and runs a command; an admin looks and r
     assert.equal((await post(aliceCookie, '/web/api/run', { scope: 'p2p', commandId: p2p, args: {} })).status, 404);
     assert.equal((await fetch(`${base}/web/api/commands/${p2p}/source?scope=p2p`, { headers: { cookie: carolCookie } })).status, 404);
 
+    // A new version keeps the creator's secrets and configuration: an admin cannot claim (or trial-run) it.
+    const nv = await env.submit({ chatId: GROUP, chatType: 'group', name: '报表', params: [], script: script('print("新版")', { secrets: ['API_TOKEN'] }), options: { schedulable: true } });
+    assert.match(JSON.stringify(await env.click(alice, nv.claimMessageId, { a: 'claim_try', c: nv.id })), /只有原创建人可以认领/);
+    assert.equal(env.amber.store.runsByCaller(alice.unionId, 10).filter(r => r.commandName === '报表').length, 0);
+    await env.click(bob, nv.claimMessageId, { a: 'claim_drop', c: nv.id });
+
     // Global: everyone may run it.
     const g = await env.api('POST', '/v1/commands/scope', { ...ctx(alice), command: '报表', global: true });
     const card = fake.sent.at(-1)!;
