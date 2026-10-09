@@ -4,6 +4,7 @@ import type { AmberConfig } from './config.ts';
 import { Store } from './db.ts';
 import { AmberBot } from './bot.ts';
 import { setServices, validateScript } from './runner.ts';
+import { setSandboxContext } from './sandbox-policy.ts';
 import { startApi } from './api.ts';
 import { startWeb } from './web.ts';
 import { setTimezones } from './schedule-rule.ts';
@@ -14,6 +15,7 @@ export interface Amber { bot: AmberBot; store: Store; api: Server; web: Server; 
 
 export async function startAmber(cfg: AmberConfig, opts: { apiPort: number; webPort: number; client?: unknown; ws?: unknown; timers?: boolean }): Promise<Amber> {
   setServices(cfg.services);
+  setSandboxContext({ configDir: cfg.configDir });
   setTimezones(cfg.timezones);
   const store = new Store(cfg.dataDir);
   setSecretVault(new SecretVault(store, cfg.configDir));

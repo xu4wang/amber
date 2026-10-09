@@ -91,7 +91,9 @@ amber global 天气 --user user@example.com          # 设为全局 / amber loca
 - **输出**：往标准输出打印 Markdown。可以用普通 Markdown 和表格，以及：
   - ` ```vega-lite `：图表（柱状图、折线图、饼图（mark: arc，theta=数值、color=类别）会转成飞书原生图表；其他图只在网站上显示）
   - ` ```table `：数据表，`{"columns":[{"name","label","type":"text|number"}],"rows":[…],"total":N}`
-- **运行环境**（沙盒）：读不到 `$HOME` 下的文件；只能写当前目录；默认不联网（需要时设 `"network": true`）；只能用 Python 标准库；默认 30 秒超时（`timeoutMs` 最多 120000）；输出最多 256KB；代码最多 64KB。
+- **运行环境**（沙盒）：当前目录是本次运行的临时目录（也是 `HOME`、`TMPDIR`，结束后删除）；系统目录和常见语言工具链（Homebrew、nvm、pyenv 等）可读，外部命令能用；`$HOME` 下的其他文件默认不可见；默认不联网（需要时设 `"network": true`）；默认用系统 Python 3.9（只有标准库）；默认 30 秒超时（`timeoutMs` 最多 120000）；输出最多 256KB；代码最多 64KB。
+- **要访问本机文件时**（比如机器人建的台账）：在 `script` 里声明 `"sandbox": {"readOnly": ["/绝对路径/台账"], "readWrite": ["/绝对路径/导出"], "deny": [...]}`（也可以写 `~/…`）。只声明真正需要的路径，能只读就不要读写；代码里用绝对路径访问（不要用相对路径，当前目录是临时目录）。~/.ssh、各类凭证、Amber 自己的配置目录声明了也打不开，提交时会被拒绝。
+- **需要第三方包时**：在 `script` 里写 `"interpreter": "/opt/homebrew/bin/python3"` 或某个虚拟环境里的 python（绝对路径），这个解释器自己装好的包都能用；虚拟环境放在 `$HOME` 下时，要把它的目录加进 `sandbox.readOnly`。
 - 把用户刚才实际跑通的逻辑原样搬进脚本，先在本机用一份示例输入跑一遍。
 
 ### 2. 写草稿文件

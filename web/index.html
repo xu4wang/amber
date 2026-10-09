@@ -458,7 +458,9 @@ async function loadSource() {
   const gutter = code.split('\n').map((_, i) => i + 1).join('\n');
   el.className = '';
   el.innerHTML = `<dl class="kv">
-      <dt>运行方式</dt><dd>${esc(how)}，${esc(net)}，超时 ${sc.timeoutMs / 1000} 秒</dd>${(sc.secrets || []).length ? `
+      <dt>运行方式</dt><dd>${esc(how)}，${esc(net)}，超时 ${sc.timeoutMs / 1000} 秒</dd>${sc.sandbox ? `
+      <dt>沙箱</dt><dd>${esc([sc.sandbox.readOnly?.length ? '只读 ' + sc.sandbox.readOnly.join('、') : '', sc.sandbox.readWrite?.length ? '读写 ' + sc.sandbox.readWrite.join('、') : '', sc.sandbox.deny?.length ? '禁止 ' + sc.sandbox.deny.join('、') : ''].filter(Boolean).join('；'))}</dd>` : ''}${sc.interpreter ? `
+      <dt>解释器</dt><dd>${esc(sc.interpreter)}</dd>` : ''}${(sc.secrets || []).length ? `
       <dt>密钥</dt><dd>${esc(sc.secrets.join('、'))}（值不在代码里，运行时由 Amber 交给脚本）</dd>` : ''}
       <dt>语言</dt><dd>${esc(sc.lang)}</dd>
       <dt>版本</dt><dd>第 ${x.history.length + 1} 版 · <code>${esc(x.specHash)}</code></dd>
