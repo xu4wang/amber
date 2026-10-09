@@ -10,7 +10,7 @@ import { Signer } from './identity.ts';
 import { FeishuReview } from './feishu-review.ts';
 import { AgentGate } from './agent.ts';
 import type { Deps } from './agent.ts';
-import { Scheduler } from './scheduler.ts';
+import { Scheduler, CREATOR_LEFT } from './scheduler.ts';
 import { newToken, hashToken, LOGIN_TTL_MS } from './web.ts';
 import { formatAtDefault } from './schedule-rule.ts';
 
@@ -221,6 +221,7 @@ export class AmberBot {
     if (!this.isAdmin(admin.unionId)) throw new AmberError('forbidden', '只有管理员可以重新分配指令');
     const c = this.store.getCommand(cmdId);
     if (!c || c.status !== 'active' || c.scopeType !== 'group') throw new AmberError('not_found', '没有找到这条群指令');
+    this.memberCache.delete(c.chatId);   // decide on the current roster, not a cached one
     const orphan = await this.isOrphan(c);
     if (orphan === undefined) throw new AmberError('unknown_membership', 'Amber 暂时无法确认创建人是否还在群里（缺少「获取群成员」权限）');
     if (!orphan) throw new AmberError('not_orphan', '创建人还在群里：只有创建人已不在群里的指令才能重新分配');
@@ -228,7 +229,7 @@ export class AmberBot {
     // One open offer at a time: a new one replaces the old.
     for (const r of this.store.awaitingReassigns(c.id)) this.store.transitionRequest(r.id, 'awaiting', 'canceled', { actorUnionId: admin.unionId });
     const req = this.store.insertRequest({ kind: 'reassign', commandId: c.id, specHash: c.specHash, chatId: c.chatId, chatType: 'group', targetUnionId: toUnionId,
-      args: {}, rule: null, scheduleId: null, requestedBy: admin.unionId, replyTo: null, inThread: false });
+      args: { from: c.ownerUnionId }, rule: null, scheduleId: null, requestedBy: admin.unionId, replyTo: null, inThread: false });
     const schedules = this.store.schedulesOfCommand(c.id).filter(s => s.creatorUnionId === c.ownerUnionId).map(s => this.scheduler.view(s));
     const card = reassignCard({ requestId: req.id, name: c.name, chatName: (await this.chatName(c.chatId)) ?? '这个群', adminOpenId: admin.openId,
       schedules, secrets: this.store.secretRows(c.chatId, c.name).filter(r => (c.script.secrets ?? []).includes(r.name)).length,
@@ -263,9 +264,15 @@ export class AmberBot {
     }
     const fail = (why: string) => { this.store.transitionRequest(req.id, 'awaiting', 'failed', { error: why }); return closedCard('没有接收', 'red', why); };
     if (!c || c.status !== 'active' || c.specHash !== req.specHash) return fail('这条指令在发起之后已经更新或下线，请管理员重新发起。');
+    // Someone else accepted another offer for it meanwhile.
+    if (c.ownerUnionId !== (req.args.from ?? '')) return fail('这条指令已经由别人接手了。');
+    this.memberCache.delete(c.chatId);   // decide on the current roster, not a cached one
     if (await this.isOrphan(c) !== true) return fail('原创建人已经回到群里（或暂时无法确认），这条指令不再需要重新分配。');
     if (await this.isMember(c.chatId, caller.unionId) !== true) return fail('你已不在这个群里，不能接手。');
-    if (!this.store.transitionRequest(req.id, 'awaiting', 'running', { actorUnionId: caller.unionId })) throw new AmberError('closed', '这个请求已经处理过了');
+    // No await from here to the owner change, and taking this offer voids every other one for the command:
+    // when two people accept at the same moment, the second finds their offer already voided.
+    if (!this.store.transitionRequest(req.id, 'awaiting', 'running', { actorUnionId: caller.unionId })) throw new AmberError('closed', '这个请求已经处理过或被取消了');
+    for (const r of this.store.awaitingReassigns(c.id)) this.store.transitionRequest(r.id, 'awaiting', 'canceled', { actorUnionId: caller.unionId });
     const from = c.ownerUnionId;
     const old = this.store.schedulesOfCommand(c.id).filter(s => s.creatorUnionId === from);
     this.store.setMeta(c.id, { ownerUnionId: caller.unionId, ownerOpenId: caller.openId ?? null });
@@ -277,6 +284,9 @@ export class AmberBot {
       try {
         const n = await this.scheduler.create({ cmd: now, chatId: s.chatId, chatType: s.chatType, replyTo: s.replyTo, inThread: s.inThread,
           creator: { ...caller, chatId: s.chatId, chatType: s.chatType, channel: 'bot' }, args: s.args, rule: s.rule, requestedBy: '重新分配', via: { reassignFrom: s.id } });
+        // Paused because the creator left: that is what this fixes, so it runs again. Paused for any other reason
+        // (by hand, after failures): it stays paused.
+        if (s.status === 'paused' && s.pauseReason !== CREATOR_LEFT) this.scheduler.pauseBy(n, caller.unionId, s.pauseReason ?? '原来已暂停');
         rebuilt.push(n.id);
       } catch (e) { failed.push(`${s.id}：${e instanceof AmberError ? e.message : '出错了'}`); }
     }

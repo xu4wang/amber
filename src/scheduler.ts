@@ -20,7 +20,7 @@ const MAX_CONCURRENT = 2;
 const MAX_FAILS = 3;
 export const MAX_PER_CHAT = 20;
 
-const CREATOR_LEFT = '创建人已不在群里';
+export const CREATOR_LEFT = '创建人已不在群里';
 
 export class Scheduler {
   private store: Store;

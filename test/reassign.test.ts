@@ -35,9 +35,11 @@ test('reassign: an admin offers an orphaned command; the member who accepts owns
 
     // While bob is still in the group, nobody can take it from him.
     assert.match((await offer(aliceCookie, carol.unionId)).body.message, /创建人还在群里/);
-    // bob leaves.
+    // bob leaves. One schedule paused because he left, the other paused by hand before.
     fake.chats.get(GROUP)!.members.delete(bob.unionId);
     (env.amber.bot as any).memberCache.clear();
+    env.amber.store.updateSchedule(s1.id, { status: 'paused', pauseReason: '创建人已不在群里' });
+    env.amber.store.updateSchedule(s2.id, { status: 'paused', pauseReason: '手动暂停' });
     const ov = await (await fetch(`${base}/web/api/overview`, { headers: { cookie: aliceCookie } })).json();
     assert.equal(ov.groups[0].commands.find((c: any) => c.id === id).orphan, true, 'admins see it marked');
     // Only admins pick from the group's members, and only members can be chosen.
@@ -75,7 +77,8 @@ test('reassign: an admin offers an orphaned command; the member who accepts owns
     assert.equal(env.amber.store.getSchedule(s1.id)?.status ?? 'deleted', 'deleted');
     assert.equal(env.amber.store.getSchedule(s2.id)?.status ?? 'deleted', 'deleted');
     const now = env.amber.store.schedulesOfCommand(id).filter(s => s.id !== stray.id);
-    assert.deepEqual(now.map(s => [s.creatorUnionId, (s.rule as any).time]).sort(), [[carol.unionId, '09:00'], [carol.unionId, '18:00']]);
+    assert.deepEqual(now.map(s => [s.creatorUnionId, (s.rule as any).time, s.status]).sort(), [[carol.unionId, '09:00', 'active'], [carol.unionId, '18:00', 'paused']],
+      'paused because bob left: runs again; paused by hand: stays paused');
     assert.equal(env.amber.store.getSchedule(stray.id)!.creatorUnionId, alice.unionId, 'not touched');
     assert.ok(fake.sent.some(s => s.to.unionId === alice.unionId && /已由新的负责人接收/.test(FakeFeishu.text(s.card))), 'the admin is told');
     assert.match(JSON.stringify(await env.click(carol, card.id, yes)), /已经处理过/);
@@ -109,10 +112,9 @@ test('reassign: declining leaves it as it was; accepting without schedules delet
     let o = await offer();
     assert.match(JSON.stringify(await env.click(carol, o.card.id, button(o.card.card, 'rs_no')!)), /没有接收/);
     assert.match(JSON.stringify(await env.click(carol, o.card.id, button(o.card.card, 'rs_ok')!)), /已经处理过或被取消/);
-    // The creator came back before it was accepted: nothing changes hands.
+    // The creator came back before it was accepted (the cached roster does not know yet): nothing changes hands.
     o = await offer();
     fake.chats.get(GROUP)!.members.add(bob.unionId);
-    (env.amber.bot as any).memberCache.clear();
     assert.match(JSON.stringify(await env.click(carol, o.card.id, button(o.card.card, 'rs_ok')!)), /原创建人已经回到群里/);
     fake.chats.get(GROUP)!.members.delete(bob.unionId);
     (env.amber.bot as any).memberCache.clear();
@@ -129,5 +131,25 @@ test('reassign: declining leaves it as it was; accepting without schedules delet
     await env.click(carol, o.card.id, only);
     assert.equal(env.amber.store.getCommand(id)!.ownerUnionId, carol.unionId);
     assert.equal(env.amber.store.schedulesOfCommand(id).length, 0);
+    env.amber.store.setMeta(id, { ownerUnionId: bob.unionId });   // orphaned again, for the next case
+    // Two offers left open at once (say, by two admins at the same moment): only the first acceptance counts.
+    const a1 = await offer();
+    const cmd = env.amber.store.getCommand(id)!;
+    const a2 = env.amber.store.insertRequest({ kind: 'reassign', commandId: id, specHash: cmd.specHash, chatId: GROUP, chatType: 'group', targetUnionId: alice.unionId,
+      args: { from: bob.unionId }, rule: null, scheduleId: null, requestedBy: alice.unionId, replyTo: null, inThread: false });
+    await env.click(carol, a1.card.id, { a: 'rs_ok', r: a1.req, s: '0' });
+    assert.equal(env.amber.store.getCommand(id)!.ownerUnionId, carol.unionId);
+    assert.equal(env.amber.store.getRequest(a2.id)!.status, 'canceled', 'the other offer is void');
+    (env.amber.store as any).db.prepare("UPDATE requests SET status = 'awaiting' WHERE id = ?").run(a2.id);
+    assert.match(JSON.stringify(await env.click(alice, a1.card.id, { a: 'rs_ok', r: a2.id, s: '0' })), /已经由别人接手/);
+    assert.equal(env.amber.store.getCommand(id)!.ownerUnionId, carol.unionId);
+    // Both clicked at the same moment: one wins, the other is told.
+    env.amber.store.setMeta(id, { ownerUnionId: bob.unionId });
+    const b1 = await offer();
+    const b2 = env.amber.store.insertRequest({ kind: 'reassign', commandId: id, specHash: cmd.specHash, chatId: GROUP, chatType: 'group', targetUnionId: alice.unionId,
+      args: { from: bob.unionId }, rule: null, scheduleId: null, requestedBy: alice.unionId, replyTo: null, inThread: false });
+    const both = await Promise.all([env.click(carol, b1.card.id, { a: 'rs_ok', r: b1.req, s: '0' }), env.click(alice, b1.card.id, { a: 'rs_ok', r: b2.id, s: '0' })]);
+    assert.equal(both.filter(x => /你现在是/.test(JSON.stringify(x))).length, 1, JSON.stringify(both));
+    assert.ok([carol.unionId, alice.unionId].includes(env.amber.store.getCommand(id)!.ownerUnionId));
   } finally { await env.close(); }
 });
