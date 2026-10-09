@@ -201,6 +201,8 @@ export class AppStore {
       if (member !== true) throw new AmberError('forbidden', member === undefined ? 'Amber 暂时无法确认你是否在这个群里' : '只能装到你所在的群');
       chatId = m[1]; scopeType = 'group';
     }
+    // Re-read after the await: an app delisted meanwhile takes no new installations.
+    if (this.store.getApp(app.id)?.status !== 'listed') throw new AmberError('not_found', '没有这个应用，或它已经下架');
     // Names must stay unique among what this person sees there (their own commands and global ones).
     const seen = visibleCommands(this.store, { unionId: who.unionId, chatId, chatType: scopeType, channel: 'web' });
     if (seen.some(c => c.name === n)) throw new AmberError('name_taken', `你在这里已经有一条叫「${n}」的指令，请换个名字`);

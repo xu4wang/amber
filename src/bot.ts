@@ -322,6 +322,13 @@ export class AmberBot {
     return list;
   }
 
+  /** Fallback for when approval events are not delivered: look at every pending approval (commands and listings). */
+  async pollApprovals(): Promise<void> {
+    for (const code of [...this.store.pendingApprovalInstances(), ...this.store.pendingListingInstances()]) {
+      await this.onApprovalEvent(code).catch(e => log('approval poll failed', code, (e as Error).message));
+    }
+  }
+
   /** An approval instance is either a command review or a Store listing (#4). */
   async onApprovalEvent(code: string): Promise<void> {
     if (await this.apps.onApprovalEvent(code)) return;
@@ -401,12 +408,7 @@ export class AmberBot {
     log('long connection started');
     await this.resolveAdmins();
     await this.flow.loadReviewers();
-    // Fallback for when approval events are not delivered: poll pending approvals.
-    const poll = async () => {
-      for (const code of [...this.store.pendingApprovalInstances(), ...this.store.pendingListingInstances()]) {
-        await this.onApprovalEvent(code).catch(e => log('approval poll failed', code, (e as Error).message));
-      }
-    };
+    const poll = () => this.pollApprovals();
     await poll();
     if (!this.timers) return;
     setInterval(() => { poll().catch(() => {}); }, 60_000);

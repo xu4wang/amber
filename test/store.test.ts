@@ -88,9 +88,25 @@ test('store: list once, install anywhere you are, each copy with its own setting
     assert.match(JSON.stringify(await env.click(carol, nv.claimMessageId, { a: 'claim_try', c: nv.id }, { repo: 'x' })), /只有原创建人可以认领/);
     await env.click(bob, nv.claimMessageId, { a: 'claim_drop', c: nv.id });
 
-    // Private chat, and a group you are not in.
+    // In a chat where only an installation carries the name, a new draft of that name is a brand-new command.
+    const fresh = await env.submit({ chatId: GROUP2, chatType: 'group', name: '检查', params: PARAMS, script: CODE });
+    assert.equal(env.amber.store.getMeta(fresh.id).replaces ?? null, null);
+    await env.click(carol, fresh.claimMessageId, { a: 'claim_drop', c: fresh.id });
+
+    // Private chat: runs there, and on a schedule, as carol with her own settings.
     const ins4 = await post(carolC, `/web/api/store/${app.id}/install`, { target: 'p2p', name: '我的检查' });
-    assert.equal(env.amber.store.getCommand(ins4.body.commandId)!.scopeType, 'p2p');
+    const c4 = env.amber.store.getCommand(ins4.body.commandId)!;
+    assert.equal(c4.scopeType, 'p2p');
+    await post(carolC, `/web/api/commands/${c4.id}/config`, { scope: 'p2p', name: 'repo', value: 'carol/p2p' });
+    await post(carolC, `/web/api/commands/${c4.id}/secrets`, { scope: 'p2p', name: 'API_TOKEN', value: 'carol-token-PPPP' });
+    await env.dm(carol, '我的检查 dm');
+    await env.waitFor(() => fake.sent.some(s => /repo=carol\/p2p who=dm token=PPPP/.test(FakeFeishu.text(fake.cardOf(s.id)))) || undefined);
+    const sch = await post(carolC, '/web/api/schedules', { scope: 'p2p', commandId: c4.id, at: '每天 09:00', args: { who: 'sch' } });
+    assert.equal(sch.body.ok, true, JSON.stringify(sch.body));
+    const before = fake.sent.length;
+    await env.amber.bot.scheduler.tick(env.amber.store.getSchedule(sch.body.scheduleId)!.nextRunAt + 1000);
+    const out = await env.waitFor(() => fake.sent.slice(before).find(s => s.to.unionId === carol.unionId && /repo=carol\/p2p who=sch token=PPPP/.test(FakeFeishu.text(s.card))));
+    assert.ok(out);
     assert.equal((await post(bobC, `/web/api/store/${app.id}/install`, { target: 'group:' + GROUP2 })).status, 403);
     assert.match((await post(carolC, `/web/api/store/${app.id}/install`, { target: 'p2p', name: '有 空格' })).body.message, /不能有空格/);
     // An installation cannot be listed again; nor can a command that runs on an executor.
@@ -128,5 +144,53 @@ test('store: commands that run on an executor cannot be listed; a listing whose 
     await env.amber.bot.onApprovalEvent(code);
     assert.deepEqual(env.amber.store.listApps(), []);
     assert.ok(env.fake.sent.some(s => s.to.unionId === bob.unionId && /没有上架：会变/.test(FakeFeishu.text(s.card))));
+  } finally { await env.close(); }
+});
+
+test('store: an app whose version record was tampered with cannot be installed; an old database gets the per-line index', async () => {
+  const env = await makeEnv();
+  const { bob, carol } = env;
+  try {
+    const id = await activate(env, { chatId: GROUP, chatType: 'group', name: '甲', params: [], script: script('print(1)') }, bob);
+    await env.amber.bot.apps.requestListing(id, { unionId: bob.unionId, openId: bob.openId });
+    await env.approveLatest();
+    const app = env.amber.store.listApps()[0];
+    (env.amber.store as any).db.prepare("UPDATE app_versions SET spec_hash = 'x' WHERE app_id = ?").run(app.id);
+    await assert.rejects(env.amber.bot.apps.install(app.id, { unionId: carol.unionId }, 'p2p'), /版本记录不完整/);
+  } finally { await env.close(); }
+  // A database from before #4: the per-name unique index becomes per-line.
+  const { mkdtempSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const { Store } = await import('../src/db.ts');
+  const dir = mkdtempSync(join(tmpdir(), 'amber-mig-'));
+  let st = new Store(dir);
+  (st as any).db.exec("DROP INDEX commands_active_line; CREATE UNIQUE INDEX commands_active_name ON commands(chat_id, name) WHERE status = 'active';");
+  st = new Store(dir);
+  const idx = ((st as any).db.prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'commands'").all() as { name: string }[]).map(r => r.name);
+  assert.ok(idx.includes('commands_active_line') && !idx.includes('commands_active_name'), idx.join(','));
+  const base = { scopeType: 'group' as const, chatId: 'oc_x', ownerUnionId: 'u1', name: 'n', description: '', params: [], script: script('print(1)') as any, options: { confirm: false, schedulable: true }, status: 'active' as const };
+  st.insertCommand(base);
+  st.insertCommand({ ...base, ownerUnionId: 'u2', line: 'n#1' });
+  assert.throws(() => st.insertCommand({ ...base, ownerUnionId: 'u3' }), /UNIQUE/);
+});
+
+test('store: only the creator lists; a listing needs every reviewer; missed approval events are picked up by polling', async () => {
+  const env = await makeEnv({ reviewers: ['alice@example.com', 'carol@example.com'] });
+  const { bob, carol, fake } = env;
+  try {
+    await env.amber.bot.flow.loadReviewers();
+    const id = await activate(env, { chatId: GROUP, chatType: 'group', name: '乙', params: [], script: script('print(1)') }, bob);
+    await assert.rejects(env.amber.bot.apps.requestListing(id, { unionId: carol.unionId, openId: carol.openId }), /只有指令的创建人/);
+    await env.amber.bot.apps.requestListing(id, { unionId: bob.unionId, openId: bob.openId });
+    const code = [...fake.approvals.entries()].find(([, a]) => /上架：乙/.test(a.title ?? ''))![0];
+    const a = fake.approvals.get(code)!;
+    // Marked approved while one reviewer has not approved: not listed.
+    a.tasks[0].status = 'APPROVED'; a.status = 'APPROVED';
+    await env.amber.bot.pollApprovals();
+    assert.deepEqual(env.amber.store.listApps(), []);
+    for (const t of a.tasks) t.status = 'APPROVED';
+    await env.amber.bot.pollApprovals();
+    assert.equal(env.amber.store.listApps().length, 1);
   } finally { await env.close(); }
 });
