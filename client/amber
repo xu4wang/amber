@@ -180,9 +180,9 @@ def main(argv):
         for ex in r.get("executors") or []:
             for e in ex.get("envs") or []:
                 src = e.get("source") or ""
-                if mine and src not in ("botmux:" + app, "botmux:%s（只读）" % app):
+                if mine and not (src == "botmux:" + app or src.startswith("botmux:%s（" % app)):
                     continue
-                rows.append((e["ref"], "在线" if ex.get("online") else "离线", src or "-", e.get("workdir", ""), "自己的" if app and src.startswith("botmux:" + app) else ""))
+                rows.append((e["ref"], "在线" if ex.get("online") else "离线", src or "-", e.get("workdir", ""), "自己的" if app and (src == "botmux:" + app or src.startswith("botmux:%s（" % app)) else ""))
         if "json" in opts:
             print(json.dumps(r, ensure_ascii=False, indent=2))
             return 0

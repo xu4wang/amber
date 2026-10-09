@@ -450,6 +450,14 @@ test('export-botmux-env: a bot\'s access as an environment definition, mirroring
     assert.deepEqual(r.access.readWrite, [join(home, '.lark-cli-bots/cli_x')]);
     assert.ok(r.access.readOnly.includes(work) && r.access.readOnly.includes(join(home, 'botmux-roles/cli_x')));
     await assert.rejects(exp('--bot', 'cli_nope'), /没有机器人/);
+    // workingDir "~" (or missing): the whole home is never granted; the role library stands in as WORKDIR.
+    writeFileSync(join(home, '.botmux', 'bots.json'), JSON.stringify([{ larkAppId: 'cli_x', workingDir: '~', sandboxPaths: { readWrite: ['~', '~/extra'] } }]));
+    const h = await exp('--bot', 'cli_x');
+    assert.equal(h.workdir, join(home, 'botmux-roles/cli_x'));
+    assert.ok(!h.access.readWrite.includes(home), 'home itself not granted');
+    assert.ok(h.access.readWrite.includes(join(home, 'extra')), '~ paths expanded');
+    assert.match(h.source, /^botmux:cli_x（/);
+    assert.doesNotThrow(() => validateEnvAccess(h.access, { workdir: h.workdir, home }));
     // Other bots.json shapes: wrapped and keyed by appId; anything else is refused clearly.
     const bj = join(home, '.botmux', 'bots.json');
     const entry = { larkAppId: 'cli_x', workingDir: work };

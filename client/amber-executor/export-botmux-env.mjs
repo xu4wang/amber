@@ -52,16 +52,23 @@ if (!bot) die(`${botsPath} 里没有机器人 ${appId}`);
 const isDir = p => { try { const s = lstatSync(p); return s.isDirectory() && !s.isSymbolicLink(); } catch { return false; } };
 const exists = p => existsSync(p);
 const sp = bot.sandboxPaths ?? {};
-const list = v => (Array.isArray(v) ? v.map(String) : []);
-const workdir = bot.workingDir ? String(bot.workingDir) : '';
-if (!workdir) die(`机器人 ${appId} 没有配置 workingDir`);
+const expand = p => (p === '~' || p.startsWith('~/') ? H + p.slice(1) : p);
+const list = v => (Array.isArray(v) ? v.map(String).map(expand) : []);
 
 const botHome = join(H, '.botmux', 'bots', appId);
+// The bot's working directory. Missing, or the whole home directory: an environment can never open all of
+// home (it holds ~/.ssh and the executor's own keys), so the bot's role library (or BOT_HOME) stands in as
+// WORKDIR and the home directory itself is not granted. The definition says so in its source.
+const rawWd = bot.workingDir ? expand(String(bot.workingDir)).replace(/\/+$/, '') : '';
+const homeLike = !rawWd || rawWd === H;
+
 const roleSubtree = join(H, 'botmux-roles', appId);
 const larkDir = join(H, '.lark-cli-bots', appId);
 const larkStore = join(H, 'Library', 'Application Support', 'lark-cli');
 
-const dataRw = [workdir, ...list(sp.readWrite), ...(isDir(botHome) ? [botHome] : []), ...(isDir(roleSubtree) ? [roleSubtree] : [])];
+const workdir = homeLike ? (isDir(roleSubtree) ? roleSubtree : botHome) : rawWd;
+if (!isDir(workdir)) die(`机器人 ${appId} 没有可用的工作目录（workingDir、角色库、机器人目录都不存在）`);
+const dataRw = [...(homeLike ? [] : [workdir]), ...list(sp.readWrite).filter(p => p !== H), ...(isDir(botHome) ? [botHome] : []), ...(isDir(roleSubtree) ? [roleSubtree] : [])];
 const readonly = args.includes('--readonly');
 const readWrite = [...(readonly ? [] : dataRw), ...(isDir(larkDir) ? [larkDir] : [])];
 const readOnly = [...(readonly ? dataRw : []), ...list(sp.readOnly),
@@ -77,7 +84,7 @@ const def = {
   access: { readWrite: uniq(readWrite), readOnly: uniq(readOnly), deny: uniq(deny) },
   ...(isDir(larkDir) ? { vars: { LARKSUITE_CLI_CONFIG_DIR: larkDir } } : {}),
   realHome: true,
-  source: `botmux:${appId}${readonly ? '（只读）' : ''}`,
+  source: `botmux:${appId}${readonly ? '（只读）' : ''}${homeLike ? '（workingDir 是主目录或未配置，未开放整个主目录）' : ''}`,
 };
 const text = JSON.stringify(def, null, 2) + '\n';
 const out = flag('--out');
