@@ -10,10 +10,11 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Store, CommandRow, ScheduleRow } from './db.ts';
 import type { Caller } from './engine.ts';
-import { runCommand, AmberError, secretVault, runParams, configParams, configValues, validateArgs } from './engine.ts';
+import { runCommand, AmberError, secretVault, lineOf, runParams, configParams, configValues, validateArgs } from './engine.ts';
 import type { Signer } from './identity.ts';
 import type { Scheduler } from './scheduler.ts';
 import { envsHash, effectiveAccess, credentialPaths, type ExecutorHub } from './executors.ts';
+import type { AppStore } from './apps.ts';
 import { showFingerprint } from './exec-proto.ts';
 import { describeRule, formatAt, defaultTz, timezones } from './schedule-rule.ts';
 
@@ -46,6 +47,9 @@ export interface WebDeps {
   isOrphan(c: CommandRow): Promise<boolean | undefined>;
   groupMembers(chatId: string): Promise<{ unionId: string; name: string }[]>;
   requestReassign(cmdId: string, toUnionId: string, admin: { unionId: string; openId?: string }): Promise<{ requestId: string }>;
+  /** Amber Store (#4), and the groups Amber is in (where apps can be installed). */
+  apps?: AppStore;
+  botGroups?(): Promise<{ chatId: string; name: string }[]>;
   /** Executors (D50): admins see and decide them on the website too. */
   hub?: ExecutorHub;
   /** Origin of the site, e.g. http://amber.example.com — POSTs from anywhere else are refused. */
@@ -180,6 +184,20 @@ export function startWeb(port: number, store: Store, deps: WebDeps): import('nod
           return json(res, 200, { ok: true, name: (await deps.nameOf(who.unionId)) ?? '', unionId: who.unionId });
         }
         if (req.method === 'GET' && url.pathname === '/web/api/overview') return json(res, 200, { ok: true, ...(await overview(store, deps, who.unionId)), timezones: timezones() });
+        if (req.method === 'GET' && url.pathname === '/web/api/store') {
+          // Amber Store (#4): listed apps (plus your own delisted ones), and where you can install.
+          if (!deps.apps) return json(res, 404, { ok: false, error: 'not_found' });
+          const apps = store.listApps().filter(a => a.status === 'listed' || a.maintainerUnionId === who.unionId || deps.isAdmin(who.unionId));
+          const targets: { target: string; name: string }[] = [{ target: 'p2p', name: '我和 Amber 的私聊' }];
+          for (const g of (await deps.botGroups?.().catch(() => [])) ?? []) if (await deps.isMember(g.chatId, who.unionId) === true) targets.push({ target: `group:${g.chatId}`, name: g.name || g.chatId });
+          return json(res, 200, { ok: true, apps: await Promise.all(apps.map(a => deps.apps!.view(a, who.unionId))), targets });
+        }
+        const srcMatch = /^\/web\/api\/store\/([A-Za-z0-9-]{1,40})\/source$/.exec(url.pathname);
+        if (req.method === 'GET' && srcMatch) {
+          const app = deps.apps && store.getApp(srcMatch[1]);
+          if (!app || (app.status !== 'listed' && app.maintainerUnionId !== who.unionId && !deps.isAdmin(who.unionId))) return json(res, 404, { ok: false, error: 'not_found', message: '没有这个应用' });
+          return json(res, 200, { ok: true, ...deps.apps!.source(app) });
+        }
         if (req.method === 'GET' && url.pathname.startsWith('/web/api/groups/')) {
           // Members of a group, for an admin offering an orphaned command to someone (#4).
           const g = /^\/web\/api\/groups\/(oc_[A-Za-z0-9]+)\/members$/.exec(url.pathname);
@@ -245,13 +263,13 @@ export function startWeb(port: number, store: Store, deps: WebDeps): import('nod
           const vault = secretVault();
           if (!vault) throw new AmberError('no_vault', '密钥存储不可用');
           if (body.delete === true) {
-            vault.delete(c, name);
+            vault.delete(lineOf(c), name);
             store.audit(who.unionId, 'secret.delete', { commandId: c.id, chatId: c.chatId, name: c.name, secret: name, via: 'web' });
           } else {
-            try { vault.set(c, name, String(body.value ?? '').trim(), who.unionId); } catch (e) { throw new AmberError('bad_secret', (e as Error).message); }
+            try { vault.set(lineOf(c), name, String(body.value ?? '').trim(), who.unionId); } catch (e) { throw new AmberError('bad_secret', (e as Error).message); }
             store.audit(who.unionId, 'secret.set', { commandId: c.id, chatId: c.chatId, name: c.name, secrets: [name], via: 'web' });
           }
-          return json(res, 200, { ok: true, secrets: vault.info(c, c.script.secrets!) });
+          return json(res, 200, { ok: true, secrets: vault.info(lineOf(c), c.script.secrets!) });
         }
         if ((m = /^\/web\/api\/commands\/([A-Za-z0-9-]{1,40})\/reassign$/.exec(url.pathname))) {
           if (!deps.isAdmin(who.unionId)) throw new AmberError('forbidden', '只有管理员可以重新分配指令');
@@ -267,17 +285,36 @@ export function startWeb(port: number, store: Store, deps: WebDeps): import('nod
           const p = configParams(c.params).find(x => x.name === String(body.name ?? ''));
           if (!p) throw new AmberError('bad_config', `这条指令没有配置项 ${String(body.name ?? '').slice(0, 40)}`);
           if (body.delete === true) {
-            store.deleteConfig(c.chatId, c.name, p.name);
+            store.deleteConfig(c.chatId, c.line, p.name);
             store.audit(who.unionId, 'config.delete', { commandId: c.id, chatId: c.chatId, name: c.name, item: p.name, via: 'web' });
           } else {
             const value = String(body.value ?? '').trim();
             if (!value) throw new AmberError('bad_config', '请填写值；要清空请点「清除」');
             // Same checks as a run (type, range, length, pattern), without the required/default rules.
             const ok = await validateArgs([{ ...p, required: true, default: undefined }], { [p.name]: value.slice(0, 2000) });
-            store.putConfig(c.chatId, c.name, p.name, ok[p.name], who.unionId);
+            store.putConfig(c.chatId, c.line, p.name, ok[p.name], who.unionId);
             store.audit(who.unionId, 'config.set', { commandId: c.id, chatId: c.chatId, name: c.name, item: p.name, value: ok[p.name], via: 'web' });
           }
           return json(res, 200, { ok: true });
+        }
+        if ((m = /^\/web\/api\/commands\/([A-Za-z0-9-]{1,40})\/publish$/.exec(url.pathname))) {
+          // #4: the creator lists their live command in Amber Store; reviewers approve it once.
+          if (!deps.apps) throw new AmberError('not_found', '没有开启 Amber Store');
+          const t = await target(store, deps, who.unionId, String(body.scope ?? ''), m[1]);
+          const r = await deps.apps.requestListing(t.cmd.id, { unionId: who.unionId, openId: who.openId ?? undefined });
+          return json(res, 200, { ok: true, ...r });
+        }
+        if ((m = /^\/web\/api\/store\/([A-Za-z0-9-]{1,40})\/(install|delist)$/.exec(url.pathname))) {
+          if (!deps.apps) throw new AmberError('not_found', '没有开启 Amber Store');
+          if (m[2] === 'delist') {
+            if (body.confirm !== true) throw new AmberError('needs_confirm', '请确认后再下架');
+            const a = deps.apps.delist(m[1], who.unionId);
+            return json(res, 200, { ok: true, status: a.status });
+          }
+          rateLimit(who.unionId);
+          const c = await deps.apps.install(m[1], { unionId: who.unionId, openId: who.openId ?? undefined }, String(body.target ?? ''), body.name === undefined ? undefined : String(body.name));
+          return json(res, 200, { ok: true, commandId: c.id, name: c.name, scope: c.scopeType === 'p2p' ? 'p2p' : `group:${c.chatId}`,
+            needs: { config: configParams(c.params).filter(p => p.required && p.default === undefined).map(p => p.label ?? p.name), secrets: c.script.secrets ?? [] } });
         }
         if ((m = /^\/web\/api\/executors\/([0-9a-f]{16})\/(approve|reject|revoke)$/.exec(url.pathname))) {
           if (!deps.isAdmin(who.unionId) || !deps.hub) throw new AmberError('forbidden', '只有管理员可以管理执行端');
@@ -326,21 +363,36 @@ export function startWeb(port: number, store: Store, deps: WebDeps): import('nod
   return server;
 }
 
-function cmdView(c: CommandRow, viewer?: string, isAdmin?: (u: string) => boolean, store?: Store) {
+function cmdView(c: CommandRow, viewer?: string, isAdmin?: (u: string) => boolean, store?: Store, apps?: AppStore) {
   const canManage = !!viewer && (c.ownerUnionId === viewer || !!isAdmin?.(viewer));
   // Secret names for everyone; when and what tail only for those who may change them (D48). Never values.
-  const secrets = c.script.secrets?.length ? (secretVault()?.info(c, c.script.secrets) ?? c.script.secrets.map(name => ({ name, set: false })))
+  const secrets = c.script.secrets?.length ? (secretVault()?.info(lineOf(c), c.script.secrets) ?? c.script.secrets.map(name => ({ name, set: false })))
     .map(i => (canManage ? i : { name: i.name, set: i.set })) : [];
   return {
     canManage,
     // Only the creator runs their command (#4); everyone may run a global one. An admin may look, not run.
     canRun: !!viewer && (c.global || c.ownerUnionId === viewer),
+    // Amber Store (#4): listed from here (the original), installed from the Store, or can be listed.
+    ...(store && apps ? storeInfo(c, viewer, store, apps) : {}),
     secrets,
     version: store ? store.versionsOf(c.id).length + 1 : 1,
     id: c.id, name: c.name, description: c.description, global: c.global, options: c.options,
     params: runParams(c.params).map(p => ({ name: p.name, label: p.label ?? p.name, type: p.type, required: !!p.required, default: p.default, fromCity: p.defaultFrom === 'caller.city' })),
     // Configuration items (#3): values are not secret, everyone who sees the command sees them.
     config: (v => configParams(c.params).map(p => ({ name: p.name, label: p.label ?? p.name, type: p.type, required: !!p.required, default: p.default ?? null, value: v[p.name] ?? null })))(store ? configValues(store, c) : {}),
+  };
+}
+
+function storeInfo(c: CommandRow, viewer: string | undefined, store: Store, apps: AppStore) {
+  const original = apps.appOfOriginal(c);
+  const inst = store.installOf(c.id);
+  const from = inst ? store.getApp(inst.appId) : undefined;
+  const pending = store.pendingListingFor(c.id);
+  return {
+    listed: original ? { appId: original.id, status: original.status } : null,
+    installed: inst ? { appId: inst.appId, name: from?.name ?? '', version: inst.version } : null,
+    listing: !!pending,
+    publishable: !!viewer && c.ownerUnionId === viewer && !apps.whyNotListable(c, viewer),
   };
 }
 
@@ -377,17 +429,17 @@ async function overview(store: Store, deps: WebDeps, unionId: string) {
     if (!commands.length && !schedules.length) continue;
     groups.push({
       chatId, name: (await deps.chatName(chatId)) ?? chatId,
-      commands: commands.map(c => ({ ...cmdView(c, unionId, deps.isAdmin, store), orphan: orphans.has(c.id) })),
+      commands: commands.map(c => ({ ...cmdView(c, unionId, deps.isAdmin, store, deps.apps), orphan: orphans.has(c.id) })),
       schedules: schedules.map(s => schView(store, s, unionId, deps.isAdmin)),
     });
   }
   return {
     p2p: {
-      commands: store.listActiveP2pByOwner(unionId).map(c => cmdView(c, unionId, deps.isAdmin, store)),
+      commands: store.listActiveP2pByOwner(unionId).map(c => cmdView(c, unionId, deps.isAdmin, store, deps.apps)),
       schedules: store.schedulesByCreator(unionId).filter(s => s.chatType === 'p2p').map(s => schView(store, s, unionId)),
     },
     groups,
-    global: store.listActiveGlobal().map(c => cmdView(c, unionId, deps.isAdmin, store)),
+    global: store.listActiveGlobal().map(c => cmdView(c, unionId, deps.isAdmin, store, deps.apps)),
     membershipUnknown,
     isAdmin: deps.isAdmin(unionId),
     ...(deps.isAdmin(unionId) && deps.hub ? { executors: await executorViews(store, deps) } : {}),

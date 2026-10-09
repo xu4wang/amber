@@ -17,7 +17,9 @@ export interface ReviewConfig {
 
 const FENCE = '`'.repeat(3);
 
-function docMarkdown(c: CommandRow, opts: { creator: string; submittedBy?: string; trial?: string; prev?: CommandRow }): string {
+type DocOpts = { creator: string; submittedBy?: string; trial?: string; prev?: CommandRow; listing?: boolean };
+
+function docMarkdown(c: CommandRow, opts: DocOpts): string {
   const params = c.params.length
     ? ['| 参数 | 显示名 | 类型 | 默认值 | 必填 |', '|---|---|---|---|---|',
        ...c.params.map(p => `| ${p.name}${p.scope === 'config' ? '（配置项）' : ''} | ${p.label ?? ''} | ${p.type === 'integer' ? '整数' : '文本'} | ${p.defaultFrom === 'caller.city' ? '执行人办公城市' + (p.default ? `（兜底 ${p.default}）` : '') : (p.default ?? '')} | ${p.required ? '是' : '否'} |`)].join('\n')
@@ -39,8 +41,10 @@ function docMarkdown(c: CommandRow, opts: { creator: string; submittedBy?: strin
       : `新增 ${d.stat.added} 行，删除 ${d.stat.removed} 行。\n\n${FENCE}diff\n${d.text.slice(0, 30000).split(FENCE).join('``\u200b`')}\n${FENCE}`;
     change = `## 与当前版本的差异\n\n这是「${c.name}」的新版本，审核通过后替换当前版本 ${opts.prev.specHash.slice(0, 12)}。\n\n${body}`;
   }
+  // #4: listing a command that is already live, so that others can install their own copy.
+  if (opts.listing) change = `## 上架到 Amber Store\n\n这条指令已经审核通过、正在使用。上架后，其他人可以从 Amber Store 安装自己的一份（自己的配置项和密钥，以安装人自己的身份执行），安装不再审批。\n\n除了平常的审核，请额外检查：代码里有没有写死只适用于某个群或某个人的内容（群名、成员、特定的仓库或账号等）。这些应该改成配置项，否则别人装了也用不了。`;
   return [
-    `# ${c.name}${opts.prev ? '（新版本）' : ''}`,
+    `# ${c.name}${opts.listing ? '（上架）' : opts.prev ? '（新版本）' : ''}`,
     `**版本**：${c.specHash}`,
     `**范围**：${c.scopeType === 'p2p' ? '私聊（只有创建人）' : '群'}　**选项**：${c.options.confirm ? '执行前需要确认' : '直接执行'}，${c.options.schedulable ? '允许定时执行' : '不允许定时执行'}　**创建人**：${opts.creator}${opts.submittedBy ? `　**提交方**：${opts.submittedBy}` : ''}`,
     change,
@@ -86,10 +90,10 @@ export class FeishuReview {
   }
 
   /** Creates the review doc in the wiki. Returns { url, docId }. */
-  async createDoc(c: CommandRow, opts: { creator: string; submittedBy?: string; trial?: string; prev?: CommandRow }): Promise<{ url: string; docId: string }> {
+  async createDoc(c: CommandRow, opts: DocOpts): Promise<{ url: string; docId: string }> {
     const w = this.cfg.wiki!;
     const r = await this.req('POST', `/open-apis/wiki/v2/spaces/${w.spaceId}/nodes`, {
-      obj_type: 'docx', node_type: 'origin', parent_node_token: w.parentNodeToken, title: `Amber 指令：${c.name}${opts.prev ? ' 新版本' : ''}（${c.specHash.slice(0, 8)}）`,
+      obj_type: 'docx', node_type: 'origin', parent_node_token: w.parentNodeToken, title: `${opts.listing ? 'Amber 上架' : 'Amber 指令'}：${c.name}${opts.prev ? ' 新版本' : ''}（${c.specHash.slice(0, 8)}）`,
     });
     const node = r.data?.node;
     await this.appendMarkdown(node.obj_token, docMarkdown(c, opts));
@@ -97,9 +101,10 @@ export class FeishuReview {
   }
 
   /** Starts a 会签 approval with the given reviewers. Returns the instance code. */
-  async startApproval(c: CommandRow, initiatorOpenId: string, reviewerOpenIds: string[], docUrl: string, creatorLabel: string, prev?: CommandRow): Promise<string> {
+  async startApproval(c: CommandRow, initiatorOpenId: string, reviewerOpenIds: string[], docUrl: string, creatorLabel: string, prev?: CommandRow, listing = false): Promise<string> {
     const a = this.cfg.approval!;
     const text = [
+      listing ? '申请上架到 Amber Store：上架后别人可以安装自己的一份，安装不再审批。请额外检查有没有写死只适用于某个群的内容。' : '',
       `指令：${c.name}${prev ? `（新版本，替换 ${prev.specHash.slice(0, 12)}）` : ''}`,
       `范围：${c.scopeType === 'p2p' ? '私聊' : '群'}　选项：${c.options.confirm ? '执行前需要确认' : '直接执行'}，${c.options.schedulable ? '允许定时执行' : '不允许定时执行'}`,
       '运行方式：沙盒脚本',
@@ -113,12 +118,12 @@ export class FeishuReview {
     const r = await this.req('POST', '/open-apis/approval/v4/instances', {
       approval_code: a.code,
       // Show the command name in the approval list instead of only the definition name.
-      title: `Amber 指令：${c.name}${prev ? '（新版本）' : ''}`,
+      title: `${listing ? 'Amber 上架' : 'Amber 指令'}：${c.name}${prev ? '（新版本）' : ''}`,
       title_display_method: 1,
       open_id: initiatorOpenId,
       form: JSON.stringify([{ id: a.formFieldId, type: 'textarea', value: text }]),
       node_approver_open_id_list: [{ key: a.reviewNodeId, value: reviewerOpenIds }],
-      uuid: `${c.id}-${c.specHash.slice(0, 16)}`,
+      uuid: `${c.id}-${c.specHash.slice(0, 16)}${listing ? `-list-${Date.now()}` : ''}`,
     });
     return r.data.instance_code;
   }

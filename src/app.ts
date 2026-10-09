@@ -46,6 +46,8 @@ export async function startAmber(cfg: AmberConfig, opts: { apiPort: number; webP
     retire: (id, actor, by) => bot.retire(id, actor, by),
     isAdmin: u => bot.isAdminPublic(u),
     hub: bot.hub,
+    apps: bot.apps,
+    botGroups: () => bot.botGroups(),
     isOrphan: c => bot.isOrphan(c),
     groupMembers: c => bot.groupMembers(c),
     requestReassign: (id, to, admin) => bot.requestReassign(id, to, admin),

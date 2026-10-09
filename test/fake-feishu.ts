@@ -86,6 +86,9 @@ export class FakeFeishu {
   async request({ method, url, data, params }: any): Promise<any> {
     if (url === '/open-apis/bot/v3/info') return { bot: { open_id: this.botOpenId, app_name: 'amber-test' } };
     let m: RegExpExecArray | null;
+    if (url === '/open-apis/im/v1/chats') {
+      return { data: { items: [...this.chats].filter(([, c]) => c.mode === 'group' && c.members.has('BOT')).map(([id, c]) => ({ chat_id: id, name: c.name })), has_more: false } };
+    }
     if ((m = /^\/open-apis\/im\/v1\/chats\/([^/]+)\/members$/.exec(url))) {
       if (!this.membersApiAllowed) this.fail(99991672, 'Access denied');
       const c = this.chats.get(m[1]);

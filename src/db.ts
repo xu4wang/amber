@@ -53,6 +53,10 @@ export interface CommandRow {
   createdAt: number;
   /** true = usable in every chat Amber is in (promoted by an admin); false = only where it was created. */
   global: boolean;
+  /** The command's line in its chat (#4): its versions share it, and so do its secrets and configuration.
+   *  A submitted command's line is its name; a Store installation gets its own, so several people can install
+   *  the same app in one chat without sharing anything. */
+  line: string;
 }
 
 export function computeSpecHash(c: Pick<CommandRow, 'name' | 'params' | 'script' | 'options'>): string {
@@ -84,6 +88,25 @@ export interface ExecutorRow {
 export interface RunRow {
   id: string; commandId: string; channel: string; callerUnionId: string; chatId: string; args: Record<string, string>;
   status: string; result: string | null; error: string | null; startedAt: number; finishedAt: number | null;
+}
+
+export interface AppRow {
+  id: string; name: string; description: string;
+  /** The original's creator: may delist it; their new versions become the app's new versions (phase 2). */
+  maintainerUnionId: string;
+  /** The original command (chat + line) the app was listed from. */
+  originChatId: string; originLine: string;
+  status: 'listed' | 'delisted';
+  createdAt: number; updatedAt: number;
+}
+
+export interface ListingRow {
+  id: string; commandId: string; specHash: string; requestedBy: string;
+  status: 'pending' | 'approved' | 'rejected' | 'canceled';
+  approvalInstance: string | null; docUrl: string | null; docId: string | null;
+  /** Card review (no Feishu approval configured): reviewers who approved so far. */
+  approvedBy: string[];
+  reason: string | null; createdAt: number;
 }
 
 export type RequestKind = 'run' | 'schedule' | 'schedule_resume' | 'schedule_delete' | 'retire' | 'scope_global' | 'scope_local' | 'reassign';
@@ -126,9 +149,7 @@ export class Store {
         spec_hash TEXT NOT NULL,
         created_at INTEGER NOT NULL
       );
-      -- One active command per name per chat. A new version (draft/pending) may exist next to it (D38).
       DROP INDEX IF EXISTS commands_scope_name;
-      CREATE UNIQUE INDEX IF NOT EXISTS commands_active_name ON commands(chat_id, name) WHERE status = 'active';
       CREATE TABLE IF NOT EXISTS runs (
         id TEXT PRIMARY KEY,
         command_id TEXT NOT NULL,
@@ -166,8 +187,15 @@ export class Store {
       ['approval_instance', 'TEXT'],     // Feishu approval instance code for the pending revision
       ['review_doc_url', 'TEXT'],        // wiki doc with the full code of the pending revision
       ['review_doc_id', 'TEXT'],
-      ['replaces', 'TEXT'],              // id of the active command this draft is a new version of (D38)
+      ['replaces', 'TEXT'],
+      ['line', 'TEXT'],                  // the command's line (#4); NULL = its name
+      ['app_id', 'TEXT'],                // a Store installation: the app and version it was installed from (#4)
+      ['app_version', 'INTEGER'],              // id of the active command this draft is a new version of (D38)
     ] as const) if (!cols.includes(col)) this.db.exec(`ALTER TABLE commands ADD COLUMN ${col} ${ddl}`);
+    // One active command per line per chat (#4; a submitted command's line is its name). A new version
+    // (draft/pending) may exist next to it (D38). Store installations have lines of their own.
+    this.db.exec(`DROP INDEX IF EXISTS commands_active_name;
+      CREATE UNIQUE INDEX IF NOT EXISTS commands_active_line ON commands(chat_id, COALESCE(line, name)) WHERE status = 'active';`);
     // Command secrets (D48): encrypted values, keyed by the command's lineage (chat + name) so a new version keeps them.
     this.db.exec(`CREATE TABLE IF NOT EXISTS command_secrets (
       chat_id TEXT NOT NULL,
@@ -178,6 +206,41 @@ export class Store {
       set_by TEXT NOT NULL,
       updated_at INTEGER NOT NULL,
       PRIMARY KEY (chat_id, cmd_name, name)
+    )`);
+    // Amber Store (#4): listed apps, their versions (each one an approved command spec), and listing requests.
+    this.db.exec(`CREATE TABLE IF NOT EXISTS apps (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      description TEXT NOT NULL DEFAULT '',
+      maintainer_union_id TEXT NOT NULL,
+      origin_chat_id TEXT NOT NULL,
+      origin_line TEXT NOT NULL,
+      status TEXT NOT NULL,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    )`);
+    this.db.exec(`CREATE TABLE IF NOT EXISTS app_versions (
+      app_id TEXT NOT NULL,
+      version INTEGER NOT NULL,
+      command_id TEXT NOT NULL,
+      spec_hash TEXT NOT NULL,
+      doc_url TEXT,
+      listed_at INTEGER NOT NULL,
+      PRIMARY KEY (app_id, version)
+    )`);
+    this.db.exec(`CREATE TABLE IF NOT EXISTS app_listings (
+      id TEXT PRIMARY KEY,
+      command_id TEXT NOT NULL,
+      spec_hash TEXT NOT NULL,
+      requested_by TEXT NOT NULL,
+      status TEXT NOT NULL,
+      approval_instance TEXT,
+      doc_url TEXT,
+      doc_id TEXT,
+      approved_by TEXT NOT NULL DEFAULT '[]',
+      reason TEXT,
+      created_at INTEGER NOT NULL,
+      decided_at INTEGER
     )`);
     // Configuration items (#3): plain values, keyed like secrets by the command's lineage (chat + name).
     this.db.exec(`CREATE TABLE IF NOT EXISTS command_config (
@@ -332,15 +395,16 @@ export class Store {
       specHash: String(r.spec_hash),
       createdAt: Number(r.created_at),
       global: Number(r.global ?? 0) === 1,
+      line: r.line ? String(r.line) : String(r.name),
     };
   }
 
-  insertCommand(c: Omit<CommandRow, 'id' | 'specHash' | 'createdAt' | 'global'>): CommandRow {
+  insertCommand(c: Omit<CommandRow, 'id' | 'specHash' | 'createdAt' | 'global' | 'line'> & { line?: string }): CommandRow {
     c = { ...c, options: normalizeOptions(c.options) };
-    const row: CommandRow = { ...c, id: randomUUID().slice(0, 8), specHash: computeSpecHash(c), createdAt: Date.now(), global: false };
-    this.db.prepare(`INSERT INTO commands (id, scope_type, chat_id, owner_union_id, name, description, params_json, script_json, side_effect, status, spec_hash, created_at)
-      VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`).run(row.id, row.scopeType, row.chatId, row.ownerUnionId, row.name, row.description,
-      JSON.stringify(row.params), JSON.stringify(row.script), 'n/a', row.status, row.specHash, row.createdAt);
+    const row: CommandRow = { ...c, id: randomUUID().slice(0, 8), specHash: computeSpecHash(c), createdAt: Date.now(), global: false, line: c.line ?? c.name };
+    this.db.prepare(`INSERT INTO commands (id, scope_type, chat_id, owner_union_id, name, description, params_json, script_json, side_effect, status, spec_hash, created_at, line)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(row.id, row.scopeType, row.chatId, row.ownerUnionId, row.name, row.description,
+      JSON.stringify(row.params), JSON.stringify(row.script), 'n/a', row.status, row.specHash, row.createdAt, row.line === row.name ? null : row.line);
     this.db.prepare('UPDATE commands SET options_json = ? WHERE id = ?').run(JSON.stringify(row.options), row.id);
     return row;
   }
@@ -433,12 +497,14 @@ export class Store {
   }
 
   /** A draft or a revision under review with this name (only one version may be in progress at a time). */
-  nameInProgress(chatId: string, name: string): boolean {
-    return !!this.db.prepare(`SELECT 1 FROM commands WHERE chat_id = ? AND name = ? AND status IN ('pending','draft')`).get(chatId, name);
+  nameInProgress(chatId: string, line: string): boolean {
+    return !!this.db.prepare(`SELECT 1 FROM commands WHERE chat_id = ? AND COALESCE(line, name) = ? AND status IN ('pending','draft')`).get(chatId, line);
   }
 
-  activeByName(chatId: string, name: string): CommandRow | undefined {
-    const r = this.db.prepare(`SELECT * FROM commands WHERE chat_id = ? AND name = ? AND status = 'active'`).get(chatId, name) as Record<string, unknown> | undefined;
+  /** The active version of a line in a chat. For a submitted command the line is its name, so this is also
+   *  "the active command with this name" — never a Store installation, which has a line of its own. */
+  activeByName(chatId: string, line: string): CommandRow | undefined {
+    const r = this.db.prepare(`SELECT * FROM commands WHERE chat_id = ? AND COALESCE(line, name) = ? AND status = 'active'`).get(chatId, line) as Record<string, unknown> | undefined;
     return r ? this.toRow(r) : undefined;
   }
 
@@ -674,6 +740,90 @@ export class Store {
 
   deleteSecretsOf(chatId: string, cmdName: string): number {
     return Number(this.db.prepare(`DELETE FROM command_secrets WHERE chat_id = ? AND cmd_name = ?`).run(chatId, cmdName).changes);
+  }
+
+  // ---- Amber Store (#4)
+
+  insertApp(a: Omit<AppRow, 'createdAt' | 'updatedAt'>): AppRow {
+    const now = Date.now();
+    this.db.prepare(`INSERT INTO apps (id, name, description, maintainer_union_id, origin_chat_id, origin_line, status, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?)`)
+      .run(a.id, a.name, a.description, a.maintainerUnionId, a.originChatId, a.originLine, a.status, now, now);
+    return this.getApp(a.id)!;
+  }
+
+  private appRow(r: Record<string, unknown> | undefined): AppRow | undefined {
+    return r ? { id: String(r.id), name: String(r.name), description: String(r.description), maintainerUnionId: String(r.maintainer_union_id), originChatId: String(r.origin_chat_id),
+      originLine: String(r.origin_line), status: r.status as AppRow['status'], createdAt: Number(r.created_at), updatedAt: Number(r.updated_at) } : undefined;
+  }
+
+  getApp(id: string): AppRow | undefined { return this.appRow(this.db.prepare('SELECT * FROM apps WHERE id = ?').get(id) as Record<string, unknown> | undefined); }
+
+  appByOrigin(chatId: string, line: string): AppRow | undefined {
+    return this.appRow(this.db.prepare('SELECT * FROM apps WHERE origin_chat_id = ? AND origin_line = ?').get(chatId, line) as Record<string, unknown> | undefined);
+  }
+
+  listApps(status?: AppRow['status']): AppRow[] {
+    return (this.db.prepare(`SELECT * FROM apps ${status ? 'WHERE status = ?' : ''} ORDER BY name`).all(...(status ? [status] : [])) as Record<string, unknown>[]).map(r => this.appRow(r)!);
+  }
+
+  setAppStatus(id: string, status: AppRow['status']): void { this.db.prepare('UPDATE apps SET status = ?, updated_at = ? WHERE id = ?').run(status, Date.now(), id); }
+
+  addAppVersion(appId: string, commandId: string, specHash: string, docUrl: string | null): number {
+    const v = Number((this.db.prepare('SELECT COALESCE(MAX(version), 0) AS v FROM app_versions WHERE app_id = ?').get(appId) as { v: number }).v) + 1;
+    this.db.prepare('INSERT INTO app_versions (app_id, version, command_id, spec_hash, doc_url, listed_at) VALUES (?,?,?,?,?,?)').run(appId, v, commandId, specHash, docUrl, Date.now());
+    this.db.prepare('UPDATE apps SET updated_at = ? WHERE id = ?').run(Date.now(), appId);
+    return v;
+  }
+
+  appVersions(appId: string): { version: number; commandId: string; specHash: string; docUrl: string | null; listedAt: number }[] {
+    return (this.db.prepare('SELECT * FROM app_versions WHERE app_id = ? ORDER BY version DESC').all(appId) as Record<string, unknown>[])
+      .map(r => ({ version: Number(r.version), commandId: String(r.command_id), specHash: String(r.spec_hash), docUrl: (r.doc_url as string) ?? null, listedAt: Number(r.listed_at) }));
+  }
+
+  setInstall(commandId: string, appId: string, version: number): void { this.db.prepare('UPDATE commands SET app_id = ?, app_version = ? WHERE id = ?').run(appId, version, commandId); }
+
+  installOf(commandId: string): { appId: string; version: number } | undefined {
+    const r = this.db.prepare('SELECT app_id, app_version FROM commands WHERE id = ?').get(commandId) as Record<string, unknown> | undefined;
+    return r?.app_id ? { appId: String(r.app_id), version: Number(r.app_version) } : undefined;
+  }
+
+  installsOf(appId: string): CommandRow[] {
+    return (this.db.prepare(`SELECT * FROM commands WHERE app_id = ? AND status = 'active'`).all(appId) as Record<string, unknown>[]).map(r => this.toRow(r));
+  }
+
+  insertListing(l: { commandId: string; specHash: string; requestedBy: string }): ListingRow {
+    const id = randomUUID();
+    this.db.prepare(`INSERT INTO app_listings (id, command_id, spec_hash, requested_by, status, created_at) VALUES (?,?,?,?, 'pending', ?)`).run(id, l.commandId, l.specHash, l.requestedBy, Date.now());
+    return this.getListing(id)!;
+  }
+
+  private listingRow(r: Record<string, unknown> | undefined): ListingRow | undefined {
+    return r ? { id: String(r.id), commandId: String(r.command_id), specHash: String(r.spec_hash), requestedBy: String(r.requested_by), status: r.status as ListingRow['status'],
+      approvalInstance: (r.approval_instance as string) ?? null, docUrl: (r.doc_url as string) ?? null, docId: (r.doc_id as string) ?? null,
+      approvedBy: JSON.parse(String(r.approved_by ?? '[]')), reason: (r.reason as string) ?? null, createdAt: Number(r.created_at) } : undefined;
+  }
+
+  getListing(id: string): ListingRow | undefined { return this.listingRow(this.db.prepare('SELECT * FROM app_listings WHERE id = ?').get(id) as Record<string, unknown> | undefined); }
+
+  listingByInstance(instance: string): ListingRow | undefined {
+    return this.listingRow(this.db.prepare('SELECT * FROM app_listings WHERE approval_instance = ?').get(instance) as Record<string, unknown> | undefined);
+  }
+
+  pendingListingFor(commandId: string): ListingRow | undefined {
+    return this.listingRow(this.db.prepare(`SELECT * FROM app_listings WHERE command_id = ? AND status = 'pending'`).get(commandId) as Record<string, unknown> | undefined);
+  }
+
+  pendingListingInstances(): string[] {
+    return (this.db.prepare(`SELECT approval_instance FROM app_listings WHERE status = 'pending' AND approval_instance IS NOT NULL`).all() as { approval_instance: string }[]).map(r => r.approval_instance);
+  }
+
+  updateListing(id: string, f: { approvalInstance?: string; docUrl?: string; docId?: string; approvedBy?: string[]; status?: ListingRow['status']; reason?: string | null }, onlyIfPending = true): boolean {
+    const cur = this.getListing(id);
+    if (!cur || (onlyIfPending && cur.status !== 'pending')) return false;
+    const n = { ...cur, ...f };
+    this.db.prepare(`UPDATE app_listings SET approval_instance = ?, doc_url = ?, doc_id = ?, approved_by = ?, status = ?, reason = ?, decided_at = ? WHERE id = ? AND status = ?`)
+      .run(n.approvalInstance, n.docUrl, n.docId, JSON.stringify(n.approvedBy), n.status, n.reason, n.status === 'pending' ? null : Date.now(), id, cur.status);
+    return true;
   }
 
   putConfig(chatId: string, cmdName: string, name: string, value: string, by: string): void {

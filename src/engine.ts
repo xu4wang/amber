@@ -18,13 +18,19 @@ export function setWebUrl(u: string): void { WEB_URL = u; }
 export const runParams = (params: ParamDef[]): ParamDef[] => params.filter(p => p.scope !== 'config');
 export const configParams = (params: ParamDef[]): ParamDef[] => params.filter(p => p.scope === 'config');
 
-/** Stored configuration values of a command line (chat + name). Callers read only the items the version declares. */
-export function configValues(store: Store, c: { chatId: string; name: string }): Record<string, string> {
-  return Object.fromEntries(store.configRows(c.chatId, c.name).map(r => [r.name, r.value]));
+/** Where a command's secrets and configuration live: its chat and its line (#4), shared by its versions. */
+export function lineOf(c: { chatId: string; name: string; line?: string }): { chatId: string; name: string } {
+  return { chatId: c.chatId, name: c.line ?? c.name };
+}
+
+/** Stored configuration values of a command line. Callers read only the items the version declares. */
+export function configValues(store: Store, c: { chatId: string; name: string; line?: string }): Record<string, string> {
+  const l = lineOf(c);
+  return Object.fromEntries(store.configRows(l.chatId, l.name).map(r => [r.name, r.value]));
 }
 
 /** Required configuration items with neither a value nor a default. */
-export function missingConfig(store: Store, c: { chatId: string; name: string; params: ParamDef[] }, values = configValues(store, c)): string[] {
+export function missingConfig(store: Store, c: { chatId: string; name: string; line?: string; params: ParamDef[] }, values = configValues(store, c)): string[] {
   return configParams(c.params).filter(p => p.required && p.default === undefined && !(values[p.name] ?? '').trim()).map(p => p.label ?? p.name);
 }
 
@@ -38,16 +44,16 @@ export function setSecretVault(v: SecretVault): void { VAULT = v; }
 export function secretVault(): SecretVault | undefined { return VAULT; }
 
 /** Declared secret names that have no value yet (all of them when no vault is configured). */
-export function missingSecrets(c: { chatId: string; name: string; script: { secrets?: string[] } }): string[] {
+export function missingSecrets(c: { chatId: string; name: string; line?: string; script: { secrets?: string[] } }): string[] {
   const names = c.script.secrets ?? [];
   if (!names.length) return [];
   if (!VAULT) return names;
-  return VAULT.info(c, names).filter(i => !i.set).map(i => i.name);
+  return VAULT.info(lineOf(c), names).filter(i => !i.set).map(i => i.name);
 }
 
 /** After a command line ends (retired, or a draft dropped / rejected with nothing active left under that
  *  name), its secrets and configuration values go too, so a later, unrelated command with the same name cannot inherit them. */
-export function dropOrphanSettings(store: Store, chatId: string, name: string, actor: string | null): void {
+export function dropOrphanSettings(store: Store, chatId: string, name: string, actor: string | null): void {   // name: the line
   if (store.activeByName(chatId, name) || store.nameInProgress(chatId, name)) return;
   const c = store.deleteConfigOf(chatId, name);
   if (c) store.audit(actor, 'config.drop_all', { chatId, name, count: c });
@@ -170,7 +176,7 @@ export async function runCommand(store: Store, cmd: CommandRow, rawArgs: Record<
   let secrets: Record<string, string> | undefined;
   if (script.secrets?.length) {
     if (!VAULT) throw new AmberError('no_vault', '密钥存储不可用');
-    const got = VAULT.values(cmd, script.secrets);
+    const got = VAULT.values(lineOf(cmd), script.secrets);
     if ('missing' in got) throw new AmberError('missing_secret', `还没设置密钥：${got.missing.join('、')}。请指令创建人或管理员先设置（私聊 Amber 发「设置密钥 ${cmd.name}」，或在网站的指令页面设置）`);
     secrets = got.values;
   }

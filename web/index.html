@@ -288,6 +288,7 @@ function showOutput(el, r, meta) {
 
 // ---- state
 let DATA = null;          // overview
+let STORE = null;         // Amber Store: { apps, targets }
 let RUNS = [];
 let SEL = null;           // { kind: 'cmd'|'sch'|'run', key }
 const ITEMS = new Map();  // key -> { kind, c?, scope?, where?, s?, r? }
@@ -304,7 +305,7 @@ function cmdLeaf(c, scope) {
   const key = 'c:' + scope + ':' + c.id;
   ITEMS.set(key, { kind: 'cmd', c, scope });
   return `<div class="leaf" data-key="${esc(key)}" data-search="${esc((c.name + ' ' + (c.description || '')).toLowerCase())}">
-    <span class="name">${esc(c.name)}</span>${c.orphan ? '<span class="chip warn">创建人已离群</span>' : ''}${c.options.confirm ? '<span class="chip warn">需确认</span>' : ''}</div>`;
+    <span class="name">${esc(c.name)}</span>${c.listed ? '<span class="chip accent">已上架</span>' : ''}${c.installed ? '<span class="chip">来自 Store</span>' : ''}${c.orphan ? '<span class="chip warn">创建人已离群</span>' : ''}${c.options.confirm ? '<span class="chip warn">需确认</span>' : ''}</div>`;
 }
 
 // A schedule sits under the command it runs: the command is "what", the schedule is "when".
@@ -333,6 +334,13 @@ function renderTree() {
   html += folder('我的私聊', 'p2p', o.p2p.commands, o.p2p.schedules, true);
   for (const g of o.groups) html += folder(`群：${g.name}`, 'group:' + g.chatId, g.commands, g.schedules, true);
   html += folder('全局指令', 'global', o.global, [], true);
+  if (STORE && STORE.ok) {
+    html += `<details class="node"><summary>Amber Store<span class="count">${STORE.apps.length}</span></summary>${STORE.apps.map(a => {
+      const key = 'a:' + a.id;
+      ITEMS.set(key, { kind: 'app', a });
+      return `<div class="leaf" data-key="${esc(key)}" data-search="${esc((a.name + ' ' + (a.description || '')).toLowerCase())}"><span class="name">${esc(a.name)}</span>${a.status === 'delisted' ? '<span class="chip warn">已下架</span>' : `<span class="sub">v${esc(a.version)}</span>`}</div>`;
+    }).join('') || '<div class="empty-leaf">还没有上架的应用</div>'}</details>`;
+  }
   if (o.isAdmin && o.executors) {
     const ST = { pending: '待批准', approved: '已批准', rejected: '已拒绝', revoked: '已撤销' };
     const pending = o.executors.filter(e => e.status === 'pending').length;
@@ -371,6 +379,7 @@ function select(key, push = true) {
   if (it.kind === 'cmd') cmdPane(key, it);
   else if (it.kind === 'sch') schPane(it);
   else if (it.kind === 'exe') exePane(it);
+  else if (it.kind === 'app') appPane(it);
   else runPane(it);
 }
 
@@ -430,6 +439,11 @@ function cmdPane(key, { c, scope }) {
     ${c.orphan ? `<div class="manage"><h3 class="note">重新分配</h3>
       <p class="note">这条指令的创建人已不在群里，现在没人能执行它。可以把它交给群里的另一个人：Amber 私聊发确认卡，对方点「接收」后成为创建人，原来的配置项和密钥保留；原来的定时任务由对方选择是否以他的身份重建。</p>
       <div class="field"><label>交给</label><span class="examples"><select data-reassign-to><option value="">读取群成员中……</option></select> <button type="button" class="btn small" data-reassign="1">发送确认卡</button></span></div></div>` : ''}
+    ${c.listed || c.installed || c.listing || c.publishable ? `<div class="manage"><h3 class="note">Amber Store</h3>
+      ${c.listed ? `<p class="note">这条指令已上架到 Amber Store${c.listed.status === 'delisted' ? '（已下架）' : ''}，别人可以安装自己的一份。它以后审核通过的新版本，会成为 Store 里的新版本。</p>` : ''}
+      ${c.installed ? `<p class="note">从 Amber Store 安装：「${esc(c.installed.name)}」第 ${esc(c.installed.version)} 版。</p>` : ''}
+      ${c.listing ? '<p class="note">上架申请正在审核中。</p>' : ''}
+      ${c.publishable ? '<p class="note">上架后，别人可以从 Amber Store 安装自己的一份，安装不再审批。上架要审核人审核一次。</p><button class="btn" data-publish="1">申请上架</button>' : ''}</div>` : ''}
     ${c.canManage ? `<div class="manage"><h3 class="note">管理</h3>
       <p class="note">要修改这条指令，跟你的 agent 说改什么，它会提交新版本，审核通过后自动替换。不再需要时可以下线：下线后不能再执行，它的定时任务会暂停。</p>
       <button class="btn" data-retire="1">下线这条指令</button></div>` : ''}`;
@@ -463,6 +477,36 @@ function schPane({ s, scope }) {
         <button class="btn" data-sch="${esc(s.id)}:delete">删除</button></div>${s.mine ? '' : '<p class="note">这是别人的定时任务：管理员可以暂停、恢复、删除，不能立即运行。</p>'}` : '<p class="note">只有创建人可以管理这个定时任务。</p>'}
     </div>
     <div class="output wait" id="out" style="display:none"></div>`;
+}
+
+function appPane({ a }) {
+  const pane = document.getElementById('pane');
+  const svc = a.network ? '可访问外网' : a.services ? `以执行人身份调用：${esc(a.services)}` : '不联网';
+  pane.innerHTML = `${backBtn}
+    <div class="pane-head"><h1>${esc(a.name)}</h1><span class="chip">v${esc(a.version ?? '?')}</span>${a.status === 'delisted' ? '<span class="chip warn">已下架</span>' : ''}</div>
+    <div class="where">Amber Store · 维护人 ${esc(a.maintainer || '—')}${a.installs !== undefined ? ` · 已安装 ${esc(a.installs)} 份` : ''}</div>
+    <div class="desc">${esc(a.description || '')}</div>
+    <div class="box">
+      <div class="field"><label>能做什么</label><span>${svc}${a.options && a.options.confirm ? '；执行前需要确认' : ''}${a.options && a.options.schedulable ? '；允许定时' : ''}</span></div>
+      <div class="field"><label>执行时填</label><span>${a.params.length ? a.params.map(p => esc(p.label) + (p.required ? ' *' : '')).join('、') : '（不用填）'}</span></div>
+      <div class="field"><label>配置项</label><span>${a.config.length ? a.config.map(p => esc(p.label) + (p.required && p.default == null ? ' *' : '')).join('、') + '<br><span class="note">装好后在指令页面设置一次，以后每次执行自动带上</span>' : '（没有）'}</span></div>
+      <div class="field"><label>密钥</label><span>${a.secrets.length ? a.secrets.map(esc).join('、') + '<br><span class="note">装好后填你自己的，只有你的这一份会用到</span>' : '（没有）'}</span></div>
+      ${a.docUrl ? `<div class="field"><label>审核文档</label><span><a href="${esc(a.docUrl)}" target="_blank" rel="noopener">查看</a></span></div>` : ''}
+    </div>
+    ${a.status === 'listed' ? `<div class="box"><h3 class="note" style="margin-top:0">安装</h3>
+      <p class="note">装好后是你自己的一条指令：只有你能看见、能执行，以你的身份和数据权限执行，配置项和密钥也是你自己的。安装不需要审批。</p>
+      <div class="field"><label>装到</label><select data-app-target>${(STORE.targets || []).map(t => `<option value="${esc(t.target)}">${esc(t.name)}</option>`).join('')}</select></div>
+      <div class="field"><label>名称</label><input data-app-name value="${esc(a.name)}" placeholder="同一个地方不能重名"></div>
+      <div class="actions"><button class="btn primary" data-app-install="${esc(a.id)}">安装</button></div></div>` : '<p class="note">这个应用已经下架：已经装好的照常可用，不能再新装。</p>'}
+    <div class="box"><h3 class="note" style="margin-top:0">代码</h3><div id="appsrc" class="note">读取中……</div></div>
+    ${a.canDelist ? `<div class="manage"><h3 class="note">管理</h3><p class="note">下架后不能再新装，已经装好的照常可用。</p><button class="btn" data-app-delist="${esc(a.id)}">下架</button></div>` : ''}`;
+  fetch(`/web/api/store/${encodeURIComponent(a.id)}/source`).then(r => r.json()).then(x => {
+    const el = document.getElementById('appsrc');
+    if (!el) return;
+    if (!x.ok) { el.textContent = x.message || '读取失败'; return; }
+    el.className = '';
+    el.innerHTML = codeBlock(x.code, x.lang) + `<p class="note">版本 <code>${esc(x.specHash.slice(0, 12))}</code> · 超时 ${esc(x.timeoutMs / 1000)} 秒</p>`;
+  }).catch(() => {});
 }
 
 function exePane({ e }) {
@@ -514,6 +558,14 @@ async function runPane({ r }) {
   showOutput(out, { ok: true, markdown: x.markdown });
 }
 
+function codeBlock(src, lang) {
+  const code = String(src).replace(/\n$/, '');
+  // highlight.js escapes the source itself; fall back to plain escaped text if it is missing.
+  const body = typeof hljs === 'object' ? hljs.highlight(code, { language: lang === 'python' ? 'python' : 'plaintext', ignoreIllegals: true }).value : esc(code);
+  const gutter = code.split('\n').map((_, i) => i + 1).join('\n');
+  return `<div class="code"><pre class="gutter">${gutter}</pre><pre class="src"><code>${body}</code></pre></div>`;
+}
+
 async function loadSource() {
   const el = document.getElementById('src');
   const it = ITEMS.get(SEL);
@@ -524,10 +576,6 @@ async function loadSource() {
   const sc = x.script;
   const how = '沙盒脚本';
   const net = sc.network ? '可访问外网' : Object.keys(sc.services).length ? `以执行人身份调用：${Object.entries(sc.services).map(([n, u]) => `${n}（每次执行最多 ${u.calls} 次调用）`).join('、')}（不能访问外网）` : '不联网';
-  const code = sc.code.replace(/\n$/, '');
-  // highlight.js escapes the source itself; fall back to plain escaped text if it is missing.
-  const body = typeof hljs === 'object' ? hljs.highlight(code, { language: sc.lang === 'python' ? 'python' : 'plaintext', ignoreIllegals: true }).value : esc(code);
-  const gutter = code.split('\n').map((_, i) => i + 1).join('\n');
   el.className = '';
   el.innerHTML = `<dl class="kv">
       <dt>运行方式</dt><dd>${esc(how)}，${esc(net)}，超时 ${sc.timeoutMs / 1000} 秒</dd>${sc.interpreter ? `
@@ -539,7 +587,7 @@ async function loadSource() {
       <dt>生效时间</dt><dd>${fmtTime(x.createdAt)}</dd>
       ${x.reviewDocUrl ? `<dt>审核文档</dt><dd><a href="${esc(x.reviewDocUrl)}" target="_blank" rel="noopener noreferrer">在飞书知识库查看</a></dd>` : ''}
     </dl>
-    <div class="code"><pre class="gutter">${gutter}</pre><pre class="src"><code>${body}</code></pre></div>
+    ${codeBlock(sc.code, sc.lang)}
     ${x.history.length ? `<p class="note">历史版本：${x.history.map((v, i) => `第 ${x.history.length - i} 版 <code>${esc(v.specHash.slice(0, 8))}</code>（${fmtTime(v.createdAt)}${v.reviewDocUrl ? `，<a href="${esc(v.reviewDocUrl)}" target="_blank" rel="noopener noreferrer">审核文档</a>` : ''}）`).join('；')}</p>` : ''}
     <p class="note">这就是审核通过、实际运行的代码。版本是指令定义（名称、参数、代码、选项）的哈希，每次执行前都会重新核对。</p>`;
 }
@@ -559,6 +607,7 @@ async function reload(keepKey) {
   const o = await fetch('/web/api/overview').then(r => r.json());
   if (!o.ok) return loginView();
   DATA = o;
+  STORE = await fetch('/web/api/store').then(r => r.json()).catch(() => null);
   await refreshRuns();
   renderTree();
   if (keepKey && ITEMS.has(keepKey)) select(keepKey, false);
@@ -648,6 +697,37 @@ document.addEventListener('click', async ev => {
     history.replaceState(null, '', '#');
     await reload(null);
     welcome();
+    return;
+  }
+  const inst = ev.target.closest('[data-app-install]');
+  if (inst) {
+    const target = document.querySelector('[data-app-target]').value, name = document.querySelector('[data-app-name]').value.trim();
+    inst.disabled = true;
+    const r = await post(`/web/api/store/${encodeURIComponent(inst.dataset.appInstall)}/install`, { target, name });
+    inst.disabled = false;
+    if (!r.ok) { alert(r.message || r.error); return; }
+    const todo = [...(r.needs.config.length ? ['配置项：' + r.needs.config.join('、')] : []), ...(r.needs.secrets.length ? ['密钥：' + r.needs.secrets.join('、')] : [])];
+    alert(`已安装「${r.name}」。${todo.length ? '\n执行前请先在指令页面底部设置' + todo.join('；') + '。' : ''}`);
+    await reload('c:' + r.scope + ':' + r.commandId);
+    return;
+  }
+  const dl = ev.target.closest('[data-app-delist]');
+  if (dl) {
+    if (!confirm('下架这个应用？已经装好的照常可用，不能再新装。')) return;
+    const r = await post(`/web/api/store/${encodeURIComponent(dl.dataset.appDelist)}/delist`, { confirm: true });
+    if (!r.ok) { alert(r.message || r.error); return; }
+    await reload('a:' + dl.dataset.appDelist);
+    return;
+  }
+  const pub = ev.target.closest('[data-publish]');
+  if (pub) {
+    const { c, scope } = ITEMS.get(SEL);
+    if (!confirm(`申请把「${c.name}」上架到 Amber Store？审核人通过后，别人可以安装自己的一份（自己的配置项和密钥，以自己的身份执行）。`)) return;
+    pub.disabled = true;
+    const r = await post(`/web/api/commands/${encodeURIComponent(c.id)}/publish`, { scope });
+    if (!r.ok) { alert(r.message || r.error); pub.disabled = false; return; }
+    alert('已提交上架审核，结果会私聊通知你。');
+    await reload(SEL);
     return;
   }
   const ra = ev.target.closest('[data-reassign]');

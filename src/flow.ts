@@ -57,7 +57,7 @@ function scriptLabel(_k: string): string {
   return '脚本（沙盒运行）';
 }
 
-function specSummary(c: CommandRow): string {
+export function specSummary(c: CommandRow): string {
   const desc = (p: ParamDef) => `${p.label ?? p.name}（${p.type === 'integer' ? '整数' : '文本'}${p.defaultFrom === 'caller.city' ? '，默认办公城市' : p.default !== undefined ? `，默认 ${p.default}` : ''}${p.required ? '，必填' : ''}）`;
   const run = c.params.filter(p => p.scope !== 'config'), cfg = c.params.filter(p => p.scope === 'config');
   const params = run.length ? run.map(desc).join('、') : '无';
@@ -80,7 +80,7 @@ function specSummary(c: CommandRow): string {
 const FENCE = '`'.repeat(3);
 
 /** Full code, so reviewers see exactly what will run. */
-function codePanels(c: CommandRow): unknown[] {
+export function codePanels(c: CommandRow): unknown[] {
   const body = c.script.code;
   const shown = body.length > 12000 ? body.slice(0, 12000) + '\n# ……（超过 12000 字符，完整内容见文档）' : body;
   return [{
@@ -348,7 +348,7 @@ export class Flow {
       await note(`**${new Date().toISOString().slice(0, 16).replace('T', ' ')} UTC：飞书审批通过，指令已生效。**`);
     } else if (inst.status === 'REJECTED' || inst.status === 'CANCELED' || inst.status === 'DELETED') {
       this.store.setStatus(c.id, 'rejected');
-      dropOrphanSettings(this.store, c.chatId, c.name, null);
+      dropOrphanSettings(this.store, c.chatId, c.line, null);
       const why = inst.status === 'REJECTED' ? `审核人驳回${inst.comments.length ? `：${inst.comments.join('；')}` : ''}` : '审批已撤回';
       this.store.audit(null, 'review.feishu_closed', { id: c.id, instanceCode, status: inst.status });
       if (meta.claimMessageId) await this.patch(meta.claimMessageId, shell(`未通过：${c.name}`, 'red', [{ tag: 'markdown', content: sanitizeMarkdown(why, 500) }]));
@@ -412,7 +412,7 @@ export class Flow {
     if (action === 'claim_drop') {
       this.store.setStatus(c.id, 'rejected');
       this.store.audit(caller.unionId, 'draft.drop', { id: c.id });
-      dropOrphanSettings(this.store, c.chatId, c.name, caller.unionId);
+      dropOrphanSettings(this.store, c.chatId, c.line, caller.unionId);
       return shell(`已丢弃：${c.name}`, 'grey', [{ tag: 'markdown', content: `由 ${person(caller.openId)} 丢弃。` }]);
     }
     if (action !== 'claim_drop') this.checkOwnerForNewVersion(c, caller);
@@ -481,7 +481,7 @@ export class Flow {
     const meta = this.store.getMeta(c.id);
     if (decision === 'reject') {
       this.store.setStatus(c.id, 'rejected');
-      dropOrphanSettings(this.store, c.chatId, c.name, caller.unionId);
+      dropOrphanSettings(this.store, c.chatId, c.line, caller.unionId);
       if (meta.claimMessageId) await this.patch(meta.claimMessageId, shell(`已驳回：${c.name}`, 'red', [{ tag: 'markdown', content: `审核人驳回：${sanitizeMarkdown(reason.trim(), 300)}` }]));
     } else if (approved >= this.reviewers.length) {
       await this.activate(c, { via: 'card_review' });

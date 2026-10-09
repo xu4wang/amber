@@ -197,7 +197,7 @@ export class Scheduler {
     if (!next || next.status !== 'active') throw new AmberError('changed', '新版本已不可用');
     // Only to a newer version of the same command (same chat and name), never to another command.
     const prev = this.store.getCommand(s.commandId);
-    if (!prev || prev.chatId !== next.chatId || prev.name !== next.name) throw new AmberError('forbidden', '只能换绑到同一条指令的新版本');
+    if (!prev || prev.chatId !== next.chatId || prev.line !== next.line) throw new AmberError('forbidden', '只能换绑到同一条指令的新版本');
     if (!next.options.schedulable) throw new AmberError('not_schedulable', '新版本不允许定时执行');
     // The creator must still be allowed to use it where the schedule lives.
     findVisible(this.store, { unionId: s.creatorUnionId, chatId: s.chatId, chatType: s.chatType, channel: 'schedule' }, next.id);

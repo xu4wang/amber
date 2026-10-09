@@ -1,9 +1,10 @@
 import * as lark from '@larksuiteoapi/node-sdk';
 import type { Store, CommandRow, ScopeType } from './db.ts';
 import type { Caller, Block } from './engine.ts';
-import { visibleCommands, findVisible, findManageable, runCommand, AmberError, secretVault, dropOrphanSettings, runParams } from './engine.ts';
+import { visibleCommands, findVisible, findManageable, runCommand, AmberError, secretVault, lineOf, dropOrphanSettings, runParams } from './engine.ts';
 import { Mentions, reassignCard, listCard, formCard, runningCard, resultCard, errorCard, infoCard, retireConfirmCard, closedCard, secretFormCard, secretPickCard, executorApprovalCard, executorDecidedCard, executorListCard, executorFollowCard } from './cards.ts';
 import { ExecutorHub } from './executors.ts';
+import { AppStore } from './apps.ts';
 import type { AmberConfig } from './config.ts';
 import { Flow } from './flow.ts';
 import { Signer } from './identity.ts';
@@ -49,6 +50,7 @@ export class AmberBot {
   agent: AgentGate;
   scheduler: Scheduler;
   hub: ExecutorHub;
+  apps: AppStore;
 
   private timers: boolean;
 
@@ -82,6 +84,9 @@ export class AmberBot {
     this.agent.scheduler = this.scheduler;
     this.flow.onReplaced = (prev, next) => this.scheduler.onCommandReplaced(prev, next);
     this.hub = new ExecutorHub(store, this.signer);
+    this.apps = new AppStore(store, this.flow, {
+      isMember: (c, u) => this.isMember(c, u), isAdmin: u => this.isAdmin(u), nameOf: u => this.nameOf(u), openIdOf: u => this.flow.openIdOf(u),
+    });
     this.hub.approvalCard = executorApprovalCard;
     this.hub.followCard = executorFollowCard;
     this.hub.notifyAdmins = async card => {
@@ -98,7 +103,7 @@ export class AmberBot {
     this.store.setStatus(c.id, 'retired');
     this.store.audit(actor.unionId, 'command.retire', { id: c.id, name: c.name, specHash: c.specHash });
     log('command retired', c.id, c.name);
-    dropOrphanSettings(this.store, c.chatId, c.name, actor.unionId);
+    dropOrphanSettings(this.store, c.chatId, c.line, actor.unionId);
     const schedules = await this.scheduler.onCommandRetired(c, byLabel);
     return { name: c.name, schedules };
   }
@@ -125,7 +130,7 @@ export class AmberBot {
   }
 
   private secretCard(c: CommandRow, note?: string): object {
-    return secretFormCard(c, secretVault()!.info(c, c.script.secrets ?? []), note);
+    return secretFormCard(c, secretVault()!.info(lineOf(c), c.script.secrets ?? []), note);
   }
 
   /** Commands named `name` whose secrets this person may set. */
@@ -168,7 +173,7 @@ export class AmberBot {
     for (const n of c.script.secrets ?? []) {
       const v = (form[n] ?? '').trim();
       if (!v) continue;
-      try { secretVault()!.set(c, n, v, caller.unionId); } catch (e) { throw new AmberError('bad_secret', `${n}：${(e as Error).message}`); }
+      try { secretVault()!.set(lineOf(c), n, v, caller.unionId); } catch (e) { throw new AmberError('bad_secret', `${n}：${(e as Error).message}`); }
       saved.push(n);
     }
     if (!saved.length) throw new AmberError('empty', '没有填写任何值');
@@ -232,8 +237,8 @@ export class AmberBot {
       args: { from: c.ownerUnionId }, rule: null, scheduleId: null, requestedBy: admin.unionId, replyTo: null, inThread: false });
     const schedules = this.store.schedulesOfCommand(c.id).filter(s => s.creatorUnionId === c.ownerUnionId).map(s => this.scheduler.view(s));
     const card = reassignCard({ requestId: req.id, name: c.name, chatName: (await this.chatName(c.chatId)) ?? '这个群', adminOpenId: admin.openId,
-      schedules, secrets: this.store.secretRows(c.chatId, c.name).filter(r => (c.script.secrets ?? []).includes(r.name)).length,
-      config: this.store.configRows(c.chatId, c.name).filter(r => c.params.some(p => p.scope === 'config' && p.name === r.name)).length });
+      schedules, secrets: this.store.secretRows(c.chatId, c.line).filter(r => (c.script.secrets ?? []).includes(r.name)).length,
+      config: this.store.configRows(c.chatId, c.line).filter(r => c.params.some(p => p.scope === 'config' && p.name === r.name)).length });
     try {
       const mid = await this.flow.send({ unionId: toUnionId }, card);
       if (mid) this.store.setRequestMessage(req.id, mid);
@@ -298,6 +303,29 @@ export class AmberBot {
     const note = `${old.length ? (value.s === '1' ? `原来的 ${old.length} 个定时任务已以你的身份重建 ${rebuilt.length} 个${failed.length ? `；没能重建：${failed.join('；')}` : ''}。` : `原来的 ${old.length} 个定时任务已删除。`) : ''}`;
     try { await this.flow.send({ unionId: req.requestedBy }, infoCard('指令已接手', `「${c.name}」已由新的负责人接收。${note}`)); } catch { /* best effort */ }
     return closedCard(`已接手：${c.name}`, 'green', `你现在是「${c.name}」的创建人。在网站上可以查看和修改它的配置项、密钥。${note}`);
+  }
+
+  private groupsCache?: { at: number; list: { chatId: string; name: string }[] };
+
+  /** Groups Amber is in (#4: where someone may install an app). Kept for a minute. */
+  async botGroups(): Promise<{ chatId: string; name: string }[]> {
+    if (this.groupsCache && Date.now() - this.groupsCache.at < 60_000) return this.groupsCache.list;
+    const list: { chatId: string; name: string }[] = [];
+    let pageToken: string | undefined;
+    for (let i = 0; i < 20; i++) {
+      const r = await this.client.request({ method: 'GET', url: '/open-apis/im/v1/chats', params: { page_size: 100, ...(pageToken ? { page_token: pageToken } : {}) } }) as any;
+      for (const c of r?.data?.items ?? []) if (c.chat_id) list.push({ chatId: String(c.chat_id), name: String(c.name ?? '') });
+      if (!r?.data?.has_more) break;
+      pageToken = r.data.page_token;
+    }
+    this.groupsCache = { at: Date.now(), list };
+    return list;
+  }
+
+  /** An approval instance is either a command review or a Store listing (#4). */
+  async onApprovalEvent(code: string): Promise<void> {
+    if (await this.apps.onApprovalEvent(code)) return;
+    await this.flow.onApprovalEvent(code);
   }
 
   async isMember(chatId: string, unionId: string): Promise<boolean | undefined> {
@@ -366,7 +394,7 @@ export class AmberBot {
       'approval_instance': async (d: any) => {
         const code = d?.instance_code ?? d?.event?.instance_code;
         log('approval event', code, d?.status ?? d?.event?.status);
-        if (code) this.flow.onApprovalEvent(String(code)).catch(e => log('approval handling failed', (e as Error).message));
+        if (code) this.onApprovalEvent(String(code)).catch(e => log('approval handling failed', (e as Error).message));
       },
     } as any);
     this.ws.start({ eventDispatcher: dispatcher });
@@ -375,8 +403,8 @@ export class AmberBot {
     await this.flow.loadReviewers();
     // Fallback for when approval events are not delivered: poll pending approvals.
     const poll = async () => {
-      for (const code of this.store.pendingApprovalInstances()) {
-        await this.flow.onApprovalEvent(code).catch(e => log('approval poll failed', code, (e as Error).message));
+      for (const code of [...this.store.pendingApprovalInstances(), ...this.store.pendingListingInstances()]) {
+        await this.onApprovalEvent(code).catch(e => log('approval poll failed', code, (e as Error).message));
       }
     };
     await poll();
@@ -747,6 +775,9 @@ export class AmberBot {
       }
       if (value.a === 'sec_form' || value.a === 'sec_save') {
         return await this.onSecretAction(value.a, String(value.c), caller, d.action?.form_value ?? {});
+      }
+      if (value.a === 'lst_ok' || value.a === 'lst_no') {
+        return raw(await this.apps.onListingReview(value.a, String(value.l), String(d.action?.form_value?.reason ?? ''), caller));
       }
       if (value.a === 'review_ok' || value.a === 'review_no') {
         const reason = String(d.action?.form_value?.reason ?? '');

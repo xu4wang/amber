@@ -124,7 +124,7 @@ export async function makeEnv(over: Partial<AmberConfig> = {}): Promise<Env> {
       const code = [...fake.approvals.keys()].pop()!;
       const a = fake.approvals.get(code)!;
       fake.decide(code, Object.fromEntries(a.tasks.map(t => [t.open_id, 'APPROVED' as const])));
-      await amber.bot.flow.onApprovalEvent(code);
+      await amber.bot.onApprovalEvent(code);
     },
     waitFor: async (f, ms = 15000) => {
       const end = Date.now() + ms;

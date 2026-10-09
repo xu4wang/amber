@@ -91,6 +91,6 @@ export { redact } from './exec-proto.ts';
 export function describeSecrets(c: { scopeType: string; script: { secrets?: string[] } }): string {
   const names = c.script.secrets ?? [];
   if (!names.length) return '';
-  const who = c.scopeType === 'p2p' ? '只有创建人自己会用到' : '群里每个执行这条指令的人都会用到同一份';
+  const who = '只有创建人自己会用到；设为全局指令后，所有执行人共用同一份';
   return `${names.join('、')}（值不参与审核，由创建人或管理员设置；${who}）`;
 }
