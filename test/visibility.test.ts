@@ -124,6 +124,11 @@ test('visibility: only the creator sees and runs a command; an admin looks and r
     const nv = await env.submit({ chatId: GROUP, chatType: 'group', name: '报表', params: [], script: script('print("新版")', { secrets: ['API_TOKEN'] }), options: { schedulable: true } });
     assert.match(JSON.stringify(await env.click(alice, nv.claimMessageId, { a: 'claim_try', c: nv.id })), /只有原创建人可以认领/);
     assert.equal(env.amber.store.runsByCaller(alice.unionId, 10).filter(r => r.commandName === '报表').length, 0);
+    // … not even after the command it replaces was taken offline meanwhile.
+    const before = env.amber.store.getCommand(id)!;
+    (env.amber.store as any).db.prepare("UPDATE commands SET status = 'retired' WHERE id = ?").run(id);
+    assert.match(JSON.stringify(await env.click(carol, nv.claimMessageId, { a: 'claim_try', c: nv.id })), /只有原创建人可以认领/);
+    (env.amber.store as any).db.prepare('UPDATE commands SET status = ? WHERE id = ?').run(before.status, id);
     await env.click(bob, nv.claimMessageId, { a: 'claim_drop', c: nv.id });
 
     // Global: everyone may run it.

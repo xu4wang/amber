@@ -376,7 +376,10 @@ export class Flow {
   /** A new version keeps the command's secrets and configuration: only its creator may claim (and trial-run) it.
    *  Not an admin either (#4): claiming would make them the owner, running it with the creator's settings. */
   private checkOwnerForNewVersion(c: CommandRow, caller: Caller): void {
-    const prev = this.prevOf(c.id);
+    // The version it was submitted to replace, even if that one has been retired since: its creator's secrets
+    // and configuration stay while this draft is in progress.
+    const r = this.store.getMeta(c.id).replaces;
+    const prev = r ? this.store.getCommand(r) : undefined;
     if (prev && prev.ownerUnionId !== caller.unionId) {
       throw new AmberError('not_owner', `这是「${c.name}」的新版本，只有原创建人可以认领`);
     }
