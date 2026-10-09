@@ -26,7 +26,7 @@ Amber 接下来的计划和进展。每完成一项会在这里和对应的 issu
 | 2 | **在结果里 @ 人或机器人**：脚本输出 `@名字`，正式运行时换成真正的 @，把结果交给本群的另一个机器人或某个人继续处理 | [#1](https://github.com/xu4wang/amber/issues/1) | 已完成 |
 | 3 | **验收：GitLab 仓库检查**（群内应用）：没更新在群里报告，有更新唤起机器人拉代码 | [#2](https://github.com/xu4wang/amber/issues/2) | 可以开始（需要仓库和令牌） |
 | 4 | **配置项**：在网站上设置一次、以后每次执行自动带上的参数 | [#3](https://github.com/xu4wang/amber/issues/3) | 已完成 |
-| 5 | **Amber Store**：上架、安装（不审批）、升级、卸载、原版与开发模式安装 | [#4](https://github.com/xu4wang/amber/issues/4) | 进行中：上架、浏览、安装、卸载、下架已上线 |
+| 5 | **Amber Store**：上架、安装（不审批）、升级、卸载、原版与开发模式安装 | [#4](https://github.com/xu4wang/amber/issues/4) | 已完成：上架、浏览、安装、升级、卸载、下架、原版下线与开发模式安装 |
 
 ## 执行环境：运行环境决定权限
 
