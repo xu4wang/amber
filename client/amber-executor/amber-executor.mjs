@@ -177,7 +177,9 @@ export async function startRelays(cfg, me, amberPub, jobId, services) {
           if (!r.ok) return reply(502, 'application/json', JSON.stringify({ error: r.error ?? 'relay_failed', message: r.message ?? '' }));
           reply(r.status, r.contentType || 'application/octet-stream', Buffer.from(r.body ?? '', 'base64'));
         } catch (e) {
-          reply(403, 'application/json', JSON.stringify({ error: 'relay_refused', message: e.message }));
+          // Amber's refusals are not signed: keep their text in our log, give the script a fixed message only.
+          log('relay refused', jobId, name, e.message);
+          reply(403, 'application/json', JSON.stringify({ error: 'relay_refused', message: 'Amber 拒绝了这次转发（原因见执行端日志）' }));
         }
       });
     });
