@@ -88,7 +88,7 @@ export function formCard(c: CommandRow, prefill: Record<string, string> = {}): o
   const params = c.params.filter(p => p.scope !== 'config');
   if (params.length === 0) {
     return shell(`Amber · ${c.name}`, isWrite ? 'red' : 'orange', [
-      { tag: 'markdown', content: sanitizeMarkdown(c.description || '') || '这条指令没有参数。' },
+      { tag: 'markdown', content: sanitizeMarkdown(c.description || '') || (c.params.length ? '执行时不用填参数。' : '这条指令没有参数。') },
       ...warn,
       buttonRow([btn(runText, { a: 'run', c: c.id }, runType), btn('返回', { a: 'list' })]),
     ]);

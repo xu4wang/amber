@@ -402,7 +402,7 @@ function cmdPane(key, { c, scope }) {
     ${c.description ? `<div class="desc">${esc(c.description)}</div>` : '<div class="desc"></div>'}
     <div class="box">
       <div class="tabs"><button class="on" data-tab="run">执行</button><button data-tab="sch">定时</button><button data-tab="code">代码</button></div>
-      <form data-form="run">${c.params.length ? paramInputs(c) : '<p class="note">这条指令没有参数。</p>'}
+      <form data-form="run">${c.params.length ? paramInputs(c) : `<p class="note">${(c.config || []).length ? '执行时不用填参数（用页面底部的配置项）。' : '这条指令没有参数。'}</p>`}
         ${c.options.confirm ? '<p class="note" style="color:var(--warn)">⚠️ 执行前需要确认：请核对参数，按钮要点两次。</p>' : ''}
         <div class="actions"><button class="btn ${c.options.confirm ? 'danger' : 'primary'}" data-do="run">${c.options.confirm ? '确认执行' : '执行'}</button>
           <span class="note">以你本人的身份执行</span></div></form>
