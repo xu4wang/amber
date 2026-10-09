@@ -22,11 +22,28 @@ Amber 接下来的计划和进展。每完成一项会在这里和对应的 issu
 
 | 顺序 | 内容 | Issue | 状态 |
 |---|---|---|---|
-| 1 | **在指定机器人的机器上执行（Amber 执行端）**：有些指令需要访问机器人在本机建立的数据（如台账）。先做「执行端 + 机器人负责人开放的目录」，以后给 botmux 提 PR 完整复用机器人的沙箱 | [#6](https://github.com/xu4wang/amber/issues/6) | 设计中，下一个开工 |
+| 1 | **在指定机器人的机器上执行（Amber 执行端）**：脚本的执行环境与开发它的机器人一致，能访问机器人在本机建立的数据（如台账）。见下文「执行环境：与 botmux 解耦」 | [#6](https://github.com/xu4wang/amber/issues/6) | 设计已定，下一个开工 |
 | 2 | **bot 类型参数和唤起机器人**：指令结果可以交给本群的另一个机器人继续处理 | [#1](https://github.com/xu4wang/amber/issues/1) | 设计已定 |
 | 3 | **验收：GitLab 仓库检查**（群内应用）：没更新在群里报告，有更新唤起机器人拉代码 | [#2](https://github.com/xu4wang/amber/issues/2) | 依赖 1、2 |
 | 4 | **配置项**：安装时填写、以后自动带上的参数 | [#3](https://github.com/xu4wang/amber/issues/3) | 设计已定 |
 | 5 | **Amber Store**：上架、安装（不审批）、升级、卸载、原版与开发模式安装 | [#4](https://github.com/xu4wang/amber/issues/4) | 设计已定，依赖 4 |
+
+## 执行环境：与 botmux 解耦
+
+Amber 只依赖一个通用的命令行约定（**执行环境提供方 v1**），不依赖 botmux 的代码：
+
+```
+<提供方> envs --json                    列出本机可用的环境
+<提供方> current --json                 当前所在的环境（提交草稿时记录开发环境）
+<提供方> exec --env <名称> -- <命令…>   在该环境的沙箱里执行；stdin/stdout/stderr 透传，返回退出码
+<提供方> --contract-version
+```
+
+- **Amber 自带提供方**：现有 macOS 沙箱 + 机器人负责人开放的目录，先用它跑通业务场景。
+- **botmux 提供方**：给 botmux 提一个通用 PR（`botmux sandbox envs / current / exec --bot <id>`，用机器人自己的沙箱规则执行命令，本身就有排障价值，不涉及 Amber）。合并后执行端配置切换即可，Amber 不改代码。
+- **Amber 执行端**装在机器人所在的机器上，主动取任务；任务由 Amber 签名，执行端验签并核对代码哈希后才交给提供方执行，全程不经过 AI。
+- 草稿提交时自动记录开发环境（哪台机器、哪个环境），随代码审核；试运行和正式执行都在同一环境里进行。
+- 当前目录由提供方决定（botmux 为机器人的工作目录），Amber 不设置；中间文件写 `TMPDIR`，运行后删除。
 
 ## 已完成
 

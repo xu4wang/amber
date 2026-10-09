@@ -65,7 +65,7 @@ node src/main.ts       # 飞书长连接 + agent 接口 127.0.0.1:7341 + 网站 
 
 按优先级（详见 [ROADMAP.md](ROADMAP.md)，总览 [#5](https://github.com/xu4wang/amber/issues/5)）：
 
-1. **在指定机器人的机器上执行**（[#6](https://github.com/xu4wang/amber/issues/6)）：Amber 执行端，让指令能访问机器人在本机建立的数据（如台账）
+1. **在指定机器人的机器上执行**（[#6](https://github.com/xu4wang/amber/issues/6)）：Amber 执行端，脚本在与开发它的机器人一致的环境里执行，能访问机器人在本机建立的数据（如台账）；通过「执行环境提供方」约定与 botmux 解耦
 2. **bot 类型参数和唤起机器人**（[#1](https://github.com/xu4wang/amber/issues/1)）：指令结果交给本群的另一个机器人继续处理
 3. **验收：GitLab 仓库检查**（[#2](https://github.com/xu4wang/amber/issues/2)）
 4. **配置项**（[#3](https://github.com/xu4wang/amber/issues/3)）：安装时填写、以后自动带上的参数
