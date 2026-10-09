@@ -35,12 +35,12 @@ Amber 只依赖一个通用的命令行约定（**执行环境提供方 v1**）�
 ```
 <提供方> envs --json                    列出本机可用的环境
 <提供方> current --json                 当前所在的环境（提交草稿时记录开发环境）
-<提供方> exec --env <名称> --tmp <目录> -- <命令…>   在该环境的沙箱里执行；<目录> 可读写并设为 TMPDIR；stdin/stdout/stderr 透传
+<提供方> exec --env <名称> [--script <文件>] -- <命令…>   在该环境的沙箱里执行；提供方自建私有临时目录（可读写、TMPDIR、结束后删除），--script 的文件拷进去后执行；stdin/stdout/stderr 透传
 <提供方> --contract-version
 ```
 
 - **Amber 自带提供方**：现有 macOS 沙箱 + 机器人负责人开放的目录，先用它跑通业务场景。
-- **botmux 提供方**：给 botmux 提一个通用 PR（`botmux sandbox envs / current / exec --bot <id>`，用机器人自己的沙箱规则执行命令，本身就有排障价值，不涉及 Amber）。合并后执行端配置切换即可，Amber 不改代码。
+- **botmux 提供方**：给 botmux 提一个通用 PR（`botmux sandbox envs / current / exec --bot <id>`，用机器人自己的沙箱规则执行命令，本身就有排障价值，不涉及 Amber；实现说明见 [#7](https://github.com/xu4wang/amber/issues/7)）。合并后执行端配置切换即可，Amber 不改代码。
 - **Amber 执行端**装在机器人所在的机器上，主动取任务；任务由 Amber 签名，执行端验签并核对代码哈希后才交给提供方执行，全程不经过 AI。
 - 草稿提交时自动记录开发环境（哪台机器、哪个环境），随代码审核；试运行和正式执行都在同一环境里进行。
 - 当前目录由提供方决定（botmux 为机器人的工作目录），Amber 不设置；中间文件写 `TMPDIR`，运行后删除。
