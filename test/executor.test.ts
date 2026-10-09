@@ -463,3 +463,111 @@ test('executor approval card: lists every path of each environment and flags cre
   // A plain directory environment: {WORKDIR} read-write, no warning for it.
   assert.equal((t.match(/含凭证路径/g) ?? []).length, 1);
 });
+
+test('executor: a script calls a registered service through Amber\'s relay — same code as on Amber, nothing else reachable', async () => {
+  const { createServer } = await import('node:http');
+  const seen: { auth?: string; body: string; path?: string }[] = [];
+  const svc = createServer((req, res) => {
+    let b = ''; req.on('data', c => { b += c; }); req.on('end', () => {
+      seen.push({ auth: req.headers.authorization, body: b, path: req.url });
+      res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify({ status: 'success', rows: [{ n: seen.length }], echo: b }));
+    });
+  });
+  await new Promise<void>(r => svc.listen(0, '127.0.0.1', () => r()));
+  const svcPort = (svc.address() as any).port;
+  const env = await makeEnv({ services: { demo: { audience: 'demo', tcpPort: svcPort, executor: true }, demo2: { audience: 'demo2', tcpPort: svcPort, executor: true }, localonly: { audience: 'localonly', tcpPort: svcPort } } });
+  const base = join(H, `.amber-exectest3-${process.pid}`);
+  const dir = join(base, 'conf'), data = join(base, 'd');
+  mkdirSync(data, { recursive: true });
+  let child: ChildProcess | undefined;
+  const execLog: string[] = [];
+  try {
+    const { alice, fake } = env;
+    env.amber.hub.pollWaitMs = 500;
+    await cli(dir, 'init', '--name', 'svcbox', '--amber', `http://127.0.0.1:${env.apiPort}`);
+    await cli(dir, 'env', 'set', 'e', data);
+    child = spawn(process.execPath, [EXE, 'run'], { env: { ...process.env, AMBER_EXECUTOR_DIR: dir } });
+    child.stdout!.on('data', b => { execLog.push(String(b)); });
+    child.stderr!.on('data', b => { execLog.push(String(b)); });
+    const reg = await env.waitFor(() => fake.sent.find(s => s.to.unionId === alice.unionId && /执行端申请登记/.test(FakeFeishu.text(s.card))));
+    await env.click(alice, reg.id, button(reg.card, 'exe_ok')!);
+    // A service an admin has not opened to executors is refused at submit time.
+    const no = await env.submit({ chatId: GROUP, chatType: 'group', name: '不行', params: [], script: script('print(1)', { env: 'svcbox/e', services: { localonly: { calls: 1 } } }) });
+    assert.equal(no.ok, false);
+    assert.match(no.message, /不允许在执行端上调用/);
+    // The same code a command uses on Amber's machine (127.0.0.1:tcpPort, Authorization: Amber <token>).
+    const code = `import json,sys,urllib.request,urllib.error
+inp=json.load(sys.stdin)
+svc=inp["services"]["demo"]
+op=urllib.request.build_opener(urllib.request.ProxyHandler({}))
+def q(i, tok):
+    req=urllib.request.Request("http://127.0.0.1:%d/amber/query" % svc["tcpPort"], data=json.dumps({"sql":"select %d" % i}).encode(),
+        headers={"Authorization":"Amber "+tok,"Content-Type":"application/json"})
+    try:
+        r=op.open(req, timeout=20); return "%d %s" % (r.status, json.load(r)["rows"][0]["n"])
+    except urllib.error.HTTPError as e: return "http %d" % e.code
+    except Exception as e: return type(e).__name__
+print("call1", q(1, svc["tokens"][0]))
+print("call2", q(2, svc["tokens"][1]))
+print("call3", q(3, "spare"))
+print("ports", svc["tcpPort"] != ${svcPort})
+try:
+    urllib.request.urlopen("http://127.0.0.1:${svcPort}/health", timeout=3); print("direct reached")
+except Exception as e: print("direct", type(e).__name__)
+`;
+    const id = await activate(env, { chatId: GROUP, chatType: 'group', name: '远程查数', params: [], script: script(code, { env: 'svcbox/e', services: { demo: { calls: 2 } } }) }, alice);
+    const before = seen.length;
+    await env.say(alice, GROUP, '远程查数');
+    const card = await env.waitFor(() => fake.sent.map(s => fake.cardOf(s.id)).find(c => c?.header?.title?.content === 'Amber · 远程查数' && /call3/.test(FakeFeishu.text(c))));
+    const t = FakeFeishu.text(card);
+    assert.match(t, /call1 200 \d+/);
+    assert.match(t, /call2 200 \d+/);
+    assert.match(t, /call3 http 403/, 'no more calls than declared');
+    assert.match(t, /ports True/, 'the script gets a local relay port, not the service address');
+    assert.doesNotMatch(t, /direct reached/, 'the service itself is not reachable from the sandbox');
+    // The service saw exactly the two declared calls, with Amber's tokens and the script's body, unchanged.
+    const calls = seen.slice(before);
+    assert.equal(calls.length, 2);
+    for (const c of calls) { assert.match(c.auth!, /^Amber eyJ/); assert.equal(c.path, '/amber/query'); }
+    assert.match(calls[0].body, /select 1/);
+    // The relay is only for the executor a running job went to.
+    const k = newExecutorKeys();
+    const sp = pubB64(createPublicKey(keyFromPem(k.signKey))), bp = pubB64(createPublicKey(keyFromPem(k.boxKey)));
+    const myId = fingerprint(pubB64(createPublicKey(keyFromPem(readFileSync(join(dir, 'sign-key.pem'), 'utf8')))), pubB64(createPublicKey(keyFromPem(readFileSync(join(dir, 'box-key.pem'), 'utf8'))))).slice(0, 16);
+    const rb = JSON.stringify({ jobId: 'nope', service: 'demo', method: 'POST', path: '/amber/query', body: '' });
+    const st = await fetch(`http://127.0.0.1:${env.apiPort}/v1/executor/relay`, { method: 'POST', body: rb, headers: signRequest(keyFromPem(readFileSync(join(dir, 'sign-key.pem'), 'utf8')), myId, 'POST', '/v1/executor/relay', rb) }).then(x => x.status);
+    assert.equal(st, 403, 'no such running job');
+    const st2 = await fetch(`http://127.0.0.1:${env.apiPort}/v1/executor/relay`, { method: 'POST', body: rb, headers: signRequest(keyFromPem(k.signKey), fingerprint(sp, bp).slice(0, 16), 'POST', '/v1/executor/relay', rb) }).then(x => x.status);
+    assert.equal(st2, 401, 'unknown executor');
+    // Another executor's running job, or one not yet picked up: refused.
+    const hub: any = env.amber.hub;
+    for (const [jid, job, service] of [['other-exec', { executorId: 'ffffffffffffffff', picked: true, calls: { demo: 1 } }, 'demo'], ['not-picked', { executorId: myId, picked: false, calls: { demo: 1 } }, 'demo'],
+      ['closed-service', { executorId: myId, picked: true, calls: { localonly: 1 } }, 'localonly'], ['undeclared', { executorId: myId, picked: true, calls: { demo: 1 } }, 'demo2']] as const) {
+      hub.jobs.set(jid, { ...job, envelope: {}, resolve() {}, timer: setTimeout(() => {}, 0) });
+      const body = JSON.stringify({ jobId: jid, service, method: 'POST', path: '/amber/query', body: '' });
+      const code = await fetch(`http://127.0.0.1:${env.apiPort}/v1/executor/relay`, { method: 'POST', body, headers: signRequest(keyFromPem(readFileSync(join(dir, 'sign-key.pem'), 'utf8')), myId, 'POST', '/v1/executor/relay', body) }).then(x => x.status);
+      assert.equal(code, 403, jid);
+      hub.jobs.delete(jid);
+    }
+    // An admin closing the service to executors takes effect for commands already approved.
+    const { setServices } = await import('../src/runner.ts');
+    setServices({ demo: { audience: 'demo', tcpPort: svcPort, executor: false } });
+    const n0 = seen.length;
+    await env.say(alice, GROUP, '远程查数');
+    // Refused before dispatch: the stored definition is re-validated against the current service config.
+    await env.waitFor(() => fake.sent.some(s => /不允许在执行端上调用/.test(FakeFeishu.text(fake.cardOf(s.id)))));
+    assert.equal(seen.length, n0, 'nothing reached the service');
+    assert.ok(id);
+  } catch (e) {
+    console.error('EXECUTOR LOG\n' + execLog.join(''));
+    const h: any = env.amber.hub;
+    console.error('HUB', JSON.stringify({ queues: [...h.queues].map(([k, v]: any) => [k, v.length]), waiters: [...h.waiters.keys()], jobs: [...h.jobs].map(([k, v]: any) => [k, v.executorId, v.picked]), execs: env.amber.store.listExecutors().map((x: any) => [x.id, x.status, x.lastSeen && Date.now() - x.lastSeen]) }));
+    console.error('AUDIT', JSON.stringify((env.amber.store as any).db.prepare("select action, detail from audit where action like 'executor.%' or action like 'run.%'").all()));
+    throw e;
+  } finally {
+    child?.kill('SIGKILL');
+    await env.close();
+    svc.close();
+    rmSync(base, { recursive: true, force: true });
+  }
+});

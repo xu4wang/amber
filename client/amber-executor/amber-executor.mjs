@@ -24,6 +24,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'node:child_process';
+import { createServer } from 'node:http';
 import { newExecutorKeys, keyFromPem, pubB64, fingerprint, showFingerprint, signRequest, openJob, specHashOf, redact, EXECUTOR_NAME, ENV_NAME } from './lib/exec-proto.mjs';
 import { setSandboxContext, validateEnvAccess, buildPolicy, compileToSeatbelt, normalizePath, hardDenyRoots, credentialGrants, describeAccess } from './lib/sandbox-policy.mjs';
 import { runSandboxed } from './lib/sandbox-run.mjs';
@@ -90,7 +91,6 @@ export function prepare(cfg, payload) {
   if (s.env !== `${cfg.name}/${payload.env}`) throw new Error(`任务的执行位置 ${s.env} 不是本执行端的环境`);
   const env = cfg.envs?.[payload.env];
   if (!env) throw new Error(`本执行端没有环境「${payload.env}」`);
-  if (s.services && Object.keys(s.services).length) throw new Error('执行端不支持调用内部服务');
   if (s.sandbox !== undefined) throw new Error('指令不再声明 sandbox：访问权限由运行环境决定');
   const workdir = normalizePath(env.workdir);
   if (!isDir(workdir)) throw new Error(`环境的 workdir 不是已存在的目录：${workdir}`);
@@ -101,7 +101,7 @@ export function prepare(cfg, payload) {
   if (!/\/python(3(\.\d+)?)?$/.test(python)) throw new Error('解释器要是 Python（以 python、python3 或 python3.x 结尾）');
   const vars = checkVars(env.vars);
   const timeoutMs = Math.min(Math.max(Number(s.timeoutMs) || 30000, 1000), 120000);
-  return { code: s.code, python, timeoutMs, workdir, vars, realHome: env.realHome === true, profileFor: dir => compileToSeatbelt(buildPolicy({ runDir: dir, access }), { all: !!s.network }) };
+  return { code: s.code, python, timeoutMs, workdir, vars, realHome: env.realHome === true, profileFor: (dir, tcpPorts = []) => compileToSeatbelt(buildPolicy({ runDir: dir, access }), { all: !!s.network, tcpPorts }) };
 }
 
 const RESERVED_VARS = /^(PATH|HOME|TMPDIR|WORKDIR|LANG|PYTHON.*|DYLD_.*|LD_.*|NODE_OPTIONS)$/;
@@ -120,14 +120,17 @@ function checkVars(v) {
 }
 
 export async function handle(cfg, me, amberPub, envelope) {
-  let payload, secrets = {};
+  let payload, secrets = {}, relays = { ports: [], close() {} };
   try {
     payload = openJob(amberPub, me.id, me.box, envelope);
     if (!firstSeen(envelope.jobId, envelope.exp)) return log('job replayed, ignored', envelope.jobId);
     secrets = payload.input?.secrets ?? {};
     const job = prepare(cfg, payload);
     log('job start', envelope.jobId, payload.spec.name, payload.env, `run ${payload.runId}`);
-    const r = await runSandboxed({ code: job.code, python: job.python, profileFor: job.profileFor, input: payload.input, timeoutMs: job.timeoutMs, env: { ...job.vars, WORKDIR: job.workdir }, ...(job.realHome ? { home: homedir() } : {}) });
+    // Declared services (D52): a local port per service, relayed to Amber; the script only reaches these ports.
+    relays = await startRelays(cfg, me, envelope.jobId, payload.input?.services);
+    const input = relays.services ? { ...payload.input, services: relays.services } : payload.input;
+    const r = await runSandboxed({ code: job.code, python: job.python, profileFor: dir => job.profileFor(dir, relays.ports), input, timeoutMs: job.timeoutMs, env: { ...job.vars, WORKDIR: job.workdir }, ...(job.realHome ? { home: homedir() } : {}) });
     // The log never sees a secret: the error text can contain one (e.g. an exception message).
     log('job done', envelope.jobId, r.ok ? 'ok' : `failed: ${redact(r.error ?? '', secrets)}`);
     await call(cfg, me, '/v1/executor/result', { jobId: envelope.jobId, ok: r.ok, content: redact(r.content, secrets), ...(r.error ? { error: redact(r.error, secrets) } : {}) });
@@ -135,7 +138,42 @@ export async function handle(cfg, me, amberPub, envelope) {
     log('job refused', envelope?.jobId, redact(e.message, secrets));
     // Only answer jobs that were really for us (signature checked); anything else is dropped.
     if (payload) await call(cfg, me, '/v1/executor/result', { jobId: envelope.jobId, ok: false, error: redact(e.message, secrets) }).catch(() => {});
+  } finally {
+    relays.close();
   }
+}
+
+const RELAY_MAX_REQUEST = 512 * 1024;
+/** One local HTTP port per declared service. Each request is passed, signed and unchanged, to Amber's relay
+ *  for this job; Amber checks it and forwards it to the registered service. The script's code is the same as
+ *  on Amber's own machine: services[name].tcpPort is this port. */
+export async function startRelays(cfg, me, jobId, services) {
+  const names = Object.keys(services ?? {});
+  if (!names.length) return { ports: [], close() {} };
+  const servers = [], out = {};
+  for (const name of names) {
+    const srv = createServer((req, res) => {
+      const chunks = [];
+      let n = 0;
+      req.on('data', c => { n += c.length; if (n > RELAY_MAX_REQUEST) req.destroy(); else chunks.push(c); });
+      req.on('end', async () => {
+        const reply = (status, type, body) => { res.writeHead(status, { 'content-type': type }); res.end(body); };
+        try {
+          const headers = {};
+          for (const k of ['authorization', 'content-type', 'accept']) if (typeof req.headers[k] === 'string') headers[k] = req.headers[k];
+          const r = await call(cfg, me, '/v1/executor/relay', { jobId, service: name, method: req.method, path: req.url, headers, body: Buffer.concat(chunks).toString('base64') }, 75_000);
+          if (!r.ok) return reply(502, 'application/json', JSON.stringify({ error: r.error ?? 'relay_failed', message: r.message ?? '' }));
+          reply(r.status, r.contentType || 'application/octet-stream', Buffer.from(r.body ?? '', 'base64'));
+        } catch (e) {
+          reply(403, 'application/json', JSON.stringify({ error: 'relay_refused', message: e.message }));
+        }
+      });
+    });
+    await new Promise((resolve, reject) => { srv.once('error', reject); srv.listen(0, '127.0.0.1', resolve); });
+    servers.push(srv);
+    out[name] = { tokens: services[name]?.tokens ?? [], tcpPort: srv.address().port };
+  }
+  return { ports: servers.map(s => s.address().port), services: out, close() { for (const s of servers) { s.close(); s.closeAllConnections?.(); } } };
 }
 
 /** Refuses a job because this executor is full; only for jobs really addressed to it. */
@@ -151,6 +189,15 @@ async function runLoop() {
   setSandboxContext({ configDir: DIR });
   log(`amber-executor ${cfg.name} (${me.id}) → ${cfg.amber}; environments: ${Object.keys(cfg.envs ?? {}).join(', ') || 'none'}`);
   let running = 0, lastStatus = '';
+  /** Starts every job in a poll answer, whatever state we thought we were in. */
+  const take = r => {
+    for (const job of r?.jobs ?? []) {
+      // Full: answer at once so the run fails now, not after the result timeout.
+      if (running >= MAX_PARALLEL) { log('busy, job refused', job.jobId); handleBusy(cfg, me, amberPub, job); continue; }
+      running++;
+      handle(cfg, me, amberPub, job).finally(() => { running--; });
+    }
+  };
   for (;;) {
     try {
       const reg = await register(cfg, me);
@@ -158,7 +205,9 @@ async function runLoop() {
         if (reg.status !== lastStatus) log(`status: ${reg.status}; fingerprint ${showFingerprint(me.fp)}`);
         lastStatus = reg.status;
         // Pending: wait on Amber (it answers as soon as an admin decides). Rejected / revoked: idle.
-        if (reg.status === 'pending') await call(cfg, me, '/v1/executor/poll', {}, 60_000);
+        // The approval can land between our register and this poll; the poll then answers as approved and
+        // may carry jobs — those are ours (already marked picked up on Amber's side), never drop them.
+        if (reg.status === 'pending') take(await call(cfg, me, '/v1/executor/poll', {}, 60_000));
         else await new Promise(r => setTimeout(r, 600_000));
         continue;
       }
@@ -166,13 +215,8 @@ async function runLoop() {
       lastStatus = 'approved';
       for (;;) {
         const r = await call(cfg, me, '/v1/executor/poll', {}, 60_000);
+        take(r);
         if (r.status !== 'approved') break;
-        for (const job of r.jobs ?? []) {
-          // Full: answer at once so the run fails now, not after the result timeout.
-          if (running >= MAX_PARALLEL) { log('busy, job refused', job.jobId); handleBusy(cfg, me, amberPub, job); continue; }
-          running++;
-          handle(cfg, me, amberPub, job).finally(() => { running--; });
-        }
       }
     } catch (e) {
       log('error', e.message);

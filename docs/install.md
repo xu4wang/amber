@@ -74,7 +74,7 @@ AMBER_LARK_APP_SECRET=xxxxxxxxxxxxxxxx
     "baseUrl": "https://<你的租户>.feishu.cn/wiki/"
   },
   "services": {
-    "data-mcp": { "audience": "data-mcp", "tcpPort": 8765 }
+    "data-mcp": { "audience": "data-mcp", "tcpPort": 8765, "executor": true }
   },
   "webBaseUrl": "http://amber.example.com",
   "timezones": [
@@ -91,7 +91,7 @@ AMBER_LARK_APP_SECRET=xxxxxxxxxxxxxxxx
 | `machines` | 允许访问接口的机器，格式是 IP → 机器名。机器名只记在审计日志里，不给用户看：用户只知道是自己的 agent 提交或发起的（卡片上显示 agent 的 `--label`） |
 | `approval` | 飞书审批配置，取值方法见 [feishu-setup.md](feishu-setup.md#4-审批定义)。不配就退回到用卡片按钮审核 |
 | `wiki` | 放审核文档的知识库位置。要和 `approval` 一起配置 |
-| `services` | 脚本可以调用的本机服务，Amber 会为它们签发执行身份凭证，见 [identity.md](identity.md) |
+| `services` | 脚本可以调用的本机服务，Amber 会为它们签发执行身份凭证，见 [identity.md](identity.md)。`"executor": true` 表示允许在执行端上运行的指令调用它：请求由执行端转给 Amber，Amber 核对后转给这个服务（见 [执行端](executor.md#调用-amber-上登记的服务)）；默认不允许 |
 | `webBaseUrl` | **必填**。网站的外部地址，用来生成登录链接、做跨站请求检查，并通过 `/v1/info` 告诉 agent（不填只会是 localhost，登录链接在别的电脑上打不开） |
 | `timezones` | 可选。定时任务可选的时区（IANA 名称加显示名），**第一个是默认时区**；网站下拉框、卡片上的时间说明都用它。不配就只用 Amber 服务器所在的时区，显示为「服务器时间」 |
 | `dataDir` | 可选，数据目录，默认是 `~/.config/amber/data` |

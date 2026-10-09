@@ -12,7 +12,8 @@ export interface AmberConfig {
   /** Admins: emails (resolved to union_id at runtime) or union_ids ("on_..."). Admins change command scope by chatting with Amber. */
   admins: string[];
   /** Local services scripts may call with an execution identity token (D27). */
-  services: Record<string, { audience: string; tcpPort?: number; unixSocket?: string }>;
+  /** executor: scripts running on an executor may call it through Amber's relay (D52). Off unless set. */
+  services: Record<string, { audience: string; tcpPort?: number; unixSocket?: string; executor?: boolean }>;
   configDir: string;
   /** IP → machine name. Only these addresses may submit drafts (D31). */
   machines: Record<string, string>;

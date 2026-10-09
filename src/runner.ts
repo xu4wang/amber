@@ -43,7 +43,8 @@ export function describeServices(s: Pick<Script, 'services'>): string {
 }
 
 /** Local services a script may call (config: services). Only these addresses are reachable from the sandbox. */
-export interface ServiceDef { audience: string; tcpPort?: number; unixSocket?: string }
+/** executor: may be called from scripts on executors, through Amber's relay (D52). */
+export interface ServiceDef { audience: string; tcpPort?: number; unixSocket?: string; executor?: boolean }
 let SERVICES: Record<string, ServiceDef> = {};
 export function setServices(s: Record<string, ServiceDef>): void { SERVICES = s; }
 export function knownServices(): string[] { return Object.keys(SERVICES); }
@@ -106,7 +107,7 @@ export function validateScript(s: unknown): Script {
     if (x.env !== undefined) {
       env = String(x.env).trim();
       if (!parseEnv(env)) throw new Error('env 要写成 "执行端名/环境名"，例如 "ledger-mac/台账"（执行端名：小写字母、数字、连字符）');
-      if (declared) throw new Error('在执行端上运行的指令不能调用内部服务（services）');
+      for (const name of Object.keys(services)) if (SERVICES[name]?.executor !== true) throw new Error(`服务 ${name} 不允许在执行端上调用（管理员可以在 Amber 配置里为它打开 executor）`);
     }
     if (x.sandbox !== undefined) throw new Error('指令不再声明 sandbox：能访问哪些文件由运行环境决定。需要访问数据时，用 env 选择一个运行环境');
     let interpreter: string | undefined;

@@ -10,6 +10,8 @@
 //             A new key pair, a changed environment list or a revocation needs a new approval.
 //   poll      the executor keeps a long-poll open (this is also its heartbeat). Amber hands out jobs
 //             signed with its own key and encrypted to the executor's key.
+//   relay     a script's call to a registered service (D52): the executor forwards it, signed, to Amber,
+//             which checks the job, the service and the call count and passes it to the local service.
 //   result    the executor posts the output (already masked), Amber masks again, records and shows it.
 // An offline executor fails the run immediately; a job that is not picked up or answered in time
 // fails too. Nothing is queued for later.
@@ -17,7 +19,8 @@ import { createHash, randomUUID } from 'node:crypto';
 import type { Store, ExecutorRow, ExecutorEnv } from './db.ts';
 import type { Signer } from './identity.ts';
 import type { Script, ScriptInput, ScriptResult } from './runner.ts';
-import { parseEnv } from './runner.ts';
+import { parseEnv, serviceDef } from './runner.ts';
+import { request as httpRequest } from 'node:http';
 import { EXECUTOR_NAME, ENV_NAME, fingerprint, verifyRequest, pubFromB64, showFingerprint, REQUEST_SKEW_MS, type JobEnvelope } from './exec-proto.ts';
 import { AmberError } from './engine.ts';
 
@@ -34,11 +37,16 @@ const MAX_PENDING = 10;
 const MAX_NONCES = 50_000;
 /** Jobs waiting for or running on one executor; more fail at once instead of piling up. */
 export const MAX_JOBS_PER_EXECUTOR = 20;
+const RELAY_MAX_REQUEST = 512 * 1024;
+const RELAY_MAX_RESPONSE = 4 * 1024 * 1024;
+const RELAY_TIMEOUT_MS = 60_000;
 
 export const envsHash = (name: string, envs: Record<string, ExecutorEnv>) => createHash('sha256').update(JSON.stringify({ name, envs })).digest('hex').slice(0, 16);
 
 interface Waiter { resolve: (jobs: JobEnvelope[]) => void; timer: NodeJS.Timeout }
-interface PendingJob { executorId: string; envelope: JobEnvelope; picked: boolean; resolve: (r: ScriptResult) => void; timer: NodeJS.Timeout }
+interface PendingJob { executorId: string; envelope: JobEnvelope; picked: boolean; resolve: (r: ScriptResult) => void; timer: NodeJS.Timeout;
+  /** Relay calls left per declared service (D52): at most the declared count, one per token. */
+  calls: Record<string, number> }
 
 export class ExecutorHub {
   private store: Store;
@@ -201,6 +209,44 @@ export class ExecutorHub {
     return { ok: true };
   }
 
+  /** A script's call to a registered service, relayed by the executor running its job (D52).
+   *  Amber does not read the request or the response; the service checks the token itself. */
+  async relay(e: ExecutorRow, raw: string): Promise<{ ok: boolean; status?: number; contentType?: string; body?: string; error?: string; message?: string }> {
+    let b: any;
+    try { b = JSON.parse(raw); } catch { throw new AmberError('bad_json', '请求不是合法的 JSON'); }
+    const j = this.jobs.get(String(b?.jobId ?? ''));
+    // Only the executor this job went to, only while it is running.
+    if (!j || j.executorId !== e.id || !j.picked) throw new AmberError('forbidden', '没有这个正在运行的任务');
+    const name = String(b?.service ?? '');
+    const d = serviceDef(name);
+    if (!(name in j.calls) || !d || d.executor !== true) throw new AmberError('forbidden', `这条指令没有声明服务 ${name}，或这个服务不允许在执行端上调用`);
+    if (j.calls[name] <= 0) throw new AmberError('forbidden', `服务 ${name} 的调用次数已用完`);
+    const method = String(b?.method ?? '');
+    const path = String(b?.path ?? '');
+    if (!['GET', 'POST'].includes(method)) throw new AmberError('invalid', '只支持 GET / POST');
+    if (!/^\/[\x21-\x7e]*$/.test(path) || path.length > 2048 || /(^|\/)\.\.(\/|\?|$)/.test(path)) throw new AmberError('invalid', '请求路径不对');
+    const body = Buffer.from(typeof b?.body === 'string' ? b.body : '', 'base64');
+    if (body.length > RELAY_MAX_REQUEST) throw new AmberError('too_large', '请求太大');
+    const headers: Record<string, string> = {};
+    for (const [k, v] of Object.entries(b?.headers ?? {})) {
+      const key = k.toLowerCase();
+      if (['authorization', 'content-type', 'accept'].includes(key) && typeof v === 'string' && v.length < 8192 && !/[\r\n]/.test(v)) headers[key] = v;
+    }
+    j.calls[name]--;
+    this.store.audit(null, 'executor.relay', { jobId: b.jobId, executor: e.id, service: name, method, path: path.split('?')[0] });
+    return await new Promise(resolve => {
+      const req = httpRequest({ ...(d.unixSocket ? { socketPath: d.unixSocket } : { host: '127.0.0.1', port: d.tcpPort }), method, path, headers: { ...headers, 'content-length': String(body.length) }, timeout: RELAY_TIMEOUT_MS }, res => {
+        const chunks: Buffer[] = [];
+        let n = 0;
+        res.on('data', (c: Buffer) => { n += c.length; if (n > RELAY_MAX_RESPONSE) { req.destroy(); resolve({ ok: false, error: 'too_large', message: `服务 ${name} 的响应超过 ${RELAY_MAX_RESPONSE / 1024 / 1024}MB` }); } else chunks.push(c); });
+        res.on('end', () => { if (n <= RELAY_MAX_RESPONSE) resolve({ ok: true, status: res.statusCode ?? 502, contentType: String(res.headers['content-type'] ?? ''), body: Buffer.concat(chunks).toString('base64') }); });
+      });
+      req.on('timeout', () => req.destroy(new Error('timeout')));
+      req.on('error', err => resolve({ ok: false, error: 'service_unavailable', message: `服务 ${name} 不可用：${err.message}` }));
+      req.end(body);
+    });
+  }
+
   private finish(jobId: string, r: ScriptResult): void {
     const j = this.jobs.get(jobId);
     if (!j) return;
@@ -231,10 +277,13 @@ export class ExecutorHub {
     if ([...this.jobs.values()].filter(j => j.executorId === e.id).length >= this.maxJobs) return { ok: false, content: '', error: `执行端 ${p.executor} 正在处理的任务太多，这次没有执行，请稍后再试` };
     const jobId = randomUUID();
     const timeoutMs = (script.timeoutMs ?? 30000) + RESULT_GRACE_MS;
-    const envelope = this.signer.sealJob(e.id, e.boxPub, jobId, this.pickupMs * 2, { jobId, runId: input.runId, env: p.env, spec, specHash, input });
+    // Services: only the tokens travel; the executor gives the script a local port and relays the calls here.
+    const remoteInput = input.services ? { ...input, services: Object.fromEntries(Object.entries(input.services).map(([n, s]) => [n, { tokens: s.tokens }])) } : input;
+    const envelope = this.signer.sealJob(e.id, e.boxPub, jobId, this.pickupMs * 2, { jobId, runId: input.runId, env: p.env, spec, specHash, input: remoteInput });
     this.store.audit(input.caller.unionId, 'executor.dispatch', { runId: input.runId, executor: e.id, name: e.name, env: p.env, jobId });
     return await new Promise<ScriptResult>(resolve => {
-      const job: PendingJob = { executorId: e.id, envelope, picked: false, resolve, timer: setTimeout(() => {}, 0) };
+      const calls = Object.fromEntries(Object.entries(script.services ?? {}).map(([n, u]) => [n, u.calls]));
+      const job: PendingJob = { executorId: e.id, envelope, picked: false, resolve, timer: setTimeout(() => {}, 0), calls };
       const fail = (msg: string) => this.finish(jobId, { ok: false, content: '', error: msg });
       job.timer = setTimeout(() => {
         if (!job.picked) return fail(`执行端 ${p.executor} 没有取走任务（可能刚刚离线），这次没有执行`);

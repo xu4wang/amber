@@ -151,7 +151,8 @@ export async function activate(env: Env, draft: Record<string, unknown>, owner: 
   if (!r.ok) throw new Error('submit failed: ' + JSON.stringify(r));
   const claim = r.claimMessageId as string;
   await env.click(owner, claim, { a: 'claim_try', c: r.id }, trialForm);
-  await env.waitFor(() => button(env.fake.cardOf(claim), 'claim_submit'));
+  try { await env.waitFor(() => button(env.fake.cardOf(claim), 'claim_submit')); }
+  catch (e) { throw new Error(`trial did not finish: ${FakeFeishu.text(env.fake.cardOf(claim)).slice(-600)}`); }
   await env.click(owner, claim, { a: 'claim_submit', c: r.id });
   await env.approveLatest();
   const c = env.amber.store.getCommand(r.id)!;

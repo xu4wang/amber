@@ -59,6 +59,7 @@ export function startApi(port: number, machines: Record<string, string>, flow: F
         const e = hub.authenticate(h, 'POST', path, raw);
         if (path === '/v1/executor/poll') return reply(200, { ok: true, ...(await hub.poll(e)) });
         if (path === '/v1/executor/result') return reply(200, hub.result(e, raw));
+        if (path === '/v1/executor/relay') return reply(200, await hub.relay(e, raw));
         return reply(404, { ok: false, error: 'not_found' });
       }
       const body = await readBody(req);
@@ -83,7 +84,7 @@ export function startApi(port: number, machines: Record<string, string>, flow: F
       }
       return reply(404, { ok: false, error: 'not_found' });
     } catch (e) {
-      if (e instanceof AmberError) return reply(e.code === 'not_found' ? 404 : e.code === 'unauthorized' ? 401 : 400, { ok: false, error: e.code, message: e.message });
+      if (e instanceof AmberError) return reply(e.code === 'not_found' ? 404 : e.code === 'unauthorized' ? 401 : e.code === 'forbidden' ? 403 : 400, { ok: false, error: e.code, message: e.message });
       console.log(new Date().toISOString(), 'api error', path, (e as Error).message);
       return reply(500, { ok: false, error: 'internal', message: (e as Error).message });
     }

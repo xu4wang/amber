@@ -24,6 +24,7 @@
   - `env set 名字 目录`：最简单的一份，`{WORKDIR}` 这个目录可读写（加 `--readonly` 只读）。
   - `export-botmux-env.mjs`：从 botmux 机器人导出，和这个机器人在 botmux 沙箱里能访问的数据完全一样（工作目录、角色库、机器人目录、bots.json 里配的路径、它自己的 lark-cli 飞书身份），只去掉 botmux 的发消息凭证。脚本里用 lark-cli，用的就是这个机器人的身份，和它的会话一致。
 - **联网**仍由指令自己声明（`network: true`），随代码审核；联网和调用内部服务二选一。
+- **调用 Amber 上登记的服务**（比如 data-mcp）：管理员允许的服务，执行端上的指令也能调用，写法和在 Amber 本机完全一样，见下面「调用 Amber 上登记的服务」。
 - **任何环境都打不开的**：Amber 和执行端自己的配置目录（签名私钥、加密密钥、数据库）、`~/.ssh`、钥匙串。其他凭证目录（`~/.botmux`、`~/.lark-cli-bots`、`~/.claude` 等）默认也打不开，只有环境里明确列出的那一部分才开放，批准卡上会单独标出「含凭证路径」。
 
 ## 工作方式
@@ -115,9 +116,34 @@ node ~/amber/client/amber-executor/amber-executor.mjs status
 ```
 
 - 脚本能访问的，就是这个环境能访问的；用绝对路径访问（当前目录是临时目录），`WORKDIR` 从环境变量取。
-- 在执行端上跑的指令不能调用内部服务（`services`）。要联网写 `"network": true`。
+- 要联网写 `"network": true`。要调用 Amber 上登记的服务（比如 data-mcp），照常写 `services`，见下一节。
 - 认领卡和审核文档的「执行位置」一行会列出这个环境能访问的路径。执行端还没批准时，也可以先提交草稿和审核，只是试运行会提示「还没有被管理员批准」。
 - 不知道有哪些环境时问用户；管理员私聊 Amber 发「执行端」，或在网站的执行端管理页查看。
+
+## 调用 Amber 上登记的服务
+
+data-mcp 这类服务装在 Amber 那台机器上，只监听本机。执行端上的指令照样可以调用，**脚本写法和在 Amber 本机完全一样**：
+
+```python
+svc = inp["services"]["data-mcp"]
+req = urllib.request.Request(f"http://127.0.0.1:{svc['tcpPort']}/amber/query",
+    data=json.dumps({"sql": SQL}).encode(),
+    headers={"Authorization": "Amber " + svc["tokens"][0], "Content-Type": "application/json"})
+```
+
+怎么做到的：
+
+1. 执行端在本机 `127.0.0.1` 上为这次任务开一个端口，把输入里的 `tcpPort` 换成它；沙箱只允许脚本连这个端口（macOS 沙箱只能限制到「本机端口」或「任何地址」，所以必须这样转一手）。
+2. 脚本的请求（路径、请求体、`Authorization`、`Content-Type`、`Accept` 头）由执行端加上自己的签名，原样转给 Amber 的 `/v1/executor/relay`。
+3. Amber 核对：请求来自这次任务派给的那个执行端、任务正在运行、指令声明了这个服务、调用次数没超过声明的 `calls`、这个服务允许执行端调用。通过后原样转给本机的服务，再把响应原样带回。Amber 不读请求和响应的内容；身份凭证照常由服务自己校验。
+
+限制：
+
+- 只有管理员在 Amber 配置里为服务打开了 `"executor": true` 的才能调用（data-mcp 已打开）；没打开的，提交草稿时就拒绝。
+- 只支持 HTTP 的 GET / POST，请求最大 512KB，响应最大 4MB，单次 60 秒超时；不支持流式响应和 websocket。
+- 只提供 `tcpPort`，不提供 `unixSocket`。
+- 调用服务的指令仍然不能联网，查出来的数据只能输出到结果里。
+- 执行端和 Amber 之间是普通 HTTP，查询和结果明文经过内网，和其他执行结果一样。截获的凭证别人用不了：转发请求必须带执行端的签名，而且只对这次任务有效。
 
 ## 安全边界
 
