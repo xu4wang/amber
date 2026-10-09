@@ -228,12 +228,15 @@ export class AmberBot {
     };
     try {
       let pageToken: string | undefined;
+      let complete = false;
       for (let i = 0; i < 50; i++) {
         const r = await this.client.request({ method: 'GET', url: `/open-apis/im/v1/chats/${chatId}/members`, params: { member_id_type: 'open_id', page_size: 100, ...(pageToken ? { page_token: pageToken } : {}) } }) as any;
         for (const m of r?.data?.items ?? []) add(m.name, m.member_id);
-        if (!r?.data?.has_more) break;
+        if (!r?.data?.has_more) { complete = true; break; }
         pageToken = r.data.page_token;
       }
+      // Without the whole list a name another member also has could look unique: no @s rather than a wrong one.
+      if (!complete) throw new Error('member list too long');
       const b = await this.client.request({ method: 'GET', url: `/open-apis/im/v1/chats/${chatId}/members/bots` }) as any;
       for (const m of b?.data?.items ?? []) add(m.bot_name, m.bot_id);
     } catch (e: any) {

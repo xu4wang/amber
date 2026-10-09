@@ -26,9 +26,10 @@ export class Mentions {
   constructor(members: Map<string, string>) {
     this.members = members;
     const names = [...members.keys()].filter(n => n && !/[<>@＠\[\]()（）\s]/.test(n) && n !== '所有人' && n.toLowerCase() !== 'all' && /^ou_[A-Za-z0-9_-]+$/.test(members.get(n)!));
-    // Longest first, so @马小马 is not read as @马 followed by 小马. Not followed by a letter or digit: @alice2 is not @alice.
+    // The name must end there (space, punctuation or the end of the text): @马小马 never mentions 马, @alice2 never
+    // mentions alice. Longest first, for names that continue past punctuation: @Bot-1 is Bot-1, not Bot.
     names.sort((a, b) => b.length - a.length);
-    this.re = names.length ? new RegExp(`＠(${names.map(n => n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')})(?![A-Za-z0-9_])`, 'g') : null;
+    this.re = names.length ? new RegExp(`＠(${names.map(n => n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')})(?![\\p{L}\\p{N}\\p{M}_])`, 'gu') : null;
   }
   /** Works on sanitized text, where every @ is already ＠. */
   apply(sanitized: string): string {

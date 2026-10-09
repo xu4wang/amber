@@ -12,8 +12,14 @@ test('mentions: exact names, longest first, not inside a longer word, @所有人
   const m = new Mentions(new Map([['马', 'ou_ma'], ['马小马', 'ou_mxm'], ['alice', 'ou_alice'], ['所有人', 'ou_all'], ['bad', 'oc_notauser']]));
   assert.equal(m.apply('＠马小马 看下'), `${at('ou_mxm')} 看下`);
   assert.equal(m.apply('＠马 好'), `${at('ou_ma')} 好`);
+  const dash = new Mentions(new Map([['Bot', 'ou_b'], ['Bot-1', 'ou_b1']]));
+  assert.equal(dash.apply('＠Bot-1 ＠Bot'), `${at('ou_b1')} ${at('ou_b')}`, 'a name may end in punctuation another name continues');
   assert.equal(m.apply('＠alice2 ＠alice_x ＠alice'), `＠alice2 ＠alice_x ${at('ou_alice')}`);
   assert.equal(m.apply('＠所有人 ＠bad ＠bob'), '＠所有人 ＠bad ＠bob');
+  // The name must end there: nobody is named 马大, 张三请看 or alice with an accent.
+  const solo = new Mentions(new Map([['马', 'ou_ma'], ['张三', 'ou_zs'], ['alice', 'ou_alice']]));
+  assert.equal(solo.apply('＠马大 ＠张三请看 ＠alice\u0301'), '＠马大 ＠张三请看 ＠alice\u0301', 'a combining accent continues the name');
+  assert.equal(solo.apply('＠张三，请看。＠马\n＠alice'), `${at('ou_zs')}，请看。${at('ou_ma')}\n${at('ou_alice')}`);
   const many = new Map(Array.from({ length: MAX_MENTIONS + 2 }, (_, i) => [`u${String.fromCharCode(97 + i)}`, `ou_${i}`] as [string, string]));
   const m2 = new Mentions(many);
   const out = m2.apply([...many.keys()].map(n => `＠${n}`).join(' ') + ' ＠ua');
@@ -66,6 +72,14 @@ test('mentions: a group result @s members and bots by name; trial runs, private 
     const plain = await env.waitFor(() => fake.sent.map(s => fake.cardOf(s.id)).find(c => /查不到成员/.test(FakeFeishu.text(c))));
     assert.doesNotMatch(FakeFeishu.text(plain), /ou_bob/);
     fake.membersApiAllowed = true;
+
+    // A group too big to list completely: no @s, since a duplicate name could be missed.
+    (env.amber.bot as any).mentionCache.clear();
+    fake.memberListEndless = true;
+    await env.say(alice, GROUP, '转交 "@bob 大群"');
+    const big = await env.waitFor(() => fake.sent.map(s => fake.cardOf(s.id)).find(c => /大群/.test(FakeFeishu.text(c))));
+    assert.doesNotMatch(FakeFeishu.text(big), /ou_bob/);
+    fake.memberListEndless = false;
 
     // Private chat: never.
     lookups = 0;

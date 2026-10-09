@@ -12,6 +12,7 @@ export class FakeFeishu {
   approvals = new Map<string, { approvalCode: string; status: string; tasks: { open_id: string; status: string }[]; title?: string; form?: string }>();
   docs = new Map<string, string[]>();          // doc id -> markdown chunks
   membersApiAllowed = true;
+  memberListEndless = false;                   // members API keeps saying has_more (a huge group)
   chatBots = new Map<string, { name: string; openId: string }[]>();   // other bots in a group, besides Amber
   private n = 0;
   readonly botOpenId = 'ou_amberbot';
@@ -91,7 +92,7 @@ export class FakeFeishu {
       if (!c) this.fail(232011, 'Operator can NOT be out of the chat.');
       const people = [...c.members].filter(x => x !== 'BOT');
       if (params?.member_id_type === 'open_id') {
-        return { data: { items: people.map(u => { const x = this.userByUnion(u); return { member_id: x?.openId ?? u, name: x?.name ?? '' }; }), has_more: false } };
+        return { data: { items: people.map(u => { const x = this.userByUnion(u); return { member_id: x?.openId ?? u, name: x?.name ?? '' }; }), has_more: this.memberListEndless, page_token: 'next' } };
       }
       return { data: { items: people.map(u => ({ member_id: u })), has_more: false } };
     }
