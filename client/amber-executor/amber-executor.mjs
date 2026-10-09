@@ -18,7 +18,7 @@
 // running, the executor checks the signature, the addressee, the expiry, that it has not seen the job
 // before, and recomputes the spec hash; then runs the code in a sandbox built from the environment's
 // approved access (same rules as Amber, lib/ is generated from Amber's sources). Commands declare no paths.
-import { readFileSync, writeFileSync, existsSync, mkdirSync, chmodSync, renameSync, unlinkSync, realpathSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync, mkdirSync, chmodSync, renameSync, unlinkSync, realpathSync, statSync } from 'node:fs';
 import { createPublicKey } from 'node:crypto';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
@@ -37,6 +37,7 @@ const LABEL = 'com.amber.executor';
 
 const log = (...a) => console.log(new Date().toISOString(), ...a);
 const die = m => { console.error(`amber-executor: ${m}`); process.exit(1); };
+const isDir = p => { try { return statSync(p).isDirectory(); } catch { return false; } };
 const readJson = (p, d) => { try { return JSON.parse(readFileSync(p, 'utf8')); } catch { return d; } };
 const writePrivate = (p, s) => { const t = `${p}.tmp`; writeFileSync(t, s, { mode: 0o600 }); chmodSync(t, 0o600); renameSync(t, p); };
 
@@ -92,10 +93,12 @@ export function prepare(cfg, payload) {
   if (s.services && Object.keys(s.services).length) throw new Error('执行端不支持调用内部服务');
   if (s.sandbox !== undefined) throw new Error('指令不再声明 sandbox：访问权限由运行环境决定');
   const workdir = normalizePath(env.workdir);
+  if (!isDir(workdir)) throw new Error(`环境的 workdir 不是已存在的目录：${workdir}`);
   // The environment's approved access, re-checked here against this machine's protected dirs.
   const access = validateEnvAccess(env.access ?? { readWrite: [workdir] }, { workdir });
   const python = normalizePath(s.interpreter ?? env.interpreter ?? DEFAULT_PYTHON);
   if (hardDenyRoots().some(r => python === r || python.startsWith(r + '/'))) throw new Error('解释器在受保护的目录里');
+  if (!/python[0-9.]*$/.test(python)) throw new Error('解释器要是 Python（以 python、python3 或 python3.x 结尾）');
   const vars = checkVars(env.vars);
   const timeoutMs = Math.min(Math.max(Number(s.timeoutMs) || 30000, 1000), 120000);
   return { code: s.code, python, timeoutMs, workdir, vars, realHome: env.realHome === true, profileFor: dir => compileToSeatbelt(buildPolicy({ runDir: dir, access }), { all: !!s.network }) };
@@ -104,9 +107,14 @@ export function prepare(cfg, payload) {
 const RESERVED_VARS = /^(PATH|HOME|TMPDIR|WORKDIR|LANG|PYTHON.*|DYLD_.*|LD_.*|NODE_OPTIONS)$/;
 function checkVars(v) {
   const out = {};
-  for (const [k, x] of Object.entries(v ?? {})) {
+  if (v === undefined || v === null) return out;
+  if (typeof v !== 'object' || Array.isArray(v)) throw new Error('vars 要写成 {"名字": "值"}');
+  const entries = Object.entries(v);
+  if (entries.length > 20) throw new Error('环境变量最多 20 个');
+  for (const [k, x] of entries) {
     if (!/^[A-Z][A-Z0-9_]{0,63}$/.test(k) || RESERVED_VARS.test(k)) throw new Error(`环境变量 ${k} 不能设置`);
-    out[k] = String(x);
+    if (typeof x !== 'string' || x.length > 1024 || /[\0\n\r]/.test(x)) throw new Error(`环境变量 ${k} 的值要是字符串，最多 1024 个字符，不能含换行`);
+    out[k] = x;
   }
   return out;
 }
@@ -205,12 +213,21 @@ function importDef(cfg, def, nameOverride) {
   if (def.format !== undefined && def.format !== 'amber-env/1') die(`不认识的格式版本：${def.format}（只支持 amber-env/1）`);
   const envName = nameOverride ?? def.name;
   if (!envName || !ENV_NAME.test(envName)) die('环境名不对：用 --name 指定，或写在定义里的 name');
-  if (!def.workdir) die('定义缺少 workdir');
-  const workdir = normalizePath(def.workdir);
-  if (!existsSync(workdir)) die(`目录不存在：${workdir}`);
+  if (!def.workdir || typeof def.workdir !== 'string') die('定义缺少 workdir');
+  if (/(^|\/)\.\.(\/|$)/.test(def.workdir)) die(`workdir 不能含 ..：${def.workdir}`);
+  let workdir;
+  try { workdir = normalizePath(def.workdir); } catch (e) { die(e.message); }
+  if (!isDir(workdir)) die(`workdir 不是已存在的目录：${workdir}`);
   let access;
   try { access = validateEnvAccess(def.access ?? { readWrite: [workdir] }, { workdir }); checkVars(def.vars); } catch (e) { die(e.message); }
   const python = def.python ?? def.interpreter;
+  if (python !== undefined) {
+    let p;
+    try { p = normalizePath(String(python)); } catch (e) { die(e.message); }
+    if (!/python[0-9.]*$/.test(p)) die(`python 要是 Python 解释器的绝对路径（以 python、python3 或 python3.x 结尾）：${python}`);
+  }
+  if (def.realHome !== undefined && typeof def.realHome !== 'boolean') die('realHome 只能是 true 或 false');
+  if (def.source !== undefined && typeof def.source !== 'string') die('source 要是字符串');
   cfg.envs = { ...cfg.envs, [envName]: { workdir, ...(python ? { interpreter: normalizePath(python) } : {}), access, ...(def.vars && Object.keys(def.vars).length ? { vars: def.vars } : {}), ...(def.source ? { source: String(def.source).slice(0, 200) } : {}), ...(def.realHome === true ? { realHome: true } : {}) } };
   const cred = credentialGrants(access);
   console.log(`环境「${envName}」：${describeAccess(access)}${cred.length ? `\n注意：含凭证路径 ${cred.join('、')}` : ''}`);

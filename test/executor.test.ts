@@ -204,6 +204,18 @@ test('executor: offline fails the run at once; a changed environment needs appro
     assert.equal(readFileSync(join(dir, 'config.json'), 'utf8'), before, 'export → import is a no-op');
     writeFileSync(join(base, 'e2.json'), JSON.stringify({ ...exported, format: 'amber-env/2' }));
     await assert.rejects(cli(dir, 'env', 'import', join(base, 'e2.json')), /不认识的格式版本/);
+    // The checklist in docs/environment-format.md, at import.
+    writeFileSync(join(data, 'afile'), 'x');
+    for (const [bad, msg] of [
+      [{ workdir: join(data, 'afile') }, /不是已存在的目录/], [{ workdir: data + '/../d' }, /不能含 \.\./],
+      [{ python: '/usr/bin/node' }, /Python 解释器/], [{ realHome: 'yes' }, /true 或 false/], [{ source: 1 }, /字符串/],
+      [{ vars: { A: 'x'.repeat(1025) } }, /1024/], [{ vars: { A: 1 } }, /要是字符串/], [{ vars: Object.fromEntries(Array.from({ length: 21 }, (_, i) => [`V${i}`, 'x'])) }, /最多 20 个/],
+      [{ access: { readWrit: [data] } }, /不认识的字段/],
+    ] as [Record<string, unknown>, RegExp][]) {
+      writeFileSync(join(base, 'bad.json'), JSON.stringify({ ...exported, ...bad }));
+      await assert.rejects(cli(dir, 'env', 'import', join(base, 'bad.json')), msg, JSON.stringify(bad).slice(0, 80));
+    }
+    rmSync(join(data, 'afile'));
     const start = () => { child = spawn(process.execPath, [EXE, 'run'], { env: { ...process.env, AMBER_EXECUTOR_DIR: dir } }); };
     start();
     const cards = () => fake.sent.filter(s => s.to.unionId === alice.unionId && /执行端申请登记/.test(FakeFeishu.text(s.card)));
