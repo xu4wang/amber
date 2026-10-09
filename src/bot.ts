@@ -269,6 +269,9 @@ export class AmberBot {
     this.memberCache.delete(c.chatId);   // decide on the current roster, not a cached one
     if (await this.isOrphan(c) !== true) return fail('原创建人已经回到群里（或暂时无法确认），这条指令不再需要重新分配。');
     if (await this.isMember(c.chatId, caller.unionId) !== true) return fail('你已不在这个群里，不能接手。');
+    // The checks above awaited the roster: the command may have been retired or updated meanwhile.
+    const fresh = this.store.getCommand(c.id);
+    if (!fresh || fresh.status !== 'active' || fresh.specHash !== req.specHash || fresh.ownerUnionId !== (req.args.from ?? '')) return fail('这条指令在发起之后已经更新、下线或由别人接手，请管理员重新发起。');
     // No await from here to the owner change, and taking this offer voids every other one for the command:
     // when two people accept at the same moment, the second finds their offer already voided.
     if (!this.store.transitionRequest(req.id, 'awaiting', 'running', { actorUnionId: caller.unionId })) throw new AmberError('closed', '这个请求已经处理过或被取消了');
