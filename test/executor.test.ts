@@ -411,6 +411,15 @@ test('export-botmux-env: a bot\'s access as an environment definition, mirroring
     assert.deepEqual(r.access.readWrite, [join(home, '.lark-cli-bots/cli_x')]);
     assert.ok(r.access.readOnly.includes(work) && r.access.readOnly.includes(join(home, 'botmux-roles/cli_x')));
     await assert.rejects(exp('--bot', 'cli_nope'), /没有机器人/);
+    // Other bots.json shapes: wrapped and keyed by appId; anything else is refused clearly.
+    const bj = join(home, '.botmux', 'bots.json');
+    const entry = { larkAppId: 'cli_x', workingDir: work };
+    for (const shape of [{ bots: [entry] }, { cli_x: entry }]) {
+      writeFileSync(bj, JSON.stringify(shape));
+      assert.equal((await exp('--bot', 'cli_x')).workdir, work, JSON.stringify(shape));
+    }
+    writeFileSync(bj, JSON.stringify({ version: 2, things: 1 }));
+    await assert.rejects(exp('--bot', 'cli_x'), /格式不认识/);
   } finally { rmSync(home, { recursive: true, force: true }); }
 });
 
@@ -423,6 +432,10 @@ test('executor approval card: lists every path of each environment and flags cre
   const t = FakeFeishu.text(executorApprovalCard(row, 'h'));
   for (const s of ['/u/.botmux/bots/cli_x', 'appsecret_cli_x.enc', 'send-cred.json', 'LARKSUITE_CLI_CONFIG_DIR', 'botmux:cli_x', '用户主目录', '/u/data']) assert.ok(t.includes(s), s);
   assert.match(t, /含凭证路径/);
+  for (const f of ['/u/.cargo/credentials.toml', '/u/.gem/credentials', '/u/.m2/settings.xml', '/u/.m2/settings-security.xml', '/u/.gradle/gradle.properties']) {
+    const t2 = FakeFeishu.text(executorApprovalCard({ ...row, envs: { e: { workdir: '/u/w', access: { readOnly: [f] } } } }, 'h'));
+    assert.match(t2, /含凭证路径/, f);
+  }
   // A plain directory environment: {WORKDIR} read-write, no warning for it.
   assert.equal((t.match(/含凭证路径/g) ?? []).length, 1);
 });

@@ -31,7 +31,12 @@ if (!appId || !/^[A-Za-z0-9_-]+$/.test(appId)) die('用 --bot <appId> 指定机�
 const botsPath = flag('--bots-json') ?? join(H, '.botmux', 'bots.json');
 let raw;
 try { raw = JSON.parse(readFileSync(botsPath, 'utf8')); } catch (e) { die(`读不了 ${botsPath}：${e.message}`); }
-const bots = Array.isArray(raw) ? raw : raw?.bots ?? [];
+// bots.json is a list of bot entries; also accept { bots: [...] } and an object keyed by appId.
+let bots;
+if (Array.isArray(raw)) bots = raw;
+else if (Array.isArray(raw?.bots)) bots = raw.bots;
+else if (raw && typeof raw === 'object' && Object.values(raw).every(v => v && typeof v === 'object' && 'larkAppId' in v)) bots = Object.values(raw);
+else die(`${botsPath} 的格式不认识（应该是机器人配置的数组）`);
 const bot = bots.find(b => b?.larkAppId === appId);
 if (!bot) die(`${botsPath} 里没有机器人 ${appId}`);
 

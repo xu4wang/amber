@@ -315,9 +315,11 @@ export const effectiveAccess = (e: ExecutorEnv): NonNullable<ExecutorEnv['access
 
 /** Paths in a credential store, recognised by name on any machine (for the warning on approval cards). */
 const CRED_NAMES = /(^|\/)(\.ssh|\.gnupg|\.aws|\.azure|\.netrc|\.git-credentials|\.npmrc|\.pypirc|\.docker|\.kube|\.password-store|\.1password|\.lark-cli|\.lark-cli-bots|\.botmux|\.claude|\.claude\.json|\.codex|Keychains|Cookies|lark-cli|gh|glab-cli|gcloud|1Password)(\/|$)/;
+/** Credential files inside otherwise readable toolchain dirs (denied by the sandbox baseline). */
+const CRED_FILES = /\/(\.cargo\/credentials(\.toml)?|\.gem\/credentials|\.m2\/settings(-security)?\.xml|\.gradle\/gradle\.properties)$/;
 export function credentialPaths(e: ExecutorEnv): string[] {
   const a = effectiveAccess(e);
-  return [...(a.readWrite ?? []), ...(a.readOnly ?? [])].filter(p => CRED_NAMES.test(p));
+  return [...(a.readWrite ?? []), ...(a.readOnly ?? [])].filter(p => CRED_NAMES.test(p) || CRED_FILES.test(p));
 }
 
 /** One line: what scripts in this environment can access. */
