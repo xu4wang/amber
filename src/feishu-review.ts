@@ -3,6 +3,7 @@
 // truth: it re-reads the approval instance from the API before activating anything.
 import type * as lark from '@larksuiteoapi/node-sdk';
 import { describeSandbox } from './sandbox-policy.ts';
+import { executorHub } from './engine.ts';
 import { describeSecrets } from './secrets.ts';
 import type { CommandRow } from './db.ts';
 import { lineDiff } from './diff.ts';
@@ -26,7 +27,7 @@ function docMarkdown(c: CommandRow, opts: { creator: string; submittedBy?: strin
   const how = s.kind === 'privileged' ? '**特权脚本（已停用，不能执行）**' : '沙盒脚本';
   const net = s.network ? '，可访问外网' : s.services && Object.keys(s.services).length ? `，以执行人身份调用：${describeServices(s)}（不能访问外网）` : '，不联网';
   const sbx = s.sandbox ? `\n\n**沙箱（额外可访问的文件）**：${describeSandbox(s.sandbox)}。审核时请确认这些路径确实是脚本需要的，读写权限没有给多。` : '';
-  const interp = s.interpreter ? `\n\n**解释器**：${s.interpreter}` : '';
+  const interp = (s.interpreter ? `\n\n**解释器**：${s.interpreter}` : '') + (s.env ? `\n\n**执行位置**：${executorHub()?.describe(s.env) ?? s.env}。脚本在那台机器上、按上面的沙箱策略执行；{WORKDIR} 指那个环境的目录。` : '');
   const sec = s.secrets?.length ? `\n\n**使用的密钥**：${describeSecrets(c)}。审核时请确认代码只把密钥用在该用的地方，不会打印或发往别处。` : '';
   const code = `## 代码\n\n${how}${net}；超时 ${(s.timeoutMs ?? 30000) / 1000} 秒。${sec}${sbx}${interp}\n\n${FENCE}python\n${s.code.split(FENCE).join('``\u200b`')}\n${FENCE}`;
   const trial = opts.trial
@@ -107,6 +108,7 @@ export class FeishuReview {
       c.script.secrets?.length ? `使用的密钥：${describeSecrets(c)}` : '',
       c.script.sandbox ? `沙箱：${describeSandbox(c.script.sandbox)}` : '',
       c.script.interpreter ? `解释器：${c.script.interpreter}` : '',
+      c.script.env ? `执行位置：${executorHub()?.describe(c.script.env) ?? c.script.env}` : '',
       `创建人：${creatorLabel}`,
       `版本：${c.specHash.slice(0, 12)}`,
       `完整代码与试运行结果：${docUrl}`,

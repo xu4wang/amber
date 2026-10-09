@@ -3,6 +3,12 @@ import { computeSpecHash } from './db.ts';
 import { runScript, serviceDef, validateScript } from './runner.ts';
 import type { Signer } from './identity.ts';
 import { redact, type SecretVault } from './secrets.ts';
+import type { ExecutorHub } from './executors.ts';
+
+let HUB: ExecutorHub | undefined;
+/** Where commands with script.env are sent (D50); set once at startup. */
+export function setExecutorHub(h: ExecutorHub): void { HUB = h; }
+export function executorHub(): ExecutorHub | undefined { return HUB; }
 
 let VAULT: SecretVault | undefined;
 /** The secret store used for runs (D48); set once at startup. */
@@ -134,7 +140,11 @@ export async function runCommand(store: Store, cmd: CommandRow, rawArgs: Record<
     store.audit(caller.unionId, 'identity.issue', { runId, service: name, aud: d.audience, count: use.calls });
     services[name] = { tokens, ...(d.tcpPort ? { tcpPort: d.tcpPort } : {}), ...(d.unixSocket ? { unixSocket: d.unixSocket } : {}) };
   }
-  const raw = await runScript(script, { params: args, caller: { unionId: caller.unionId, chatId: caller.chatId, channel: caller.channel, city }, runId, ...(Object.keys(services).length ? { services } : {}), ...(secrets ? { secrets } : {}) });
+  const input = { params: args, caller: { unionId: caller.unionId, chatId: caller.chatId, channel: caller.channel, city }, runId, ...(Object.keys(services).length ? { services } : {}), ...(secrets ? { secrets } : {}) };
+  // script.env (D50): on the executor that holds the data, never here.
+  const raw = script.env
+    ? (HUB ? await HUB.run(script, { name: cmd.name, params: cmd.params, script: cmd.script, options: cmd.options }, cmd.specHash, input) : { ok: false, content: '', error: '执行端服务不可用' })
+    : await runScript(script, input);
   // A secret that ends up in the output or the error message is masked before it is stored or shown.
   const r = secrets ? { ...raw, content: redact(raw.content, secrets), ...(raw.error ? { error: redact(raw.error, secrets) } : {}) } : raw;
   if (secrets) store.audit(caller.unionId, 'secret.use', { runId, commandId: cmd.id, names: Object.keys(secrets) });

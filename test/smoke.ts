@@ -83,6 +83,9 @@ if (smoke.testChat) {
     ['信息卡', cards.infoCard('冒烟测试', '这是一条冒烟测试消息，会立即撤回。')],
     ['密钥表单（私聊）', cards.secretFormCard({ ...sample, script: { ...sample.script, secrets: ['API_TOKEN', 'DB_PASSWORD'] } }, [{ name: 'API_TOKEN', set: true, last4: 'ab12', updatedAt: Date.now() }, { name: 'DB_PASSWORD', set: false }], '已保存：API_TOKEN')],
     ['密钥：选择指令', cards.secretPickCard([{ c: sample, where: '群：测试群' }, { c: { ...sample, id: 'smoke002' }, where: '私聊' }])],
+    ['执行端申请登记', cards.executorApprovalCard({ id: 'abcd1234abcd1234', name: 'ledger-mac', fingerprint: 'ab'.repeat(32), signPub: '', boxPub: '', envs: { 台账: { workdir: '/Users/me/bots/ledger', interpreter: '/Users/me/venv/bin/python3' }, 导出: { workdir: '/Users/me/exports' } }, machine: 'fleet-a', version: '1', status: 'pending' as const, createdAt: Date.now(), decidedBy: null, decidedAt: null, lastSeen: Date.now() }, 'h0')],
+    ['执行端已批准', cards.executorDecidedCard({ ...{ id: 'abcd1234abcd1234', name: 'ledger-mac', fingerprint: 'ab'.repeat(32), signPub: '', boxPub: '', envs: { 台账: { workdir: '/Users/me/bots/ledger', interpreter: '/Users/me/venv/bin/python3' }, 导出: { workdir: '/Users/me/exports' } }, machine: 'fleet-a', version: '1', status: 'pending' as const, createdAt: Date.now(), decidedBy: null, decidedAt: null, lastSeen: Date.now() }, status: 'approved' }, '王旭')],
+    ['执行端列表', cards.executorListCard([{ e: { ...{ id: 'abcd1234abcd1234', name: 'ledger-mac', fingerprint: 'ab'.repeat(32), signPub: '', boxPub: '', envs: { 台账: { workdir: '/Users/me/bots/ledger', interpreter: '/Users/me/venv/bin/python3' }, 导出: { workdir: '/Users/me/exports' } }, machine: 'fleet-a', version: '1', status: 'pending' as const, createdAt: Date.now(), decidedBy: null, decidedAt: null, lastSeen: Date.now() }, status: 'approved' }, online: true }])],
     ['认领卡（带密钥）', claimCard({ ...sample, script: { ...sample.script, secrets: ['API_TOKEN'] } }, undefined, 'SmokeBot')],
   ];
   for (const [name, card] of all) {

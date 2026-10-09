@@ -9,9 +9,10 @@ import { startApi } from './api.ts';
 import { startWeb } from './web.ts';
 import { setTimezones } from './schedule-rule.ts';
 import { SecretVault } from './secrets.ts';
-import { setSecretVault } from './engine.ts';
+import { setSecretVault, setExecutorHub } from './engine.ts';
+import { ExecutorHub } from './executors.ts';
 
-export interface Amber { bot: AmberBot; store: Store; api: Server; web: Server; close(): Promise<void> }
+export interface Amber { bot: AmberBot; store: Store; api: Server; web: Server; hub: ExecutorHub; close(): Promise<void> }
 
 export async function startAmber(cfg: AmberConfig, opts: { apiPort: number; webPort: number; client?: unknown; ws?: unknown; timers?: boolean }): Promise<Amber> {
   setServices(cfg.services);
@@ -28,7 +29,9 @@ export async function startAmber(cfg: AmberConfig, opts: { apiPort: number; webP
   }
   const bot = new AmberBot(cfg, store, { client: opts.client, ws: opts.ws, timers: opts.timers });
   await bot.start();
-  const api = startApi(opts.apiPort, cfg.machines, bot.flow, bot.agent, () => bot.signer.jwks(), { webUrl: cfg.webBaseUrl });
+  const hub = bot.hub;
+  setExecutorHub(hub);
+  const api = startApi(opts.apiPort, cfg.machines, bot.flow, bot.agent, () => bot.signer.jwks(), { webUrl: cfg.webBaseUrl }, hub);
   const web = startWeb(opts.webPort, store, {
     isMember: (c, u) => bot.isMember(c, u),
     chatName: c => bot.chatName(c),
@@ -43,5 +46,5 @@ export async function startAmber(cfg: AmberConfig, opts: { apiPort: number; webP
     isAdmin: u => bot.isAdminPublic(u),
   });
   const closeServer = (s: Server) => new Promise<void>(r => { s.close(() => r()); s.closeAllConnections(); });
-  return { bot, store, api, web, close: async () => { await Promise.all([closeServer(api), closeServer(web)]); } };
+  return { bot, store, api, web, hub, close: async () => { hub.close(); await Promise.all([closeServer(api), closeServer(web)]); } };
 }

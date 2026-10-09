@@ -1,3 +1,4 @@
+// GENERATED from src/sandbox-policy.ts by scripts/build-executor.mjs — do not edit.
 // App sandbox policy (D49). Every script runs under macOS Seatbelt with a policy built from:
 //   baseline   system + language toolchains readable, so scripts can use external dependencies
 //   app        what the command declares in script.sandbox (reviewed with the code)
@@ -10,20 +11,20 @@ import { existsSync, realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { posix } from 'node:path';
 
-export type FsAccess = 'readWrite' | 'readOnly' | 'deny';
-export type FsRuleSource = 'baseline' | 'app' | 'run' | 'mandatory';
-export interface FsRule { path: string; access: FsAccess; source: FsRuleSource }
+                                                         
+                                                                    
+                                                                                
 /** script.sandbox as submitted: absolute paths or ~/… paths. */
-export interface AppSandbox { readOnly?: string[]; readWrite?: string[]; deny?: string[] }
+                                                                                          
 
 export const MAX_SANDBOX_PATHS = 50;
 
 let CTX = { home: homedir(), configDir: '' };
 /** Set once at startup: the home directory and Amber's config dir (signing key, secrets key, database). */
-export function setSandboxContext(c: { home?: string; configDir: string }): void { CTX = { home: c.home ?? homedir(), configDir: c.configDir }; }
+export function setSandboxContext(c                                      )       { CTX = { home: c.home ?? homedir(), configDir: c.configDir }; }
 
 /** Credentials and Amber's own keys. Denied after everything else; declaring them is refused at submit time. */
-export function mandatoryDenyRoots(home = CTX.home, configDir = CTX.configDir): string[] {
+export function mandatoryDenyRoots(home = CTX.home, configDir = CTX.configDir)           {
   const h = home;
   return [
     ...(configDir ? [configDir] : []),
@@ -40,9 +41,9 @@ export function mandatoryDenyRoots(home = CTX.home, configDir = CTX.configDir): 
 }
 
 /** Read-only toolchains and system dirs, so interpreters, packages and CLIs work inside the sandbox. */
-function baseline(h: string): FsRule[] {
-  const ro = (p: string): FsRule => ({ path: p, access: 'readOnly', source: 'baseline' });
-  const deny = (p: string): FsRule => ({ path: p, access: 'deny', source: 'baseline' });
+function baseline(h        )           {
+  const ro = (p        )         => ({ path: p, access: 'readOnly', source: 'baseline' });
+  const deny = (p        )         => ({ path: p, access: 'deny', source: 'baseline' });
   return [
     ro('/System'), ro('/usr'), ro('/bin'), ro('/sbin'), ro('/Library'), ro('/opt'),
     ro('/private/etc'), ro('/private/var/select'), ro('/private/var/db/timezone'), ro('/private/var/run'),
@@ -58,14 +59,14 @@ function baseline(h: string): FsRule[] {
   ];
 }
 
-const within = (p: string, root: string) => p === root || p.startsWith(root === '/' ? '/' : `${root}/`);
+const within = (p        , root        ) => p === root || p.startsWith(root === '/' ? '/' : `${root}/`);
 
 /** The executor's per-environment directory (D50): `{WORKDIR}` or `{WORKDIR}/…` in a sandbox path. */
 export const WORKDIR_VAR = '{WORKDIR}';
-export const usesWorkdir = (raw: string) => raw.trim() === WORKDIR_VAR || raw.trim().startsWith(WORKDIR_VAR + '/');
+export const usesWorkdir = (raw        ) => raw.trim() === WORKDIR_VAR || raw.trim().startsWith(WORKDIR_VAR + '/');
 
 /** Expands ~ (and {WORKDIR} when given) and normalizes; throws on anything that is not an absolute path. */
-export function normalizePath(raw: string, home = CTX.home, workdir?: string): string {
+export function normalizePath(raw        , home = CTX.home, workdir         )         {
   if (typeof raw !== 'string' || !raw.trim()) throw new Error('沙箱路径不能为空');
   let p = raw.trim();
   if (usesWorkdir(p)) {
@@ -82,18 +83,18 @@ export function normalizePath(raw: string, home = CTX.home, workdir?: string): s
 /** Checks a submitted script.sandbox. Returns it with paths as written (trimmed), or throws with a message for the submitter.
  *  `remote`: the command runs on an executor, so {WORKDIR} paths are allowed; they are checked against the
  *  protected dirs on the executor once the directory is known (`workdir`). */
-export function validateAppSandbox(x: unknown, opt: { remote?: boolean; workdir?: string } = {}): AppSandbox | undefined {
+export function validateAppSandbox(x         , opt                                         = {})                         {
   if (x === undefined || x === null) return undefined;
   if (typeof x !== 'object' || Array.isArray(x)) throw new Error('sandbox 要写成 {"readOnly": [...], "readWrite": [...], "deny": [...]}');
-  const o = x as Record<string, unknown>;
+  const o = x                           ;
   for (const k of Object.keys(o)) if (!['readOnly', 'readWrite', 'deny'].includes(k)) throw new Error(`sandbox 里不认识的字段：${k}（只能是 readOnly / readWrite / deny；联网用 network 字段）`);
-  const out: AppSandbox = {};
+  const out             = {};
   let n = 0;
   const roots = mandatoryDenyRoots();
-  for (const k of ['readOnly', 'readWrite', 'deny'] as const) {
+  for (const k of ['readOnly', 'readWrite', 'deny']         ) {
     if (o[k] === undefined) continue;
     if (!Array.isArray(o[k])) throw new Error(`sandbox.${k} 要写成路径数组`);
-    const list = (o[k] as unknown[]).map(v => String(v).trim());
+    const list = (o[k]             ).map(v => String(v).trim());
     for (const raw of list) {
       if (usesWorkdir(raw) && !opt.workdir) {
         if (!opt.remote) throw new Error(`${WORKDIR_VAR} 只能用在执行端上运行的指令里（要声明 env）`);
@@ -113,26 +114,26 @@ export function validateAppSandbox(x: unknown, opt: { remote?: boolean; workdir?
 }
 
 /** Real path when it exists (Seatbelt matches resolved paths: /tmp → /private/tmp), else the path itself. */
-function canonical(p: string): string {
+function canonical(p        )         {
   try { if (existsSync(p)) return realpathSync(p); } catch { /* keep as is */ }
   for (const [a, b] of [['/tmp', '/private/tmp'], ['/var', '/private/var'], ['/etc', '/private/etc']]) if (within(p, a)) return b + p.slice(a.length);
   return p;
 }
 
-const depth = (p: string) => (p === '/' ? 0 : p.split('/').length - 1);
-const RESTRICT: Record<FsAccess, number> = { readWrite: 0, readOnly: 1, deny: 2 };
+const depth = (p        ) => (p === '/' ? 0 : p.split('/').length - 1);
+const RESTRICT                           = { readWrite: 0, readOnly: 1, deny: 2 };
 
-export interface Policy { rules: FsRule[]; mandatory: string[] }
+                                                                
 
 /** All rules for one run, sorted shallow → deep (same depth: less restrictive first), mandatory denies separate (emitted last). */
-export function buildPolicy(o: { runDir: string; app?: AppSandbox; home?: string; configDir?: string; workdir?: string }): Policy {
+export function buildPolicy(o                                                                                           )         {
   const home = o.home ?? CTX.home;
-  const rules: FsRule[] = [...baseline(home)];
-  for (const [k, access] of [['readOnly', 'readOnly'], ['readWrite', 'readWrite'], ['deny', 'deny']] as const) {
+  const rules           = [...baseline(home)];
+  for (const [k, access] of [['readOnly', 'readOnly'], ['readWrite', 'readWrite'], ['deny', 'deny']]         ) {
     for (const raw of o.app?.[k] ?? []) rules.push({ path: normalizePath(raw, home, o.workdir), access, source: 'app' });
   }
   rules.push({ path: o.runDir, access: 'readWrite', source: 'run' });
-  const seen = new Map<string, FsRule>();
+  const seen = new Map                ();
   for (const r of rules) {
     const c = { ...r, path: canonical(r.path) };
     const prev = seen.get(c.path);
@@ -144,11 +145,11 @@ export function buildPolicy(o: { runDir: string; app?: AppSandbox; home?: string
   return { rules: sorted, mandatory };
 }
 
-const esc = (p: string) => p.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+const esc = (p        ) => p.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
 
 /** Every strict ancestor of every non-deny path: stat/readlink only (literal), never listing. */
-function ancestors(rules: FsRule[]): string[] {
-  const out = new Set<string>();
+function ancestors(rules          )           {
+  const out = new Set        ();
   for (const r of rules) {
     if (r.access === 'deny') continue;
     for (let p = r.path; p !== '/';) { p = p.slice(0, p.lastIndexOf('/')) || '/'; out.add(p); }
@@ -157,7 +158,7 @@ function ancestors(rules: FsRule[]): string[] {
 }
 
 /** Seatbelt profile. Network: none, everything, or only the declared local services. */
-export function compileToSeatbelt(policy: Policy, net: { all: boolean; tcpPorts?: number[]; unixSockets?: string[] }): string {
+export function compileToSeatbelt(policy        , net                                                               )         {
   const lines = [
     '(version 1)',
     '(deny default)',
@@ -183,8 +184,8 @@ export function compileToSeatbelt(policy: Policy, net: { all: boolean; tcpPorts?
 }
 
 /** One line for cards and review documents. */
-export function describeSandbox(s?: AppSandbox, home = CTX.home): string {
+export function describeSandbox(s             , home = CTX.home)         {
   if (!s) return '';
-  const show = (l?: string[]) => (l ?? []).map(p => p.replace(home, '~')).join('、');
+  const show = (l           ) => (l ?? []).map(p => p.replace(home, '~')).join('、');
   return [s.readOnly?.length ? `只读 ${show(s.readOnly)}` : '', s.readWrite?.length ? `读写 ${show(s.readWrite)}` : '', s.deny?.length ? `禁止 ${show(s.deny)}` : ''].filter(Boolean).join('；');
 }

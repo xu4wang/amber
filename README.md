@@ -50,6 +50,7 @@ Amber 是**琥珀**。琥珀把一瞬间的东西封存起来，过很多年取�
 | [安装与部署](docs/install.md) | 环境要求、配置文件、launchd 常驻、nginx、运维 |
 | [飞书应用配置](docs/feishu-setup.md) | 权限清单、长连接事件、审批定义、知识库、发布检查 |
 | [amber 命令行与 skill](docs/cli-and-skill.md) | 安装、命令、三档行为、定时任务、接口 |
+| [执行端](docs/executor.md) | 数据在别的机器上时（比如机器人建的台账）：在那台机器装执行端，管理员批准后，指令就在那里按审核过的沙箱策略执行 |
 | [可信身份：完整示例](docs/identity-example.md) | 用 Python 写一个信任 Amber 凭证的服务，并让固化指令以执行人身份调用它 |
 | [可信身份](docs/identity.md) | 身份从哪来、网站登录、执行身份凭证与服务方验证（含 Node / Python 示例） |
 | [给 agent 的 skill](skills/amber/SKILL.md) | agent 怎么调用 Amber、怎么提交新指令 |

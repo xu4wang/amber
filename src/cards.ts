@@ -1,4 +1,5 @@
-import type { CommandRow } from './db.ts';
+import type { CommandRow, ExecutorRow } from './db.ts';
+import { showFingerprint } from './exec-proto.ts';
 import type { Block } from './engine.ts';
 import type { SecretInfo } from './secrets.ts';
 
@@ -393,4 +394,35 @@ export function secretPickCard(items: { c: CommandRow; where: string }[]): objec
       ],
     })),
   ]);
+}
+
+// ---------- executors (D50)
+
+function executorLines(e: ExecutorRow): string {
+  const envs = Object.entries(e.envs).map(([k, v]) => `- 环境「${sanitizeMarkdown(k, 40)}」：{WORKDIR} = \`${sanitizeMarkdown(v.workdir, 300)}\`${v.interpreter ? `，Python \`${sanitizeMarkdown(v.interpreter, 300)}\`` : ''}`);
+  return [
+    `**执行端**：${e.name}`,
+    `**来源机器**：${sanitizeMarkdown(e.machine, 60)}（按 IP 白名单识别）${e.version ? `　**版本**：${sanitizeMarkdown(e.version, 40)}` : ''}`,
+    `**公钥指纹**：\`${showFingerprint(e.fingerprint)}\``,
+    '**环境**：', ...envs,
+  ].join('\n');
+}
+
+/** Sent to every admin when an executor registers. Approving lets Amber send it jobs. */
+export function executorApprovalCard(e: ExecutorRow, h: string): object {
+  return shell('Amber · 执行端申请登记', 'orange', [
+    { tag: 'markdown', content: `${executorLines(e)}\n\n批准后，声明了 \`env: "${e.name}/环境名"\` 并通过审核的指令会在这台机器上、按各自审核过的沙箱策略执行。**请先和安装的人核对公钥指纹**（执行端安装时会打印出来），确认是你们自己装的。` },
+    buttonRow([btn('批准', { a: 'exe_ok', e: e.id, h }, 'primary'), btn('拒绝', { a: 'exe_no', e: e.id, h }, 'danger')]),
+  ]);
+}
+
+export function executorDecidedCard(e: ExecutorRow, by: string): object {
+  const ok = e.status === 'approved';
+  return shell(`Amber · 执行端${ok ? '已批准' : e.status === 'rejected' ? '已拒绝' : '登记'}`, ok ? 'green' : 'grey', [{ tag: 'markdown', content: `${executorLines(e)}\n\n${ok ? '✅ 已批准' : e.status === 'rejected' ? '已拒绝' : `状态：${e.status}`}（${sanitizeMarkdown(by, 40)}）` }]);
+}
+
+export function executorListCard(list: { e: ExecutorRow; online: boolean }[]): object {
+  const label: Record<string, string> = { pending: '等待批准', approved: '已批准', rejected: '已拒绝', revoked: '已撤销' };
+  const lines = list.map(({ e, online }) => `- **${e.name}**（${sanitizeMarkdown(e.machine, 60)}）· ${label[e.status] ?? e.status}${e.status === 'approved' ? ` · ${online ? '在线' : '离线'}` : ''} · 环境：${Object.keys(e.envs).map(k => sanitizeMarkdown(k, 40)).join('、')} · 指纹 \`${showFingerprint(e.fingerprint).slice(0, 9)}\` · 最后在线 ${e.lastSeen ? new Date(e.lastSeen).toISOString().slice(0, 16).replace('T', ' ') + ' UTC' : '从未'}`);
+  return shell('Amber · 执行端', 'blue', [{ tag: 'markdown', content: (lines.join('\n') || '（还没有执行端登记）') + '\n\n撤销：发「撤销执行端 名称」。' }]);
 }

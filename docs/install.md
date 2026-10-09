@@ -180,7 +180,7 @@ lsof -nP -iTCP:7341 -iTCP:7342 -sTCP:LISTEN            # 两个端口都在监�
 server {
     listen 80;
     server_name amber.example.com;
-    client_max_body_size 512k;
+    client_max_body_size 1m;
 
     # 给 agent 用的接口：只放行 config.json 里 machines 列出的 IP
     location /v1/ {
@@ -233,6 +233,7 @@ server {
 | 运维命令 | `node src/cli.ts list`（列出全部指令）、`node src/cli.ts retire <id>`（下线指令）。每次操作都写审计。`node src/cli.ts keys` 从现有私钥文件导出公钥给服务方固定用：只读，私钥不存在或权限对同组、其他用户开放时直接报错、不会生成新密钥，也不写审计，导出由部署记录连同 kid 一起留档 |
 | 回归测试 | `npm test`：起一个隔离的 Amber（临时数据库 + 假飞书），覆盖认领、审核、新版本、下线、agent 三档、定时任务、网站、可信身份和沙盒，几秒跑完，不碰真实飞书和线上数据。改代码后先跑它 |
 | 冒烟测试 | `npm run smoke`：在 Amber 所在机器上检查真实部署（接口、网站、前端库完整性）。在 `~/.config/amber/smoke.json` 写 `{"testChat": "oc_…"}`（一个拉了 Amber 的测试群）后，还会把每种卡片真实发到飞书验证格式，发完立即撤回 |
+| 执行端 | 数据在别的机器上时，在那台机器装执行端，见 [executor.md](executor.md)。管理员私聊 Amber 发「执行端」查看状态 |
 | 审计 | 数据库 `audit` 表，记录提交、认领、审核、执行、签发凭证、定时任务、登录等所有动作 |
 
 ## 8. 本机隔离测试部署（最小方案）

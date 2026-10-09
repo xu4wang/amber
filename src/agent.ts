@@ -99,6 +99,7 @@ export class AgentGate {
       run: needsPerson(c) ? 'confirm_card' : 'direct',
       // Names only; values are never exposed through the agent interface (D48).
       ...(c.script.secrets?.length ? { secrets: c.script.secrets, secretsMissing: missingSecrets(c) } : {}),
+      ...(c.script.env ? { env: c.script.env } : {}),
     };
   }
 

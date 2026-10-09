@@ -10,12 +10,10 @@
 //                 user as Amber and could read the signing key, so it is rejected at submit time
 //                 and refused at run time until it can run under a separate OS user.
 // The script's output is content: Markdown, optionally with ```vega-lite and ```table blocks (D24/D25).
-import { spawn } from 'node:child_process';
-import { mkdtempSync, rmSync, writeFileSync, realpathSync } from 'node:fs';
-import { join } from 'node:path';
-import { tmpdir, homedir } from 'node:os';
 import { SECRET_NAME, MAX_SECRETS } from './secrets.ts';
 import { buildPolicy, compileToSeatbelt, validateAppSandbox, normalizePath, mandatoryDenyRoots, type AppSandbox } from './sandbox-policy.ts';
+import { runSandboxed } from './sandbox-run.ts';
+import { EXECUTOR_NAME, ENV_NAME } from './exec-proto.ts';
 
 export type ScriptKind = 'script' | 'privileged';
 /** Per-service declaration: how many calls one run may make (D41). One token is issued per call. */
@@ -28,6 +26,16 @@ export interface Script {
   sandbox?: AppSandbox;
   /** Absolute path of the Python interpreter to use (e.g. a venv with packages), reviewed with the code. Default: the system Python. */
   interpreter?: string;
+  /** Where it runs (D50): "<executor>/<environment>" — an approved executor on the machine that holds the data. Default: on Amber's machine. */
+  env?: string;
+}
+
+/** Splits script.env into executor and environment names. */
+export function parseEnv(env: string): { executor: string; env: string } | undefined {
+  const i = env.indexOf('/');
+  if (i < 0) return undefined;
+  const executor = env.slice(0, i), name = env.slice(i + 1);
+  return EXECUTOR_NAME.test(executor) && ENV_NAME.test(name) ? { executor, env: name } : undefined;
 }
 
 export const MAX_SERVICE_CALLS = 20;
@@ -47,7 +55,6 @@ export function serviceDef(name: string): ServiceDef | undefined { return SERVIC
 
 export const MAX_CODE_BYTES = 64 * 1024;
 const PYTHON = process.env.AMBER_PYTHON ?? '/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/bin/python3.9';
-const MAX_OUTPUT_BYTES = 256 * 1024;
 
 function profile(script: Script, runDir: string): string {
   const tcpPorts: number[] = [], unixSockets: string[] = [];
@@ -100,8 +107,14 @@ export function validateScript(s: unknown): Script {
       if (new Set(secrets).size !== secrets.length) throw new Error('secrets 里有重复的名称');
       if (secrets.length > MAX_SECRETS) throw new Error(`一条指令最多声明 ${MAX_SECRETS} 个密钥`);
     }
+    let env: string | undefined;
+    if (x.env !== undefined) {
+      env = String(x.env).trim();
+      if (!parseEnv(env)) throw new Error('env 要写成 "执行端名/环境名"，例如 "ledger-mac/台账"（执行端名：小写字母、数字、连字符）');
+      if (declared) throw new Error('在执行端上运行的指令不能调用内部服务（services）');
+    }
     let sandbox: AppSandbox | undefined;
-    try { sandbox = validateAppSandbox(x.sandbox); } catch (e) { throw new Error((e as Error).message); }
+    try { sandbox = validateAppSandbox(x.sandbox, { remote: !!env }); } catch (e) { throw new Error((e as Error).message); }
     let interpreter: string | undefined;
     if (x.interpreter !== undefined) {
       const p = normalizePath(String(x.interpreter));
@@ -109,43 +122,15 @@ export function validateScript(s: unknown): Script {
       if (!/python[0-9.]*$/.test(p)) throw new Error('interpreter 只能是 Python 解释器（路径以 python、python3 或 python3.x 结尾）');
       interpreter = String(x.interpreter).trim();
     }
-    return { kind: 'script', lang: 'python', code: x.code, network: !!x.network, ...(declared ? { services } : {}), ...(timeoutMs ? { timeoutMs } : {}), ...(secrets.length ? { secrets } : {}), ...(sandbox ? { sandbox } : {}), ...(interpreter ? { interpreter } : {}) };
+    return { kind: 'script', lang: 'python', code: x.code, network: !!x.network, ...(declared ? { services } : {}), ...(timeoutMs ? { timeoutMs } : {}), ...(secrets.length ? { secrets } : {}), ...(sandbox ? { sandbox } : {}), ...(interpreter ? { interpreter } : {}), ...(env ? { env } : {}) };
   }
   throw new Error('未知的脚本类型（只支持 script / privileged）');
 }
 
 export async function runScript(script: Script, input: ScriptInput): Promise<ScriptResult> {
-  const work = mkdtempSync(join(tmpdir(), 'amber-run-'));
-  try {
-    const file = join(work, 'main.py');
-    writeFileSync(file, script.code);
-    const python = script.interpreter ? normalizePath(script.interpreter) : PYTHON;
-    const pyArgs = ['-I', file];
-    // Privileged scripts are disabled (D40); anything that is not a plain script never runs.
-    if (script.kind !== 'script') return { ok: false, content: '', error: '特权脚本已停用' };
-    const cmd = '/usr/bin/sandbox-exec';
-    const args = ['-p', profile(script, realpathSync(work)), python, ...pyArgs];
-    // Inputs go in on stdin as JSON; nothing user-supplied is ever placed on a command line.
-    const env: Record<string, string> = { PATH: `/opt/homebrew/bin:/usr/local/bin:${homedir()}/.local/bin:/usr/bin:/bin:/usr/sbin:/sbin`, TMPDIR: work, HOME: work, LANG: 'en_US.UTF-8', PYTHONIOENCODING: 'utf-8' };
-    return await new Promise<ScriptResult>(resolve => {
-      const child = spawn(cmd, args, { cwd: work, env, stdio: ['pipe', 'pipe', 'pipe'] });
-      let out = Buffer.alloc(0);
-      let err = '';
-      let big = false;
-      const timer = setTimeout(() => child.kill('SIGKILL'), script.timeoutMs ?? 30000);
-      child.stdout.on('data', (b: Buffer) => { out = Buffer.concat([out, b]); if (out.length > MAX_OUTPUT_BYTES) { big = true; child.kill('SIGKILL'); } });
-      child.stderr.on('data', (b: Buffer) => { if (err.length < 4000) err += b.toString(); });
-      child.on('error', e => { clearTimeout(timer); resolve({ ok: false, content: '', error: `启动失败：${e.message}` }); });
-      child.on('close', (code, signal) => {
-        clearTimeout(timer);
-        if (big) return resolve({ ok: false, content: '', error: '输出超过 256KB' });
-        if (signal) return resolve({ ok: false, content: '', error: '运行超时或被终止' });
-        if (code !== 0) return resolve({ ok: false, content: '', error: `脚本退出码 ${code}${err ? `：${err.trim().split('\n').slice(-3).join(' / ')}` : ''}` });
-        resolve({ ok: true, content: out.toString('utf8') });
-      });
-      child.stdin.end(JSON.stringify(input));
-    });
-  } finally {
-    rmSync(work, { recursive: true, force: true });
-  }
+  // Privileged scripts are disabled (D40); anything that is not a plain script never runs.
+  if (script.kind !== 'script') return { ok: false, content: '', error: '特权脚本已停用' };
+  // Remote commands are dispatched by the engine; never run one here without its environment.
+  if (script.env) return { ok: false, content: '', error: '这条指令要在执行端上运行' };
+  return runSandboxed({ code: script.code, python: script.interpreter ? normalizePath(script.interpreter) : PYTHON, profileFor: dir => profile(script, dir), input, timeoutMs: script.timeoutMs });
 }

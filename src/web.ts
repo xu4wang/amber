@@ -185,7 +185,7 @@ export function startWeb(port: number, store: Store, deps: WebDeps): import('nod
           const c = t.cmd;
           const review = store.getReview(c.id);
           return json(res, 200, { ok: true, id: c.id, name: c.name, specHash: c.specHash, createdAt: c.createdAt,
-            script: { kind: c.script.kind, lang: c.script.lang, network: !!c.script.network, services: c.script.services ?? {}, secrets: c.script.secrets ?? [], sandbox: c.script.sandbox ?? null, interpreter: c.script.interpreter ?? null, timeoutMs: c.script.timeoutMs ?? 30000, code: c.script.code },
+            script: { kind: c.script.kind, lang: c.script.lang, network: !!c.script.network, services: c.script.services ?? {}, secrets: c.script.secrets ?? [], sandbox: c.script.sandbox ?? null, interpreter: c.script.interpreter ?? null, env: c.script.env ?? null, timeoutMs: c.script.timeoutMs ?? 30000, code: c.script.code },
             params: c.params, options: c.options, reviewDocUrl: review.docUrl ?? null,
             history: store.versionsOf(c.id).map(v => ({ id: v.id, specHash: v.specHash, createdAt: v.createdAt, reviewDocUrl: store.getReview(v.id).docUrl ?? null })) });
         }

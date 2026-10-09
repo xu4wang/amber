@@ -7,20 +7,25 @@ import type { IncomingMessage } from 'node:http';
 import type { Flow, DraftInput } from './flow.ts';
 import type { AgentGate, AgentContext } from './agent.ts';
 import { AmberError } from './engine.ts';
+import type { ExecutorHub } from './executors.ts';
 
-function readBody(req: IncomingMessage): Promise<any> {
+function readRaw(req: IncomingMessage, limit: number): Promise<string> {
   return new Promise((resolve, reject) => {
-    let body = '';
-    req.on('data', c => { body += c; if (body.length > 256 * 1024) { reject(new AmberError('too_large', '请求太大')); req.destroy(); } });
-    req.on('end', () => {
-      if (!body) return resolve({});
-      try { resolve(JSON.parse(body)); } catch { reject(new AmberError('bad_json', '请求不是合法的 JSON')); }
-    });
+    const chunks: Buffer[] = [];
+    let n = 0;
+    req.on('data', (c: Buffer) => { n += c.length; if (n > limit) { reject(new AmberError('too_large', '请求太大')); req.destroy(); } else chunks.push(c); });
+    req.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
     req.on('error', reject);
   });
 }
 
-export function startApi(port: number, machines: Record<string, string>, flow: Flow, agent: AgentGate, jwks: () => object, info: { webUrl: string }): import('node:http').Server {
+async function readBody(req: IncomingMessage): Promise<any> {
+  const body = await readRaw(req, 256 * 1024);
+  if (!body) return {};
+  try { return JSON.parse(body); } catch { throw new AmberError('bad_json', '请求不是合法的 JSON'); }
+}
+
+export function startApi(port: number, machines: Record<string, string>, flow: Flow, agent: AgentGate, jwks: () => object, info: { webUrl: string }, hub?: ExecutorHub): import('node:http').Server {
   const server = createServer(async (req, res) => {
     const reply = (status: number, body: unknown) => {
       res.writeHead(status, { 'content-type': 'application/json; charset=utf-8' });
@@ -46,6 +51,16 @@ export function startApi(port: number, machines: Record<string, string>, flow: F
         return reply(410, { ok: false, error: 'gone', message: '这个接口已关闭：运行结果只在飞书卡片和网站上查看' });
       }
       if (req.method !== 'POST') return reply(404, { ok: false, error: 'not_found' });
+      // Executors (D50): every request is signed with the executor's own key (see exec-proto.ts).
+      if (hub && path.startsWith('/v1/executor/')) {
+        const raw = await readRaw(req, 1024 * 1024);
+        const h = req.headers as Record<string, string | undefined>;
+        if (path === '/v1/executor/register') return reply(200, { ok: true, ...(await hub.register(h, 'POST', path, raw, machine)) });
+        const e = hub.authenticate(h, 'POST', path, raw);
+        if (path === '/v1/executor/poll') return reply(200, { ok: true, ...(await hub.poll(e)) });
+        if (path === '/v1/executor/result') return reply(200, hub.result(e, raw));
+        return reply(404, { ok: false, error: 'not_found' });
+      }
       const body = await readBody(req);
       if (path === '/v1/drafts') {
         const input = body as DraftInput;
@@ -68,7 +83,7 @@ export function startApi(port: number, machines: Record<string, string>, flow: F
       }
       return reply(404, { ok: false, error: 'not_found' });
     } catch (e) {
-      if (e instanceof AmberError) return reply(e.code === 'not_found' ? 404 : 400, { ok: false, error: e.code, message: e.message });
+      if (e instanceof AmberError) return reply(e.code === 'not_found' ? 404 : e.code === 'unauthorized' ? 401 : 400, { ok: false, error: e.code, message: e.message });
       console.log(new Date().toISOString(), 'api error', path, (e as Error).message);
       return reply(500, { ok: false, error: 'internal', message: (e as Error).message });
     }

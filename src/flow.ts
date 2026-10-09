@@ -12,7 +12,7 @@ import { validateScript, describeServices } from './runner.ts';
 import { describeSecrets } from './secrets.ts';
 import type { FeishuReview } from './feishu-review.ts';
 import type { Caller, CallerFacts, Block } from './engine.ts';
-import { runCommand, AmberError, dropOrphanSecrets } from './engine.ts';
+import { runCommand, AmberError, dropOrphanSecrets, executorHub } from './engine.ts';
 import { sanitizeMarkdown, person, renderBlocks, buttonRow } from './cards.ts';
 import { lineDiff } from './diff.ts';
 
@@ -65,6 +65,7 @@ function specSummary(c: CommandRow): string {
     ...(s.secrets?.length ? [`**密钥**：${sanitizeMarkdown(describeSecrets(c), 400)}`] : []),
     ...(s.sandbox ? [`**沙箱**：${sanitizeMarkdown(describeSandbox(s.sandbox), 600)}（其余 HOME 下的文件不可见，凭证目录始终不可见）`] : []),
     ...(s.interpreter ? [`**解释器**：${sanitizeMarkdown(s.interpreter, 200)}`] : []),
+    ...(s.env ? [`**执行位置**：${sanitizeMarkdown(executorHub()?.describe(s.env) ?? s.env, 600)}`] : []),
   ].join('\n');
 }
 
@@ -89,7 +90,7 @@ function changePanels(c: CommandRow, prev: CommandRow): unknown[] {
   if (JSON.stringify(prev.options) !== JSON.stringify(c.options)) changed.push('选项');
   if (prev.description !== c.description) changed.push('说明');
   const { code: _a, ...prevRun } = prev.script; const { code: _b, ...nextRun } = c.script;
-  if (JSON.stringify(prevRun) !== JSON.stringify(nextRun)) changed.push('运行方式（联网、服务、超时、密钥、沙箱、解释器）');
+  if (JSON.stringify(prevRun) !== JSON.stringify(nextRun)) changed.push('运行方式（联网、服务、超时、密钥、沙箱、解释器、执行位置）');
   const d = lineDiff(prev.script.code, c.script.code);
   const codeLine = d === null ? '代码改动太大，无法逐行比较，请看完整代码' : d.stat.added || d.stat.removed ? `代码：新增 ${d.stat.added} 行，删除 ${d.stat.removed} 行` : '代码没有变化';
   const els: unknown[] = [{ tag: 'markdown', content: `**与当前版本的差异**：${changed.length ? changed.join('、') + '有变化；' : ''}${codeLine}` }];

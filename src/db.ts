@@ -57,6 +57,14 @@ export function computeSpecHash(c: Pick<CommandRow, 'name' | 'params' | 'script'
   return createHash('sha256').update(canonical).digest('hex');
 }
 
+export type ExecutorStatus = 'pending' | 'approved' | 'rejected' | 'revoked';
+/** An environment on an executor: the directory {WORKDIR} stands for, and the Python to use there. */
+export interface ExecutorEnv { workdir: string; interpreter?: string }
+export interface ExecutorRow {
+  id: string; name: string; fingerprint: string; signPub: string; boxPub: string; envs: Record<string, ExecutorEnv>;
+  machine: string; version: string; status: ExecutorStatus; createdAt: number; decidedBy: string | null; decidedAt: number | null; lastSeen: number | null;
+}
+
 export interface RunRow {
   id: string; commandId: string; channel: string; callerUnionId: string; chatId: string; args: Record<string, string>;
   status: string; result: string | null; error: string | null; startedAt: number; finishedAt: number | null;
@@ -226,6 +234,22 @@ export class Store {
       created_at INTEGER NOT NULL,
       expires_at INTEGER NOT NULL,
       revoked INTEGER NOT NULL DEFAULT 0
+    )`);
+    // Executors (D50): one row per key pair. Only an admin's approval lets Amber send it jobs.
+    this.db.exec(`CREATE TABLE IF NOT EXISTS executors (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      fingerprint TEXT NOT NULL,
+      sign_pub TEXT NOT NULL,
+      box_pub TEXT NOT NULL,
+      envs_json TEXT NOT NULL,
+      machine TEXT NOT NULL,
+      version TEXT NOT NULL DEFAULT '',
+      status TEXT NOT NULL,
+      created_at INTEGER NOT NULL,
+      decided_by TEXT,
+      decided_at INTEGER,
+      last_seen INTEGER
     )`);
     const runCols = (this.db.prepare(`PRAGMA table_info(runs)`).all() as { name: string }[]).map(c => c.name);
     if (!runCols.includes('schedule_id')) this.db.exec('ALTER TABLE runs ADD COLUMN schedule_id TEXT');
@@ -620,6 +644,33 @@ export class Store {
   deleteSecretsOf(chatId: string, cmdName: string): number {
     return Number(this.db.prepare(`DELETE FROM command_secrets WHERE chat_id = ? AND cmd_name = ?`).run(chatId, cmdName).changes);
   }
+
+  private executorRow(r: Record<string, unknown> | undefined): ExecutorRow | undefined {
+    if (!r) return undefined;
+    return { id: String(r.id), name: String(r.name), fingerprint: String(r.fingerprint), signPub: String(r.sign_pub), boxPub: String(r.box_pub),
+      envs: JSON.parse(String(r.envs_json)), machine: String(r.machine), version: String(r.version), status: r.status as ExecutorStatus,
+      createdAt: Number(r.created_at), decidedBy: r.decided_by ? String(r.decided_by) : null, decidedAt: r.decided_at ? Number(r.decided_at) : null, lastSeen: r.last_seen ? Number(r.last_seen) : null };
+  }
+
+  getExecutor(id: string): ExecutorRow | undefined { return this.executorRow(this.db.prepare('SELECT * FROM executors WHERE id = ?').get(id) as Record<string, unknown> | undefined); }
+
+  /** The approved executor with this name, if any (at most one). */
+  approvedExecutor(name: string): ExecutorRow | undefined { return this.executorRow(this.db.prepare(`SELECT * FROM executors WHERE name = ? AND status = 'approved'`).get(name) as Record<string, unknown> | undefined); }
+
+  listExecutors(): ExecutorRow[] { return (this.db.prepare(`SELECT * FROM executors ORDER BY name, created_at`).all() as Record<string, unknown>[]).map(r => this.executorRow(r)!); }
+
+  /** New registration, or a known key pair asking again (environments changed): back to pending. */
+  putExecutor(e: Pick<ExecutorRow, 'id' | 'name' | 'fingerprint' | 'signPub' | 'boxPub' | 'envs' | 'machine' | 'version'>): void {
+    this.db.prepare(`INSERT INTO executors (id, name, fingerprint, sign_pub, box_pub, envs_json, machine, version, status, created_at) VALUES (?,?,?,?,?,?,?,?, 'pending', ?)
+      ON CONFLICT (id) DO UPDATE SET name = excluded.name, envs_json = excluded.envs_json, machine = excluded.machine, version = excluded.version, status = 'pending', decided_by = NULL, decided_at = NULL`)
+      .run(e.id, e.name, e.fingerprint, e.signPub, e.boxPub, JSON.stringify(e.envs), e.machine, e.version, Date.now());
+  }
+
+  setExecutorStatus(id: string, status: ExecutorStatus, by: string | null): void {
+    this.db.prepare('UPDATE executors SET status = ?, decided_by = ?, decided_at = ? WHERE id = ?').run(status, by, Date.now(), id);
+  }
+
+  touchExecutor(id: string): void { this.db.prepare('UPDATE executors SET last_seen = ? WHERE id = ?').run(Date.now(), id); }
 
   audit(actorUnionId: string | null, action: string, detail: Record<string, unknown>): void {
     this.db.prepare('INSERT INTO audit (at, actor_union_id, action, detail) VALUES (?,?,?,?)').run(Date.now(), actorUnionId, action, JSON.stringify(detail));

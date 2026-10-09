@@ -85,12 +85,7 @@ export class SecretVault {
   }
 }
 
-/** Replaces every secret value (4 characters or longer) that appears in text with ***. */
-export function redact(text: string, values: Record<string, string>): string {
-  let out = text;
-  for (const v of Object.values(values).filter(v => v.length >= 4).sort((a, b) => b.length - a.length)) out = out.split(v).join('***');
-  return out;
-}
+export { redact } from './exec-proto.ts';
 
 /** One line for cards, review documents and approvals: which secrets a command uses and who shares them. */
 export function describeSecrets(c: { scopeType: string; script: { secrets?: string[] } }): string {

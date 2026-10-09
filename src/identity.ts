@@ -11,6 +11,7 @@ import { generateKeyPairSync, createPrivateKey, createPublicKey, sign, randomUUI
 import type { KeyObject } from 'node:crypto';
 import { existsSync, lstatSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { sealJob, type JobEnvelope } from './exec-proto.ts';
 
 const b64u = (b: Buffer | string) => Buffer.from(b).toString('base64url');
 
@@ -50,6 +51,11 @@ export class Signer {
   /** JWKS document for verifiers. */
   jwks(): object {
     return publicSet(this.publicKey).jwks;
+  }
+
+  /** A job for an executor (D50): encrypted to its key, signed with this key. */
+  sealJob(executorId: string, boxPub: string, jobId: string, ttlMs: number, payload: unknown): JobEnvelope {
+    return sealJob(this.key, executorId, boxPub, jobId, ttlMs, payload);
   }
 
   issue(c: { aud: string; sub: string; cmd: string; rev: string; run: string; chat: string; channel: string; callIndex: number; callCount: number; ttlSec?: number }): string {

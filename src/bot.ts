@@ -2,7 +2,8 @@ import * as lark from '@larksuiteoapi/node-sdk';
 import type { Store, CommandRow } from './db.ts';
 import type { Caller } from './engine.ts';
 import { visibleCommands, findVisible, runCommand, AmberError, secretVault, dropOrphanSecrets } from './engine.ts';
-import { listCard, formCard, runningCard, resultCard, errorCard, infoCard, retireConfirmCard, closedCard, secretFormCard, secretPickCard } from './cards.ts';
+import { listCard, formCard, runningCard, resultCard, errorCard, infoCard, retireConfirmCard, closedCard, secretFormCard, secretPickCard, executorApprovalCard, executorDecidedCard, executorListCard } from './cards.ts';
+import { ExecutorHub } from './executors.ts';
 import type { AmberConfig } from './config.ts';
 import { Flow } from './flow.ts';
 import { Signer } from './identity.ts';
@@ -44,6 +45,7 @@ export class AmberBot {
   signer: Signer;
   agent: AgentGate;
   scheduler: Scheduler;
+  hub: ExecutorHub;
 
   private timers: boolean;
 
@@ -75,6 +77,12 @@ export class AmberBot {
     this.scheduler = new Scheduler(store, deps);
     this.agent.scheduler = this.scheduler;
     this.flow.onReplaced = (prev, next) => this.scheduler.onCommandReplaced(prev, next);
+    this.hub = new ExecutorHub(store, this.signer);
+    this.hub.approvalCard = executorApprovalCard;
+    this.hub.notifyAdmins = async card => {
+      if (!this.adminUnionIds.size) log('executor registered but no admin resolved to approve it');
+      for (const u of this.adminUnionIds) await this.flow.send({ unionId: u }, card).catch(e => log('executor card failed', e?.message));
+    };
   }
 
   /** Take a command offline (D39). Only its creator or an admin. Its schedules pause. */
@@ -266,10 +274,19 @@ export class AmberBot {
   /** Admin-only chat commands: change a command's scope, or list every command. Returns true when handled. */
   private async adminCommand(parts: string[], caller: Caller, messageId: string, inThread: boolean): Promise<boolean> {
     const verb = parts[0];
-    const verbs = ['全局', '设为全局', '取消全局', '设为本地', '所有指令'];
+    const verbs = ['全局', '设为全局', '取消全局', '设为本地', '所有指令', '执行端', '撤销执行端'];
     if (!verbs.includes(verb)) return false;
     if (!this.isAdmin(caller.unionId)) {
-      await this.replyCard(messageId, inThread, errorCard('Amber', '只有管理员可以修改指令的执行范围'));
+      await this.replyCard(messageId, inThread, errorCard('Amber', verb.includes('执行端') ? '只有管理员可以管理执行端' : '只有管理员可以修改指令的执行范围'));
+      return true;
+    }
+    if (verb === '执行端') {
+      await this.replyCard(messageId, inThread, executorListCard(this.store.listExecutors().map(e => ({ e, online: this.hub.online(e) }))));
+      return true;
+    }
+    if (verb === '撤销执行端') {
+      const e = parts[1] ? this.hub.revoke(parts[1], caller.unionId) : undefined;
+      await this.replyCard(messageId, inThread, e ? infoCard('执行端已撤销', `「${e.name}」已撤销：不会再给它派任务，正在等的任务立即失败。要恢复，需要在那台机器上重新生成密钥并再次批准。`) : errorCard('Amber', parts[1] ? `没有已批准的执行端叫「${parts[1]}」` : '用法：撤销执行端 <名称>'));
       return true;
     }
     if (verb === '所有指令') {
@@ -594,6 +611,13 @@ export class AmberBot {
       if (value.a === 'review_ok' || value.a === 'review_no') {
         const reason = String(d.action?.form_value?.reason ?? '');
         return raw(await this.flow.onReviewAction(value.a, String(value.c), String(value.h), reason, caller));
+      }
+      if (value.a === 'exe_ok' || value.a === 'exe_no') {
+        if (!this.isAdmin(caller.unionId)) return { toast: { type: 'error', content: '只有管理员可以批准执行端' } };
+        const r = this.hub.decide(String(value.e), String(value.h), value.a === 'exe_ok', caller.unionId);
+        log('executor decision', value.a, value.e, r.message);
+        if (!r.ok || !r.row) return { toast: { type: 'error', content: r.message } };
+        return raw(executorDecidedCard(r.row, (await this.nameOf(caller.unionId)) ?? '管理员'));
       }
       if (value.a === 'req_ok' || value.a === 'req_no') {
         return raw(await this.agent.onClick(value.a === 'req_ok', String(value.r), caller, chatId, messageId));
