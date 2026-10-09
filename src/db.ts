@@ -354,7 +354,7 @@ export class Store {
       if (!Array.isArray(v)) continue;
       const one = v.length === 1 && v[0] && typeof v[0].code === 'string' ? v[0] : null;
       if (!one) {
-        this.db.prepare('UPDATE commands SET script_json = ?, status = ? WHERE id = ?').run(JSON.stringify({ kind: 'script', lang: 'python', code: '# 已停用：多步骤指令不再支持' }), r.status === 'retired' || r.status === 'rejected' ? r.status : 'retired', r.id);
+        this.db.prepare('UPDATE commands SET script_json = ?, status = ? WHERE id = ?').run(JSON.stringify({ kind: 'script', lang: 'python', code: '# 已停用：多步骤应用不再支持' }), r.status === 'retired' || r.status === 'rejected' ? r.status : 'retired', r.id);
         continue;
       }
       const script = { ...one };

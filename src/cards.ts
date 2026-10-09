@@ -63,9 +63,9 @@ export function buttonRow(buttons: unknown[]): object {
 
 export function listCard(cmds: CommandRow[], scopeLabel: string): object {
   if (cmds.length === 0) {
-    return shell('Amber', 'orange', [{ tag: 'markdown', content: `${scopeLabel}还没有可用的指令。\n\n在这里和 agent 把一次操作跑通后，让它把操作提交给 Amber，经认领和审核后就会出现在这里。` }]);
+    return shell('Amber', 'orange', [{ tag: 'markdown', content: `${scopeLabel}还没有可用的应用。\n\n在这里和 agent 把一次操作跑通后，让它把操作提交给 Amber，经认领和审核后就会出现在这里。` }]);
   }
-  const els: unknown[] = [{ tag: 'markdown', content: `${scopeLabel}可用的指令：` }];
+  const els: unknown[] = [{ tag: 'markdown', content: `${scopeLabel}可用的应用：` }];
   for (const c of cmds) {
     els.push({
       tag: 'column_set',
@@ -76,19 +76,19 @@ export function listCard(cmds: CommandRow[], scopeLabel: string): object {
       ],
     });
   }
-  return shell('Amber · 指令', 'orange', els);
+  return shell('Amber · 应用', 'orange', els);
 }
 
 export function formCard(c: CommandRow, prefill: Record<string, string> = {}): object {
   const isWrite = c.options.confirm;
   const runText = isWrite ? '确认执行' : '执行';
   const runType = isWrite ? 'danger' : 'primary';
-  const warn = isWrite ? [{ tag: 'markdown', content: '<font color="red">⚠️ 这条指令要求执行前确认，请核对参数后再点「确认执行」。</font>' }] : [];
+  const warn = isWrite ? [{ tag: 'markdown', content: '<font color="red">⚠️ 这个应用要求执行前确认，请核对参数后再点「确认执行」。</font>' }] : [];
   // Configuration items (#3) are set on the website, never asked here.
   const params = c.params.filter(p => p.scope !== 'config');
   if (params.length === 0) {
     return shell(`Amber · ${c.name}`, isWrite ? 'red' : 'orange', [
-      { tag: 'markdown', content: sanitizeMarkdown(c.description || '') || (c.params.length ? '执行时不用填参数。' : '这条指令没有参数。') },
+      { tag: 'markdown', content: sanitizeMarkdown(c.description || '') || (c.params.length ? '执行时不用填参数。' : '这个应用没有参数。') },
       ...warn,
       buttonRow([btn(runText, { a: 'run', c: c.id }, runType), btn('返回', { a: 'list' })]),
     ]);
@@ -235,7 +235,7 @@ export function runningCard(name: string, whoOpenId?: string): object {
 export function resultCard(name: string, whoOpenId: string | undefined, blocks: Block[], runId: string, elapsedMs: number, cmdId: string, sharedSecrets = false, mentions?: Mentions): object {
   return shell(`Amber · ${name}`, 'green', [
     ...renderBlocks(blocks, mentions),
-    { tag: 'markdown', content: `由 ${person(whoOpenId)} 执行 · ${(elapsedMs / 1000).toFixed(1)} 秒 · run ${runId}${sharedSecrets ? ' · 使用全局指令共用的密钥' : ''}`, text_size: 'notation' },
+    { tag: 'markdown', content: `由 ${person(whoOpenId)} 执行 · ${(elapsedMs / 1000).toFixed(1)} 秒 · run ${runId}${sharedSecrets ? ' · 使用全局应用共用的密钥' : ''}`, text_size: 'notation' },
     btn('再执行一次', { a: 'pick', c: cmdId }),
   ]);
 }
@@ -278,17 +278,17 @@ export function requestCard(o: {
     ok = danger ? '确认并创建定时任务' : '创建定时任务';
     els.push({ tag: 'markdown', content: `**${by}** 请求为 ${who} 创建定时任务：**${sanitizeMarkdown(o.ruleText ?? '', 80)}** 自动执行「**${name}**」。\n首次运行：${sanitizeMarkdown(o.nextText ?? '', 40)}` });
   } else if (o.kind === 'retire') {
-    title = `请确认下线指令：${o.cmd.name}`;
+    title = `请确认下线应用：${o.cmd.name}`;
     ok = '确认下线';
-    els.push({ tag: 'markdown', content: `**${by}** 请求下线指令「**${name}**」（${o.cmd.id}）。下线后任何人都不能再执行它，不需要审核，也不能撤销。${o.schedules ? `\n它的 **${o.schedules}** 个定时任务会暂停，并私聊通知各自的创建人。` : ''}` });
-    els.push({ tag: 'markdown', content: '<font color="grey">只有指令的创建人或管理员可以确认。</font>' });
+    els.push({ tag: 'markdown', content: `**${by}** 请求下线应用「**${name}**」（${o.cmd.id}）。下线后任何人都不能再执行它，不需要审核，也不能撤销。${o.schedules ? `\n它的 **${o.schedules}** 个定时任务会暂停，并私聊通知各自的创建人。` : ''}` });
+    els.push({ tag: 'markdown', content: '<font color="grey">只有应用的创建人或管理员可以确认。</font>' });
   } else if (o.kind === 'scope_global' || o.kind === 'scope_local') {
     const g = o.kind === 'scope_global';
     title = g ? `请确认设为全局：${o.cmd.name}` : `请确认取消全局：${o.cmd.name}`;
     ok = g ? '设为全局' : '取消全局';
     els.push({ tag: 'markdown', content: g
-      ? `**${by}** 请求把指令「**${name}**」（${o.cmd.id}）设为**全局**：Amber 所在的任何群和私聊都能使用。`
-      : `**${by}** 请求把指令「**${name}**」（${o.cmd.id}）改回**只在创建处可用**。` });
+      ? `**${by}** 请求把应用「**${name}**」（${o.cmd.id}）设为**全局**：Amber 所在的任何群和私聊都能使用。`
+      : `**${by}** 请求把应用「**${name}**」（${o.cmd.id}）改回**只在创建处可用**。` });
     els.push({ tag: 'markdown', content: '<font color="grey">只有管理员可以确认。</font>' });
   } else if (o.kind === 'schedule_resume') {
     title = `请确认恢复定时任务：${o.cmd.name}`;
@@ -305,7 +305,7 @@ export function requestCard(o: {
     els.push({ tag: 'markdown', content: o.kind === 'run'
       ? '<font color="grey">点「执行」即以你本人的身份执行一次；结果只显示在这张卡片上（完整内容在网站上），不会交给发起请求的 agent。</font>'
       : '<font color="grey">创建后，每次都以你本人的身份自动执行，结果发到这里（没有输出时不发）。运行失败会私聊通知你，连续失败 3 次自动暂停。</font>' });
-    if (o.cmd.options.confirm) els.push({ tag: 'markdown', content: '<font color="red">⚠️ 这条指令要求执行前确认，请核对参数。</font>' });
+    if (o.cmd.options.confirm) els.push({ tag: 'markdown', content: '<font color="red">⚠️ 这个应用要求执行前确认，请核对参数。</font>' });
   }
   els.push({
     tag: 'column_set', flex_mode: 'none', columns: [
@@ -321,7 +321,7 @@ export function requestCard(o: {
 export function retireConfirmCard(c: CommandRow, schedules: number, requester: string, issuedAt: number, listed = false): object {
   const v = { c: c.id, h: c.specHash, u: requester, t: String(issuedAt) };
   return shell('Amber · 确认下线', 'red', [
-    { tag: 'markdown', content: `确定下线「${sanitizeMarkdown(c.name, 80)}」？\n\n下线后这条指令不能再执行${schedules ? `，它的 **${schedules} 个定时任务**会暂停并通知创建人` : ''}。下线不能撤销，需要时只能重新提交、审核。${listed ? '\n\n它已上架到 Amber Store：下线后应用仍留在 Store（别人照常可以安装，但不会再有新版本）。要同时下架，请到网站上下线。' : ''}\n<font color="grey">只有发起下线的人能确认，5 分钟内有效。</font>` },
+    { tag: 'markdown', content: `确定下线「${sanitizeMarkdown(c.name, 80)}」？\n\n下线后这个应用不能再执行${schedules ? `，它的 **${schedules} 个定时任务**会暂停并通知创建人` : ''}。下线不能撤销，需要时只能重新提交、审核。${listed ? '\n\n它已上架到 Amber Store：下线后应用仍留在 Store（别人照常可以安装，但不会再有新版本）。要同时下架，请到网站上下线。' : ''}\n<font color="grey">只有发起下线的人能确认，5 分钟内有效。</font>` },
     { tag: 'column_set', columns: [
       { tag: 'column', width: 'auto', elements: [btn('确认下线', { a: 'retire_ok', ...v }, 'danger')] },
       { tag: 'column', width: 'auto', elements: [btn('取消', { a: 'retire_no', ...v })] },
@@ -335,11 +335,11 @@ export function reassignCard(o: { requestId: string; name: string; chatName: str
     ? `\n\n原来挂在它上面的 **${o.schedules.length} 个定时任务**：\n${o.schedules.map(s => `- ${sanitizeMarkdown(s.ruleText, 60)}${Object.keys(s.args).length ? `（${sanitizeMarkdown(Object.entries(s.args).map(([k, v]) => `${k}=${v}`).join(' '), 120)}）` : ''}`).join('\n')}\n接收时可以选择以你的身份重建它们（时间、参数不变）；不重建就会删除。`
     : '';
   const kept = [o.secrets ? `${o.secrets} 个密钥` : '', o.config ? `${o.config} 个配置项` : ''].filter(Boolean).join('、');
-  return shell(`Amber · 请你接手指令：${o.name}`, 'orange', [
-    { tag: 'markdown', content: `${o.adminOpenId ? person(o.adminOpenId) : '管理员'} 请你接手群「${sanitizeMarkdown(o.chatName, 40)}」里的指令「**${sanitizeMarkdown(o.name, 40)}**」：它的创建人已不在这个群里。\n\n接收后你就是这条指令的创建人：只有你能执行它，执行时用你的身份和数据权限。${kept ? `原来设置的${kept}会保留，可以在网站上修改。` : ''}${sch}` },
+  return shell(`Amber · 请你接手应用：${o.name}`, 'orange', [
+    { tag: 'markdown', content: `${o.adminOpenId ? person(o.adminOpenId) : '管理员'} 请你接手群「${sanitizeMarkdown(o.chatName, 40)}」里的应用「**${sanitizeMarkdown(o.name, 40)}**」：它的创建人已不在这个群里。\n\n接收后你就是这个应用的创建人：只有你能执行它，执行时用你的身份和数据权限。${kept ? `原来设置的${kept}会保留，可以在网站上修改。` : ''}${sch}` },
     buttonRow([
       ...(o.schedules.length ? [btn('接收，并重建定时任务', { a: 'rs_ok', r: o.requestId, s: '1' }, 'primary')] : []),
-      btn(o.schedules.length ? '只接收指令' : '接收', { a: 'rs_ok', r: o.requestId, s: '0' }, o.schedules.length ? 'default' : 'primary'),
+      btn(o.schedules.length ? '只接收应用' : '接收', { a: 'rs_ok', r: o.requestId, s: '0' }, o.schedules.length ? 'default' : 'primary'),
       btn('不接收', { a: 'rs_no', r: o.requestId }, 'danger'),
     ]),
   ]);
@@ -384,7 +384,7 @@ export function scheduleResultCard(name: string, creatorOpenId: string | undefin
 /** Sent to a schedule's creator when the command it runs got a new version (D38). */
 export function rebindCard(o: { scheduleId: string; name: string; ruleText: string; oldHash: string; newId: string; newHash: string; stillSchedulable: boolean }): object {
   const els: unknown[] = [
-    { tag: 'markdown', content: `指令「**${sanitizeMarkdown(o.name, 40)}**」更新了版本（${o.oldHash.slice(0, 8)} → ${o.newHash.slice(0, 8)}）。你的定时任务 ${o.scheduleId}（${sanitizeMarkdown(o.ruleText, 60)}）已暂停，不会自动改用新版本。` },
+    { tag: 'markdown', content: `应用「**${sanitizeMarkdown(o.name, 40)}**」更新了版本（${o.oldHash.slice(0, 8)} → ${o.newHash.slice(0, 8)}）。你的定时任务 ${o.scheduleId}（${sanitizeMarkdown(o.ruleText, 60)}）已暂停，不会自动改用新版本。` },
   ];
   if (o.stillSchedulable) {
     els.push({ tag: 'markdown', content: '确认新版本没问题后，点「换绑到新版本」继续运行；参数和时间保持不变。' });
@@ -396,7 +396,7 @@ export function rebindCard(o: { scheduleId: string; name: string; ruleText: stri
     els.push({ tag: 'markdown', content: '<font color="red">新版本不允许定时执行，这个定时任务无法继续。</font>' });
     els.push(btn('删除定时任务', { a: 'sch_drop', s: o.scheduleId }));
   }
-  return shell(`Amber · 指令已更新：${o.name}`, 'orange', els);
+  return shell(`Amber · 应用已更新：${o.name}`, 'orange', els);
 }
 
 // ---------- command secrets (D48)
@@ -405,11 +405,11 @@ const fmtDay = (ms: number) => new Date(ms).toISOString().slice(0, 16).replace('
 
 /** Private-chat form for a command's secrets. Values are typed here and never shown again. */
 export function secretFormCard(c: CommandRow, info: SecretInfo[], note?: string): object {
-  const where = c.scopeType === 'p2p' ? '私聊指令' : '群指令';
+  const where = c.scopeType === 'p2p' ? '私聊应用' : '群应用';
   const status = info.map(i => `- **${i.name}**：${i.set ? `已设置${i.last4 ? `（末尾 ${sanitizeMarkdown(i.last4, 8)}）` : ''} · ${fmtDay(i.updatedAt!)}` : '<font color="red">未设置</font>'}`).join('\n');
   return shell(`Amber · 设置密钥：${c.name}`, 'orange', [
-    { tag: 'markdown', content: `「**${sanitizeMarkdown(c.name, 40)}**」（${where}）运行时需要下面的密钥。这里填的值加密保存在 Amber 里，不会出现在聊天记录里，也不会交给 agent；执行时只交给这条指令。` },
-    ...(c.scopeType === 'p2p' ? [] : [{ tag: 'markdown', content: '<font color="red">这是群指令：群里每个执行它的人都会用到这些密钥。请只填权限够用的凭证。</font>' }]),
+    { tag: 'markdown', content: `「**${sanitizeMarkdown(c.name, 40)}**」（${where}）运行时需要下面的密钥。这里填的值加密保存在 Amber 里，不会出现在聊天记录里，也不会交给 agent；执行时只交给这个应用。` },
+    ...(c.global ? [{ tag: 'markdown', content: '<font color="red">这是全局应用：每个执行它的人都会用到这些密钥。请只填权限够用的凭证。</font>' }] : []),
     { tag: 'markdown', content: status },
     ...(note ? [{ tag: 'markdown', content: `✅ ${sanitizeMarkdown(note, 300)}` }] : []),
     {
@@ -421,14 +421,14 @@ export function secretFormCard(c: CommandRow, info: SecretInfo[], note?: string)
         btn('保存', { a: 'sec_save', c: c.id }, 'primary', { form_action_type: 'submit', name: 'save' }),
       ],
     },
-    { tag: 'markdown', content: '<font color="grey">只能覆盖或删除，不能再查看。删除密钥请在网站的指令页面操作。</font>', text_size: 'notation' },
+    { tag: 'markdown', content: '<font color="grey">只能覆盖或删除，不能再查看。删除密钥请在网站的应用页面操作。</font>', text_size: 'notation' },
   ]);
 }
 
 /** Several commands match a name: pick one. */
 export function secretPickCard(items: { c: CommandRow; where: string }[]): object {
   return shell('Amber · 设置密钥', 'orange', [
-    { tag: 'markdown', content: '有多条同名指令，选择要设置密钥的那一条：' },
+    { tag: 'markdown', content: '有多个同名应用，选择要设置密钥的那一个：' },
     ...items.map(({ c, where }) => ({
       tag: 'column_set', flex_mode: 'none', columns: [
         { tag: 'column', width: 'weighted', weight: 4, vertical_align: 'center', elements: [{ tag: 'markdown', content: `**${sanitizeMarkdown(c.name, 40)}** · ${sanitizeMarkdown(where, 60)}\n<font color="grey">${c.status === 'active' ? '已生效' : c.status === 'pending' ? '审核中' : '待认领'} · ${c.specHash.slice(0, 8)}</font>` }] },
@@ -457,7 +457,7 @@ function executorLines(e: ExecutorRow): string {
       ...(vars.length ? ['- 环境变量：', ...vars.map(([n, val]) => `　　- \`${sanitizeMarkdown(n, 64)}=${sanitizeMarkdown(val, 200)}\``)] : []),
       ...(v.realHome ? ['- HOME：用户主目录（能访问的仍只有上面这些路径）'] : []),
       ...(v.follow ? [`- 定义文件：\`${sanitizeMarkdown(v.follow, 300)}\`（之后它的路径、环境变量、Python 有变化会自动生效，并通知管理员）`] : []),
-      ...(cred.size ? ['<font color="red">⚠️ 标记的是凭证路径（含凭证路径）：这个环境里的指令能使用这些凭证</font>'] : []),
+      ...(cred.size ? ['<font color="red">⚠️ 标记的是凭证路径（含凭证路径）：这个环境里的应用能使用这些凭证</font>'] : []),
     ];
   });
   return [
@@ -471,7 +471,7 @@ function executorLines(e: ExecutorRow): string {
 /** Sent to every admin when an executor registers. Approving lets Amber send it jobs. */
 export function executorApprovalCard(e: ExecutorRow, h: string): object {
   return shell('Amber · 执行端申请登记', 'orange', [
-    { tag: 'markdown', content: `${executorLines(e)}\n\n批准后，声明了 \`env: "${e.name}/环境名"\` 并通过审核的指令会在这台机器上执行，**能访问的就是上面列出的路径**（指令自己不能再加）。**请先和安装的人核对公钥指纹**（执行端安装时会打印出来），确认是你们自己装的。` },
+    { tag: 'markdown', content: `${executorLines(e)}\n\n批准后，声明了 \`env: "${e.name}/环境名"\` 并通过审核的应用会在这台机器上执行，**能访问的就是上面列出的路径**（应用自己不能再加）。**请先和安装的人核对公钥指纹**（执行端安装时会打印出来），确认是你们自己装的。` },
     buttonRow([btn('批准', { a: 'exe_ok', e: e.id, h }, 'primary'), btn('拒绝', { a: 'exe_no', e: e.id, h }, 'danger')]),
   ]);
 }
@@ -492,7 +492,7 @@ export function executorFollowCard(e: ExecutorRow, changes: FollowChange[]): obj
   const KIND: Record<string, string> = { readWrite: '可读写', readOnly: '只读', deny: '禁止' };
   const lines: string[] = [];
   for (const c of changes) {
-    if (c.removedEnv) { lines.push(`**环境「${sanitizeMarkdown(c.env, 40)}」已删除**（它的定义文件不在了；这个环境里的指令会执行失败）`); continue; }
+    if (c.removedEnv) { lines.push(`**环境「${sanitizeMarkdown(c.env, 40)}」已删除**（它的定义文件不在了；这个环境里的应用会执行失败）`); continue; }
     const v = e.envs[c.env];
     const cred = new Set(v ? credentialPaths(v) : []);
     lines.push(`**环境「${sanitizeMarkdown(c.env, 40)}」**（\`${sanitizeMarkdown(v?.follow ?? '', 300)}\`）`);

@@ -62,13 +62,13 @@ if (smoke.testChat) {
     must((d?.code ?? 0) === 0, `撤回失败：${d?.msg ?? ''}`);
   };
   const sample: CommandRow = {
-    id: 'smoke000', scopeType: 'group', chatId: smoke.testChat, ownerUnionId: '', name: '冒烟测试', description: '冒烟测试用的示例指令',
+    id: 'smoke000', scopeType: 'group', chatId: smoke.testChat, ownerUnionId: '', name: '冒烟测试', description: '冒烟测试用的示例应用',
     params: [{ name: 'days', label: '天数', type: 'integer', default: '7' }], script: { kind: 'script', lang: 'python', code: 'print("hello")\n' },
     options: { confirm: true, schedulable: true }, status: 'active', specHash: 'f'.repeat(64), createdAt: Date.now(), global: false,
   };
   const output = [{ kind: 'markdown' as const, text: '**结果**\n\n```table\n{"columns":[{"name":"d","label":"日期","type":"text"},{"name":"n","label":"数量","type":"number"}],"rows":[{"d":"10-01","n":3},{"d":"10-02","n":5}],"total":2}\n```\n```vega-lite\n{"mark":"line","data":{"values":[{"d":"10-01","n":3},{"d":"10-02","n":5}]},"encoding":{"x":{"field":"d","type":"ordinal"},"y":{"field":"n","type":"quantitative"}}}\n```' }];
   const all: [string, object][] = [
-    ['指令列表', cards.listCard([sample], '本群')],
+    ['应用列表', cards.listCard([sample], '本群')],
     ['执行表单', cards.formCard(sample, { days: '3' })],
     ['执行中', cards.runningCard(sample.name)],
     ['结果（表格 + 图表）', cards.resultCard(sample.name, undefined, output, 'run00000', 1234, sample.id)],
@@ -82,7 +82,7 @@ if (smoke.testChat) {
     ['换绑卡', cards.rebindCard({ scheduleId: 'sch00000', name: sample.name, ruleText: '每天 09:00', oldHash: 'a'.repeat(64), newId: 'smoke001', newHash: 'b'.repeat(64), stillSchedulable: true })],
     ['信息卡', cards.infoCard('冒烟测试', '这是一条冒烟测试消息，会立即撤回。')],
     ['密钥表单（私聊）', cards.secretFormCard({ ...sample, script: { ...sample.script, secrets: ['API_TOKEN', 'DB_PASSWORD'] } }, [{ name: 'API_TOKEN', set: true, last4: 'ab12', updatedAt: Date.now() }, { name: 'DB_PASSWORD', set: false }], '已保存：API_TOKEN')],
-    ['密钥：选择指令', cards.secretPickCard([{ c: sample, where: '群：测试群' }, { c: { ...sample, id: 'smoke002' }, where: '私聊' }])],
+    ['密钥：选择应用', cards.secretPickCard([{ c: sample, where: '群：测试群' }, { c: { ...sample, id: 'smoke002' }, where: '私聊' }])],
     ['执行端申请登记', cards.executorApprovalCard({ id: 'abcd1234abcd1234', name: 'ledger-mac', fingerprint: 'ab'.repeat(32), signPub: '', boxPub: '', envs: { 台账: { workdir: '/Users/me/bots/ledger', interpreter: '/Users/me/venv/bin/python3' }, 导出: { workdir: '/Users/me/exports' } }, machine: 'fleet-a', version: '1', status: 'pending' as const, createdAt: Date.now(), decidedBy: null, decidedAt: null, lastSeen: Date.now() }, 'h0')],
     ['执行端已批准', cards.executorDecidedCard({ ...{ id: 'abcd1234abcd1234', name: 'ledger-mac', fingerprint: 'ab'.repeat(32), signPub: '', boxPub: '', envs: { 台账: { workdir: '/Users/me/bots/ledger', interpreter: '/Users/me/venv/bin/python3' }, 导出: { workdir: '/Users/me/exports' } }, machine: 'fleet-a', version: '1', status: 'pending' as const, createdAt: Date.now(), decidedBy: null, decidedAt: null, lastSeen: Date.now() }, status: 'approved' }, '王旭')],
     ['执行端列表', cards.executorListCard([{ e: { ...{ id: 'abcd1234abcd1234', name: 'ledger-mac', fingerprint: 'ab'.repeat(32), signPub: '', boxPub: '', envs: { 台账: { workdir: '/Users/me/bots/ledger', interpreter: '/Users/me/venv/bin/python3' }, 导出: { workdir: '/Users/me/exports' } }, machine: 'fleet-a', version: '1', status: 'pending' as const, createdAt: Date.now(), decidedBy: null, decidedAt: null, lastSeen: Date.now() }, status: 'approved' }, online: true }])],
@@ -96,7 +96,7 @@ if (smoke.testChat) {
       await recall(id);
     });
   }
-  await check('读取测试群成员（群指令权限、退群暂停依赖它）', async () => {
+  await check('读取测试群成员（群应用权限、退群暂停依赖它）', async () => {
     const r = await client.request({ method: 'GET', url: `/open-apis/im/v1/chats/${smoke.testChat}/members`, params: { member_id_type: 'union_id', page_size: 50 } }) as any;
     const n = r?.data?.items?.length ?? 0;
     must(n > 0, '读不到成员');

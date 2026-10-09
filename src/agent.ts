@@ -61,7 +61,7 @@ async function precheck(store: Store, cmd: CommandRow, args: Record<string, stri
   const unset = missingConfig(store, cmd);
   if (unset.length) throw new AmberError('missing_config', missingConfigMessage(unset));
   const missing = missingSecrets(cmd);
-  if (missing.length) throw new AmberError('missing_secret', `还没设置密钥：${missing.join('、')}。请指令创建人或管理员先私聊 Amber 发「设置密钥 ${cmd.name}」`);
+  if (missing.length) throw new AmberError('missing_secret', `还没设置密钥：${missing.join('、')}。请应用创建人或管理员先私聊 Amber 发「设置密钥 ${cmd.name}」`);
 }
 
 export class AgentGate {
@@ -175,7 +175,7 @@ export class AgentGate {
   async scheduleChange(ctx: Ctx, id: string, kind: 'schedule_resume' | 'schedule_delete'): Promise<object> {
     const s = this.scheduleInCtx(ctx, id);
     const cmd = this.store.getCommand(s.commandId);
-    if (!cmd) throw new AmberError('not_found', '指令不存在');
+    if (!cmd) throw new AmberError('not_found', '应用不存在');
     const req = await this.post({ ...ctx, user: undefined }, kind, cmd, s.args, { rule: s.rule, scheduleId: s.id, target: s.creatorUnionId, targetOpenId: s.creatorOpenId ?? undefined, toCreatorDm: s.chatType === 'p2p' });
     return { mode: 'confirm_card', requestId: req.id, status: 'awaiting', message: '已发出确认卡片，需要定时任务的创建人（或管理员）点确认。' };
   }
@@ -192,14 +192,14 @@ export class AgentGate {
       const allowed = kind === 'retire'
         ? cmd.ownerUnionId === ctx.user.unionId || this.deps.isAdmin(ctx.user.unionId)
         : this.deps.isAdmin(ctx.user.unionId);
-      if (!allowed) throw new AmberError('forbidden', kind === 'retire' ? '只有指令的创建人或管理员可以下线' : '只有管理员可以修改指令的执行范围');
+      if (!allowed) throw new AmberError('forbidden', kind === 'retire' ? '只有应用的创建人或管理员可以下线' : '只有管理员可以修改应用的执行范围');
     }
-    if (kind === 'scope_global' && cmd.global) throw new AmberError('not_needed', `「${cmd.name}」已经是全局指令`);
+    if (kind === 'scope_global' && cmd.global) throw new AmberError('not_needed', `「${cmd.name}」已经是全局应用`);
     if (kind === 'scope_local' && !cmd.global) throw new AmberError('not_needed', `「${cmd.name}」本来就只在创建处可用`);
-    if (kind === 'scope_global' && this.store.listActiveGlobal().some(g => g.name === cmd.name && g.id !== cmd.id)) throw new AmberError('conflict', `已经有一条全局指令叫「${cmd.name}」，不能重名`);
+    if (kind === 'scope_global' && this.store.listActiveGlobal().some(g => g.name === cmd.name && g.id !== cmd.id)) throw new AmberError('conflict', `已经有一个全局应用叫「${cmd.name}」，不能重名`);
     const schedules = kind === 'retire' ? this.store.schedulesOfCommand(cmd.id).length : 0;
     const req = await this.post(ctx, kind, cmd, {}, { schedules });
-    const who = kind === 'retire' ? '指令的创建人（或管理员）' : '管理员';
+    const who = kind === 'retire' ? '应用的创建人（或管理员）' : '管理员';
     return { mode: 'confirm_card', requestId: req.id, status: 'awaiting', message: `已发出确认卡片，需要${ctx.user ? ` ${ctx.user.email}（须是${who}）` : who}点确认。用 amber wait ${req.id} 查看结果。` };
   }
 
@@ -239,32 +239,32 @@ export class AgentGate {
 
   private async onCommandChangeClick(ok: boolean, req: RequestRow, clicker: Caller, cardChatId: string): Promise<object> {
     const cmd = this.store.getCommand(req.commandId ?? '');
-    if (!cmd) throw new AmberError('not_found', '指令不存在');
+    if (!cmd) throw new AmberError('not_found', '应用不存在');
     const retire = req.kind === 'retire';
     const allowed = retire ? cmd.ownerUnionId === clicker.unionId || this.deps.isAdmin(clicker.unionId) : this.deps.isAdmin(clicker.unionId);
-    if (!allowed) throw new AmberError('forbidden', retire ? '只有指令的创建人或管理员可以下线' : '只有管理员可以修改指令的执行范围');
+    if (!allowed) throw new AmberError('forbidden', retire ? '只有应用的创建人或管理员可以下线' : '只有管理员可以修改应用的执行范围');
     if (req.targetUnionId && req.targetUnionId !== clicker.unionId) throw new AmberError('forbidden', '这个请求是发给别人的，只有被请求人可以点');
     if (req.chatType === 'group' && cardChatId !== req.chatId) throw new AmberError('forbidden', '请在原来的群里操作');
     const actor = clicker.unionId;
     if (!ok) {
       if (!this.store.transitionRequest(req.id, 'awaiting', 'canceled', { actorUnionId: actor })) throw new AmberError('closed', '这个请求已经处理过了');
       this.store.audit(actor, 'request.cancel', { id: req.id });
-      return closedCard('已取消', 'grey', `${person(clicker.openId)} 取消了这个请求（${req.id}），指令没有变化。`);
+      return closedCard('已取消', 'grey', `${person(clicker.openId)} 取消了这个请求（${req.id}），应用没有变化。`);
     }
     // Act only on the version the request was made for.
     if (cmd.status !== 'active' || cmd.specHash !== req.specHash) {
       this.store.transitionRequest(req.id, 'awaiting', 'failed', { error: 'command_changed' });
-      return closedCard('没有执行', 'grey', `指令「${sanitizeMarkdown(cmd.name, 40)}」在请求之后已下线或换了新版本，请让 agent 重新发起。`);
+      return closedCard('没有执行', 'grey', `应用「${sanitizeMarkdown(cmd.name, 40)}」在请求之后已下线或换了新版本，请让 agent 重新发起。`);
     }
     if (!this.store.transitionRequest(req.id, 'awaiting', 'running', { actorUnionId: actor })) throw new AmberError('closed', '这个请求已经处理过了');
     try {
       if (retire) {
         const r = await this.deps.retire(cmd.id, { unionId: actor }, (await this.deps.nameOf(actor)) ?? '创建人');
         this.store.transitionRequest(req.id, 'running', 'done');
-        return closedCard(`指令已下线：${cmd.name}`, 'grey', `「${sanitizeMarkdown(r.name, 40)}」已由 ${person(clicker.openId)} 下线，不能再执行。${r.schedules ? `它的 ${r.schedules} 个定时任务已暂停，并已通知创建人。` : ''}`);
+        return closedCard(`应用已下线：${cmd.name}`, 'grey', `「${sanitizeMarkdown(r.name, 40)}」已由 ${person(clicker.openId)} 下线，不能再执行。${r.schedules ? `它的 ${r.schedules} 个定时任务已暂停，并已通知创建人。` : ''}`);
       }
       const toGlobal = req.kind === 'scope_global';
-      if (toGlobal && this.store.listActiveGlobal().some(g => g.name === cmd.name && g.id !== cmd.id)) throw new AmberError('conflict', `已经有一条全局指令叫「${cmd.name}」，不能重名`);
+      if (toGlobal && this.store.listActiveGlobal().some(g => g.name === cmd.name && g.id !== cmd.id)) throw new AmberError('conflict', `已经有一个全局应用叫「${cmd.name}」，不能重名`);
       this.store.setGlobal(cmd.id, toGlobal);
       this.store.audit(actor, toGlobal ? 'scope.promote' : 'scope.demote', { id: cmd.id, name: cmd.name, via: 'agent', request: req.id });
       log('scope', toGlobal ? 'promote' : 'demote', cmd.id, cmd.name, 'via agent');
@@ -334,7 +334,7 @@ export class AgentGate {
       return closedCard('已取消', 'grey', `${person(clicker.openId)} 取消了这个请求（${req.id}）。`);
     }
     const cmd = this.store.getCommand(req.commandId ?? '');
-    if (!cmd) throw new AmberError('not_found', '指令不存在');
+    if (!cmd) throw new AmberError('not_found', '应用不存在');
     if (req.kind === 'schedule_resume' || req.kind === 'schedule_delete') {
       if (!this.store.transitionRequest(req.id, 'awaiting', 'running', { actorUnionId: actor })) throw new AmberError('closed', '这个请求已经处理过了');
       try {
@@ -354,7 +354,7 @@ export class AgentGate {
     // run / schedule: the command must still be the version the request was made for.
     if (cmd.status !== 'active' || cmd.specHash !== req.specHash) {
       this.store.transitionRequest(req.id, 'awaiting', 'failed', { error: 'command_changed' });
-      return closedCard('无法执行', 'red', `指令「${sanitizeMarkdown(cmd.name, 40)}」在请求之后已变更或下线，请让 agent 重新发起。`);
+      return closedCard('无法执行', 'red', `应用「${sanitizeMarkdown(cmd.name, 40)}」在请求之后已变更或下线，请让 agent 重新发起。`);
     }
     const caller: Caller = { ...clicker, chatId: req.chatId, chatType: req.chatType, channel: 'agent' };
     findVisible(this.store, caller, cmd.id);

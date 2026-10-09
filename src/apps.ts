@@ -68,10 +68,10 @@ export class AppStore {
 
   /** Why this command cannot be listed by this person right now; undefined when it can. */
   whyNotListable(c: CommandRow, who: string): string | undefined {
-    if (c.status !== 'active') return '指令未生效';
-    if (c.ownerUnionId !== who) return '只有指令的创建人可以申请上架';
-    if (this.store.installOf(c.id)) return '这是从 Amber Store 安装的指令，不能再上架';
-    if (c.script.env) return '在执行端环境里运行的指令（写了 env）暂时不能上架：环境绑定在某台机器、某个机器人上，装到别处用不了';
+    if (c.status !== 'active') return '应用未生效';
+    if (c.ownerUnionId !== who) return '只有应用的创建人可以申请上架';
+    if (this.store.installOf(c.id)) return '这是从 Amber Store 安装的应用，不能再上架';
+    if (c.script.env) return '在执行端环境里运行的应用（写了 env）暂时不能上架：环境绑定在某台机器、某个机器人上，装到别处用不了';
     if (this.appOfOriginal(c)) return '已经上架了';
     if (this.store.pendingListingFor(c.id)) return '上架申请正在审核中';
     return undefined;
@@ -80,10 +80,10 @@ export class AppStore {
   /** The creator asks to list a live command: reviewers approve it once, in Feishu approval (or on cards). */
   async requestListing(cmdId: string, who: Who): Promise<{ listingId: string; docUrl?: string }> {
     const c = this.store.getCommand(cmdId);
-    if (!c) throw new AmberError('not_found', '没有找到这条指令');
+    if (!c) throw new AmberError('not_found', '没有找到这个应用');
     const why = this.whyNotListable(c, who.unionId);
     if (why) throw new AmberError('not_listable', why);
-    if (computeSpecHash(c) !== c.specHash) throw new AmberError('spec_mismatch', '指令定义与审核通过的版本不一致');
+    if (computeSpecHash(c) !== c.specHash) throw new AmberError('spec_mismatch', '应用定义与审核通过的版本不一致');
     if (this.flow.reviewers.length === 0) throw new AmberError('no_reviewers', '审核人名单未配置或无法解析，暂时不能上架');
     const l = this.store.insertListing({ commandId: c.id, specHash: c.specHash, requestedBy: who.unionId });
     this.store.audit(who.unionId, 'app.listing_request', { listingId: l.id, commandId: c.id, name: c.name, specHash: c.specHash });
@@ -160,7 +160,7 @@ export class AppStore {
     const c = this.store.getCommand(l.commandId);
     // The listed version must still be the live one.
     if (!c || c.status !== 'active' || c.specHash !== l.specHash || computeSpecHash(c) !== c.specHash) {
-      await this.reject(l, '审核期间这条指令已更新或下线，没有上架；需要的话请重新申请');
+      await this.reject(l, '审核期间这个应用已更新或下线，没有上架；需要的话请重新申请');
       return;
     }
     if (this.appOfOriginal(c)) { this.store.updateListing(l.id, { status: 'canceled', reason: 'already_listed' }); return; }
@@ -168,7 +168,7 @@ export class AppStore {
     const app = this.store.insertApp({ id: randomUUID().slice(0, 8), name: c.name, description: c.description, maintainerUnionId: c.ownerUnionId, originChatId: c.chatId, originLine: c.line, status: 'listed' });
     const version = this.store.addAppVersion(app.id, c.id, c.specHash, l.docUrl);
     this.store.audit(null, 'app.listed', { appId: app.id, listingId: l.id, commandId: c.id, version, via });
-    try { await this.flow.send({ unionId: c.ownerUnionId }, shell(`已上架：${c.name}`, 'green', [{ tag: 'markdown', content: `「${sanitizeMarkdown(c.name, 40)}」已通过上架审核，现在出现在 Amber Store 里，别人可以在网站上安装自己的一份。你的这条指令照常使用，标「已上架」；以后它审核通过的新版本，会成为 Store 里的新版本。` }])); }
+    try { await this.flow.send({ unionId: c.ownerUnionId }, shell(`已上架：${c.name}`, 'green', [{ tag: 'markdown', content: `「${sanitizeMarkdown(c.name, 40)}」已通过上架审核，现在出现在 Amber Store 里，别人可以在网站上安装自己的一份。你的这个应用照常使用，标「已上架」；以后它审核通过的新版本，会成为 Store 里的新版本。` }])); }
     catch (e) { log('listed notice failed', (e as Error).message); }
   }
 
@@ -214,13 +214,13 @@ export class AppStore {
       // Development mode: this copy becomes the app's original. It takes the plain name as its line, so a new
       // version submitted in this group under that name is a new version of it (and of the app).
       if (scopeType !== 'group') throw new AmberError('bad_target', '开发模式只能装到群里');
-      if (this.store.activeByName(chatId, n) || this.store.nameInProgress(chatId, n)) throw new AmberError('name_taken', `这个群里已经有一条叫「${n}」的指令（或它的新版本在审核中），请换个名字`);
+      if (this.store.activeByName(chatId, n) || this.store.nameInProgress(chatId, n)) throw new AmberError('name_taken', `这个群里已经有一个叫「${n}」的应用（或它的新版本在审核中），请换个名字`);
       const other = this.store.appByOrigin(chatId, n);
       if (other && other.id !== app.id) throw new AmberError('name_taken', `这个群里的「${n}」是另一个应用的原版位置，请换个名字`);
     }
     // Names must stay unique among what this person sees there (their own commands and global ones).
     const seen = visibleCommands(this.store, { unionId: who.unionId, chatId, chatType: scopeType, channel: 'web' });
-    if (seen.some(c => c.name === n)) throw new AmberError('name_taken', `你在这里已经有一条叫「${n}」的指令，请换个名字`);
+    if (seen.some(c => c.name === n)) throw new AmberError('name_taken', `你在这里已经有一个叫「${n}」的应用，请换个名字`);
     const row = this.store.insertCommand({
       scopeType, chatId, ownerUnionId: who.unionId, name: n, description: src.description,
       params: src.params, script: src.script, options: src.options, status: 'active', line: opts.dev ? n : `${n}#${randomUUID().slice(0, 8)}`,
@@ -282,7 +282,7 @@ export class AppStore {
     const owners = new Set(this.store.installsOf(app.id).map(c => c.ownerUnionId));
     for (const u of owners) {
       const card = shell(`有新版本：${app.name}`, 'blue', [
-        { tag: 'markdown', content: `你从 Amber Store 安装的「${sanitizeMarkdown(app.name, 40)}」出了第 ${version} 版。不会自动升级：在网站上你的这条指令页面里可以看到改了什么，确认后点「升级」。新版本多了配置项或密钥时，升级后要补填。` },
+        { tag: 'markdown', content: `你从 Amber Store 安装的「${sanitizeMarkdown(app.name, 40)}」出了第 ${version} 版。不会自动升级：在网站上你的这个应用页面里可以看到改了什么，确认后点「升级」。新版本多了配置项或密钥时，升级后要补填。` },
         { tag: 'button', text: { tag: 'plain_text', content: '打开 Amber 网站' }, type: 'primary', behaviors: [{ type: 'open_url', default_url: this.deps.webUrl }] },
       ]);
       try { await this.flow.send({ unionId: u }, card); } catch (e) { log('upgrade notice failed', (e as Error).message); }
@@ -318,8 +318,8 @@ export class AppStore {
    *  once (that version was reviewed), on the same line, so its settings and schedules carry over. */
   upgrade(cmdId: string, who: Who): CommandRow {
     const c = this.store.getCommand(cmdId);
-    if (!c || c.status !== 'active') throw new AmberError('not_found', '没有找到这条指令');
-    if (c.ownerUnionId !== who.unionId) throw new AmberError('forbidden', '只有指令的创建人可以升级');
+    if (!c || c.status !== 'active') throw new AmberError('not_found', '没有找到这个应用');
+    if (c.ownerUnionId !== who.unionId) throw new AmberError('forbidden', '只有应用的创建人可以升级');
     const u = this.upgradeOf(c);
     if (!u) throw new AmberError('not_needed', '已经是最新版本');
     const { cmd: src, version } = this.latest(this.store.getApp(u.appId)!);

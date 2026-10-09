@@ -35,7 +35,7 @@ export function missingConfig(store: Store, c: { chatId: string; name: string; l
 }
 
 export function missingConfigMessage(missing: string[]): string {
-  return `还没设置配置项：${missing.join('、')}。请指令创建人或管理员在网站${WEB_URL ? `（${WEB_URL}）` : ''}的指令页面设置`;
+  return `还没设置配置项：${missing.join('、')}。请应用创建人或管理员在网站${WEB_URL ? `（${WEB_URL}）` : ''}的应用页面设置`;
 }
 
 let VAULT: SecretVault | undefined;
@@ -106,7 +106,7 @@ export function visibleCommands(store: Store, caller: Caller): CommandRow[] {
 export function findVisible(store: Store, caller: Caller, idOrName: string): CommandRow {
   const c = visibleCommands(store, caller).find(x => x.id === idOrName || x.name === idOrName);
   // Out-of-scope and non-existent look the same to the caller.
-  if (!c) throw new AmberError('not_found', `没有找到指令「${idOrName}」`);
+  if (!c) throw new AmberError('not_found', `没有找到应用「${idOrName}」`);
   return c;
 }
 
@@ -152,15 +152,15 @@ export type Block = { kind: 'markdown'; text: string };
 export interface RunOutcome { runId: string; ok: boolean; blocks: Block[]; markdown: string; error?: string; elapsedMs: number; args: Record<string, string> }
 
 export async function runCommand(store: Store, cmd: CommandRow, rawArgs: Record<string, string | undefined>, caller: Caller, facts: CallerFacts = {}, opts: { trial?: boolean; viaForm?: boolean } = {}): Promise<RunOutcome> {
-  if (cmd.status !== 'active' && !(opts.trial && cmd.status === 'draft')) throw new AmberError('not_active', '指令未生效');
-  if (computeSpecHash(cmd) !== cmd.specHash) throw new AmberError('spec_mismatch', '指令定义与审核通过的版本不一致，已拒绝执行');
+  if (cmd.status !== 'active' && !(opts.trial && cmd.status === 'draft')) throw new AmberError('not_active', '应用未生效');
+  if (computeSpecHash(cmd) !== cmd.specHash) throw new AmberError('spec_mismatch', '应用定义与审核通过的版本不一致，已拒绝执行');
   // The stored definition is re-validated with the same rules as a new draft, and only the validated
   // copy runs: unknown kinds, the old services list (D41), calls outside 1–20, services
   // together with internet, unknown services … are all refused before any run record or token exists.
   let script;
-  try { script = validateScript(cmd.script); } catch (e) { throw new AmberError('invalid_script', `指令定义不合规，已拒绝执行：${(e as Error).message}`); }
+  try { script = validateScript(cmd.script); } catch (e) { throw new AmberError('invalid_script', `应用定义不合规，已拒绝执行：${(e as Error).message}`); }
   // confirm = true: only runnable from the confirmation form, never from a one-line shortcut (D30).
-  if (cmd.options.confirm && !opts.trial && !opts.viaForm) throw new AmberError('needs_confirm', '这条指令需要在表单卡片上确认后执行');
+  if (cmd.options.confirm && !opts.trial && !opts.viaForm) throw new AmberError('needs_confirm', '这个应用需要在表单卡片上确认后执行');
   const args = await validateArgs(runParams(cmd.params), rawArgs, facts);
   // Configuration items (#3): the stored values, never the caller's. A trial run (the command is not live yet, so
   // nothing can be stored) takes them from the trial form instead.
@@ -177,7 +177,7 @@ export async function runCommand(store: Store, cmd: CommandRow, rawArgs: Record<
   if (script.secrets?.length) {
     if (!VAULT) throw new AmberError('no_vault', '密钥存储不可用');
     const got = VAULT.values(lineOf(cmd), script.secrets);
-    if ('missing' in got) throw new AmberError('missing_secret', `还没设置密钥：${got.missing.join('、')}。请指令创建人或管理员先设置（私聊 Amber 发「设置密钥 ${cmd.name}」，或在网站的指令页面设置）`);
+    if ('missing' in got) throw new AmberError('missing_secret', `还没设置密钥：${got.missing.join('、')}。请应用创建人或管理员先设置（私聊 Amber 发「设置密钥 ${cmd.name}」，或在网站的应用页面设置）`);
     secrets = got.values;
   }
   const city = facts.city ? await facts.city() : undefined;

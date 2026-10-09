@@ -283,7 +283,7 @@ export class ExecutorHub {
     if (!j || j.executorId !== e.id || !j.picked) throw new AmberError('forbidden', '没有这个正在运行的任务');
     const name = String(b?.service ?? '');
     const d = serviceDef(name);
-    if (!(name in j.calls) || !d || d.executor !== true) throw new AmberError('forbidden', `这条指令没有声明服务 ${name}，或这个服务不允许在执行端上调用`);
+    if (!(name in j.calls) || !d || d.executor !== true) throw new AmberError('forbidden', `这个应用没有声明服务 ${name}，或这个服务不允许在执行端上调用`);
     if (j.calls[name] <= 0) throw new AmberError('forbidden', `服务 ${name} 的调用次数已用完`);
     const method = String(b?.method ?? '');
     const path = String(b?.path ?? '');

@@ -27,7 +27,7 @@ function docMarkdown(c: CommandRow, opts: DocOpts): string {
   const s = c.script;
   const how = '沙盒脚本';
   const net = s.network ? '，可访问外网' : s.services && Object.keys(s.services).length ? `，以执行人身份调用：${describeServices(s)}（不能访问外网）` : '，不联网';
-  const interp = (s.interpreter ? `\n\n**解释器**：${s.interpreter}` : '') + (s.env ? `\n\n**执行位置**：${executorHub()?.describe(s.env) ?? s.env}。脚本在那台机器上执行，能访问的就是这个环境的路径（由管理员批准，指令不能自己加）。` : '');
+  const interp = (s.interpreter ? `\n\n**解释器**：${s.interpreter}` : '') + (s.env ? `\n\n**执行位置**：${executorHub()?.describe(s.env) ?? s.env}。脚本在那台机器上执行，能访问的就是这个环境的路径（由管理员批准，应用不能自己加）。` : '');
   const sec = s.secrets?.length ? `\n\n**使用的密钥**：${describeSecrets(c)}。审核时请确认代码只把密钥用在该用的地方，不会打印或发往别处。` : '';
   const code = `## 代码\n\n${how}${net}；超时 ${(s.timeoutMs ?? 30000) / 1000} 秒。${sec}${interp}\n\n${FENCE}python\n${s.code.split(FENCE).join('``\u200b`')}\n${FENCE}`;
   const trial = opts.trial
@@ -39,10 +39,10 @@ function docMarkdown(c: CommandRow, opts: DocOpts): string {
     const body = d === null ? '代码改动太大，无法逐行比较，请直接看下面的完整代码。'
       : !d.text ? '代码没有变化（只改了参数、选项、说明或运行方式）。'
       : `新增 ${d.stat.added} 行，删除 ${d.stat.removed} 行。\n\n${FENCE}diff\n${d.text.slice(0, 30000).split(FENCE).join('``\u200b`')}\n${FENCE}`;
-    change = `## 与当前版本的差异\n\n这是「${c.name}」的新版本，审核通过后替换当前版本 ${opts.prev.specHash.slice(0, 12)}。${opts.listed ? '\n\n**这条指令已上架到 Amber Store**：审核通过后，这个版本也会成为 Store 里的新版本，装了它的人会收到升级通知（自己决定是否升级）。' : ''}\n\n${body}`;
+    change = `## 与当前版本的差异\n\n这是「${c.name}」的新版本，审核通过后替换当前版本 ${opts.prev.specHash.slice(0, 12)}。${opts.listed ? '\n\n**这个应用已上架到 Amber Store**：审核通过后，这个版本也会成为 Store 里的新版本，装了它的人会收到升级通知（自己决定是否升级）。' : ''}\n\n${body}`;
   }
   // #4: listing a command that is already live, so that others can install their own copy.
-  if (opts.listing) change = `## 上架到 Amber Store\n\n这条指令已经审核通过、正在使用。上架后，其他人可以从 Amber Store 安装自己的一份（自己的配置项和密钥，以安装人自己的身份执行），安装不再审批。\n\n除了平常的审核，请额外检查：代码里有没有写死只适用于某个群或某个人的内容（群名、成员、特定的仓库或账号等）。这些应该改成配置项，否则别人装了也用不了。`;
+  if (opts.listing) change = `## 上架到 Amber Store\n\n这个应用已经审核通过、正在使用。上架后，其他人可以从 Amber Store 安装自己的一份（自己的配置项和密钥，以安装人自己的身份执行），安装不再审批。\n\n除了平常的审核，请额外检查：代码里有没有写死只适用于某个群或某个人的内容（群名、成员、特定的仓库或账号等）。这些应该改成配置项，否则别人装了也用不了。`;
   return [
     `# ${c.name}${opts.listing ? '（上架）' : opts.prev ? '（新版本）' : ''}`,
     `**版本**：${c.specHash}`,
@@ -93,7 +93,7 @@ export class FeishuReview {
   async createDoc(c: CommandRow, opts: DocOpts): Promise<{ url: string; docId: string }> {
     const w = this.cfg.wiki!;
     const r = await this.req('POST', `/open-apis/wiki/v2/spaces/${w.spaceId}/nodes`, {
-      obj_type: 'docx', node_type: 'origin', parent_node_token: w.parentNodeToken, title: `${opts.listing ? 'Amber 上架' : 'Amber 指令'}：${c.name}${opts.prev ? ' 新版本' : ''}（${c.specHash.slice(0, 8)}）`,
+      obj_type: 'docx', node_type: 'origin', parent_node_token: w.parentNodeToken, title: `${opts.listing ? 'Amber 上架' : 'Amber 应用'}：${c.name}${opts.prev ? ' 新版本' : ''}（${c.specHash.slice(0, 8)}）`,
     });
     const node = r.data?.node;
     await this.appendMarkdown(node.obj_token, docMarkdown(c, opts));
@@ -105,7 +105,7 @@ export class FeishuReview {
     const a = this.cfg.approval!;
     const text = [
       listing ? '申请上架到 Amber Store：上架后别人可以安装自己的一份，安装不再审批。请额外检查有没有写死只适用于某个群的内容。' : '',
-      `指令：${c.name}${prev ? `（新版本，替换 ${prev.specHash.slice(0, 12)}）` : ''}`,
+      `应用：${c.name}${prev ? `（新版本，替换 ${prev.specHash.slice(0, 12)}）` : ''}`,
       `范围：${c.scopeType === 'p2p' ? '私聊' : '群'}　选项：${c.options.confirm ? '执行前需要确认' : '直接执行'}，${c.options.schedulable ? '允许定时执行' : '不允许定时执行'}`,
       '运行方式：沙盒脚本',
       c.script.secrets?.length ? `使用的密钥：${describeSecrets(c)}` : '',
@@ -118,7 +118,7 @@ export class FeishuReview {
     const r = await this.req('POST', '/open-apis/approval/v4/instances', {
       approval_code: a.code,
       // Show the command name in the approval list instead of only the definition name.
-      title: `${listing ? 'Amber 上架' : 'Amber 指令'}：${c.name}${prev ? '（新版本）' : ''}`,
+      title: `${listing ? 'Amber 上架' : 'Amber 应用'}：${c.name}${prev ? '（新版本）' : ''}`,
       title_display_method: 1,
       open_id: initiatorOpenId,
       form: JSON.stringify([{ id: a.formFieldId, type: 'textarea', value: text }]),

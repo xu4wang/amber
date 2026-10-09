@@ -102,8 +102,8 @@ export class AmberBot {
   /** Take a command offline (D39). Only its creator or an admin. Its schedules pause. */
   async retire(cmdId: string, actor: { unionId: string }, byLabel: string, opts: { delist?: boolean } = {}): Promise<{ name: string; schedules: number; delisted?: boolean }> {
     const c = this.store.getCommand(cmdId);
-    if (!c || c.status !== 'active') throw new AmberError('not_found', '指令不存在或已下线');
-    if (c.ownerUnionId !== actor.unionId && !this.isAdmin(actor.unionId)) throw new AmberError('forbidden', '只有指令的创建人或管理员可以下线');
+    if (!c || c.status !== 'active') throw new AmberError('not_found', '应用不存在或已下线');
+    if (c.ownerUnionId !== actor.unionId && !this.isAdmin(actor.unionId)) throw new AmberError('forbidden', '只有应用的创建人或管理员可以下线');
     // Check before anything changes: delisting is for the app's maintainer or an admin (#4).
     const app = this.apps.appOfOriginal(c);
     const delist = !!opts.delist && app?.status === 'listed';
@@ -126,7 +126,7 @@ export class AmberBot {
     if (this.isAdmin(unionId)) return;
     if (c.status === 'active' || c.status === 'pending') {
       if (c.ownerUnionId === unionId) return;
-      throw new AmberError('forbidden', '只有指令的创建人或管理员可以设置密钥');
+      throw new AmberError('forbidden', '只有应用的创建人或管理员可以设置密钥');
     }
     if (c.status === 'draft') {
       const prev = this.flow.prevOf(c.id);
@@ -136,7 +136,7 @@ export class AmberBot {
       if (c.scopeType === 'group' && (await this.isMember(c.chatId, unionId)) === true) return;
       throw new AmberError('forbidden', '只有草稿所在群的成员可以设置密钥');
     }
-    throw new AmberError('stale', '这条指令已下线或没有通过审核，不能设置密钥');
+    throw new AmberError('stale', '这个应用已下线或没有通过审核，不能设置密钥');
   }
 
   private secretCard(c: CommandRow, note?: string): object {
@@ -157,7 +157,7 @@ export class AmberBot {
   private async secretEntry(text: string, caller: Caller, messageId: string, inThread: boolean): Promise<void> {
     const targets = await this.secretTargets(text, caller.unionId);
     if (!targets.length) {
-      await this.replyCard(messageId, inThread, errorCard('Amber', `没有找到你可以设置密钥的指令「${text}」（需要指令声明了密钥，并且你是创建人或管理员）`));
+      await this.replyCard(messageId, inThread, errorCard('Amber', `没有找到你可以设置密钥的应用「${text}」（需要应用声明了密钥，并且你是创建人或管理员）`));
       return;
     }
     let card: object;
@@ -170,7 +170,7 @@ export class AmberBot {
 
   private async onSecretAction(a: string, cmdId: string, caller: Caller, form: Record<string, string>): Promise<object> {
     const c = this.store.getCommand(cmdId);
-    if (!c) throw new AmberError('not_found', '指令不存在');
+    if (!c) throw new AmberError('not_found', '应用不存在');
     await this.checkSecretEditor(c, caller.unionId);
     if (a === 'sec_form') {
       if (caller.chatType === 'p2p') return { card: { type: 'raw', data: this.secretCard(c) } };
@@ -233,13 +233,13 @@ export class AmberBot {
 
   /** #4: an admin offers an orphaned command to a group member; it changes hands only when that person accepts. */
   async requestReassign(cmdId: string, toUnionId: string, admin: { unionId: string; openId?: string }): Promise<{ requestId: string }> {
-    if (!this.isAdmin(admin.unionId)) throw new AmberError('forbidden', '只有管理员可以重新分配指令');
+    if (!this.isAdmin(admin.unionId)) throw new AmberError('forbidden', '只有管理员可以重新分配应用');
     const c = this.store.getCommand(cmdId);
-    if (!c || c.status !== 'active' || c.scopeType !== 'group') throw new AmberError('not_found', '没有找到这条群指令');
+    if (!c || c.status !== 'active' || c.scopeType !== 'group') throw new AmberError('not_found', '没有找到这个群应用');
     this.memberCache.delete(c.chatId);   // decide on the current roster, not a cached one
     const orphan = await this.isOrphan(c);
     if (orphan === undefined) throw new AmberError('unknown_membership', 'Amber 暂时无法确认创建人是否还在群里（缺少「获取群成员」权限）');
-    if (!orphan) throw new AmberError('not_orphan', '创建人还在群里：只有创建人已不在群里的指令才能重新分配');
+    if (!orphan) throw new AmberError('not_orphan', '创建人还在群里：只有创建人已不在群里的应用才能重新分配');
     if (await this.isMember(c.chatId, toUnionId) !== true) throw new AmberError('bad_target', '只能分配给这个群的成员');
     // One open offer at a time: a new one replaces the old.
     for (const r of this.store.awaitingReassigns(c.id)) this.store.transitionRequest(r.id, 'awaiting', 'canceled', { actorUnionId: admin.unionId });
@@ -270,23 +270,23 @@ export class AmberBot {
     if (value.a === 'rs_no') {
       this.store.transitionRequest(req.id, 'awaiting', 'canceled', { actorUnionId: caller.unionId });
       this.store.audit(caller.unionId, 'command.reassign_decline', { requestId: req.id, commandId: req.commandId });
-      try { await this.flow.send({ unionId: req.requestedBy }, infoCard('对方没有接收', `${c?.name ?? '指令'}：对方选择了不接收。`)); } catch { /* best effort */ }
-      return closedCard('没有接收', 'grey', `你没有接收「${c?.name ?? '指令'}」。`);
+      try { await this.flow.send({ unionId: req.requestedBy }, infoCard('对方没有接收', `${c?.name ?? '应用'}：对方选择了不接收。`)); } catch { /* best effort */ }
+      return closedCard('没有接收', 'grey', `你没有接收「${c?.name ?? '应用'}」。`);
     }
     if (Date.now() - req.createdAt > REASSIGN_TTL_MS) {
       this.store.transitionRequest(req.id, 'awaiting', 'expired');
       throw new AmberError('expired', '这张卡片已超过 7 天，请管理员重新发起');
     }
     const fail = (why: string) => { this.store.transitionRequest(req.id, 'awaiting', 'failed', { error: why }); return closedCard('没有接收', 'red', why); };
-    if (!c || c.status !== 'active' || c.specHash !== req.specHash) return fail('这条指令在发起之后已经更新或下线，请管理员重新发起。');
+    if (!c || c.status !== 'active' || c.specHash !== req.specHash) return fail('这个应用在发起之后已经更新或下线，请管理员重新发起。');
     // Someone else accepted another offer for it meanwhile.
-    if (c.ownerUnionId !== (req.args.from ?? '')) return fail('这条指令已经由别人接手了。');
+    if (c.ownerUnionId !== (req.args.from ?? '')) return fail('这个应用已经由别人接手了。');
     this.memberCache.delete(c.chatId);   // decide on the current roster, not a cached one
-    if (await this.isOrphan(c) !== true) return fail('原创建人已经回到群里（或暂时无法确认），这条指令不再需要重新分配。');
+    if (await this.isOrphan(c) !== true) return fail('原创建人已经回到群里（或暂时无法确认），这个应用不再需要重新分配。');
     if (await this.isMember(c.chatId, caller.unionId) !== true) return fail('你已不在这个群里，不能接手。');
     // The checks above awaited the roster: the command may have been retired or updated meanwhile.
     const fresh = this.store.getCommand(c.id);
-    if (!fresh || fresh.status !== 'active' || fresh.specHash !== req.specHash || fresh.ownerUnionId !== (req.args.from ?? '')) return fail('这条指令在发起之后已经更新、下线或由别人接手，请管理员重新发起。');
+    if (!fresh || fresh.status !== 'active' || fresh.specHash !== req.specHash || fresh.ownerUnionId !== (req.args.from ?? '')) return fail('这个应用在发起之后已经更新、下线或由别人接手，请管理员重新发起。');
     // No await from here to the owner change, and taking this offer voids every other one for the command:
     // when two people accept at the same moment, the second finds their offer already voided.
     if (!this.store.transitionRequest(req.id, 'awaiting', 'running', { actorUnionId: caller.unionId })) throw new AmberError('closed', '这个请求已经处理过或被取消了');
@@ -311,7 +311,7 @@ export class AmberBot {
     this.store.transitionRequest(req.id, 'running', 'done', { actorUnionId: caller.unionId });
     this.store.audit(caller.unionId, 'command.reassign', { requestId: req.id, commandId: c.id, name: c.name, chatId: c.chatId, from, to: caller.unionId, schedulesDeleted: old.map(s => s.id), schedulesRebuilt: rebuilt });
     const note = `${old.length ? (value.s === '1' ? `原来的 ${old.length} 个定时任务已以你的身份重建 ${rebuilt.length} 个${failed.length ? `；没能重建：${failed.join('；')}` : ''}。` : `原来的 ${old.length} 个定时任务已删除。`) : ''}`;
-    try { await this.flow.send({ unionId: req.requestedBy }, infoCard('指令已接手', `「${c.name}」已由新的负责人接收。${note}`)); } catch { /* best effort */ }
+    try { await this.flow.send({ unionId: req.requestedBy }, infoCard('应用已接手', `「${c.name}」已由新的负责人接收。${note}`)); } catch { /* best effort */ }
     return closedCard(`已接手：${c.name}`, 'green', `你现在是「${c.name}」的创建人。在网站上可以查看和修改它的配置项、密钥。${note}`);
   }
 
@@ -452,11 +452,12 @@ export class AmberBot {
 
   /** Admin-only chat commands: change a command's scope, or list every command. Returns true when handled. */
   private async adminCommand(parts: string[], caller: Caller, messageId: string, inThread: boolean): Promise<boolean> {
-    const verb = parts[0];
-    const verbs = ['全局', '设为全局', '取消全局', '设为本地', '所有指令', '执行端', '撤销执行端'];
+    // #9: commands are called apps now; the old word keeps working.
+    const verb = parts[0] === '所有指令' ? '所有应用' : parts[0];
+    const verbs = ['全局', '设为全局', '取消全局', '设为本地', '所有应用', '执行端', '撤销执行端'];
     if (!verbs.includes(verb)) return false;
     if (!this.isAdmin(caller.unionId)) {
-      await this.replyCard(messageId, inThread, errorCard('Amber', verb.includes('执行端') ? '只有管理员可以管理执行端' : '只有管理员可以修改指令的执行范围'));
+      await this.replyCard(messageId, inThread, errorCard('Amber', verb.includes('执行端') ? '只有管理员可以管理执行端' : '只有管理员可以修改应用的执行范围'));
       return true;
     }
     if (verb === '执行端') {
@@ -468,15 +469,15 @@ export class AmberBot {
       await this.replyCard(messageId, inThread, e ? infoCard('执行端已撤销', `「${e.name}」已撤销：不会再给它派任务，正在等的任务立即失败。要恢复，需要在那台机器上重新生成密钥并再次批准。`) : errorCard('Amber', parts[1] ? `没有已批准的执行端叫「${parts[1]}」` : '用法：撤销执行端 <名称>'));
       return true;
     }
-    if (verb === '所有指令') {
+    if (verb === '所有应用') {
       const rows = this.store.listAll().filter(c => c.status === 'active');
       const lines = rows.map(c => `- **${c.name}**（${c.id}）· ${c.global ? '全局' : c.scopeType === 'p2p' ? '私聊' : '群'} · 创建于 ${c.chatId}`);
-      await this.replyCard(messageId, inThread, infoCard('所有生效的指令', lines.join('\n') || '（没有）'));
+      await this.replyCard(messageId, inThread, infoCard('所有生效的应用', lines.join('\n') || '（没有）'));
       return true;
     }
     const target = parts[1];
     if (!target) {
-      await this.replyCard(messageId, inThread, errorCard('Amber', `用法：${verb} <指令名或 id>`));
+      await this.replyCard(messageId, inThread, errorCard('Amber', `用法：${verb} <应用名或 id>`));
       return true;
     }
     const all = this.store.listAll().filter(c => c.status === 'active');
@@ -486,24 +487,24 @@ export class AmberBot {
       const sameName = all.filter(c => c.name === target);
       cmd = visible[0] ?? (sameName.length === 1 ? sameName[0] : undefined);
       if (!cmd && sameName.length > 1) {
-        await this.replyCard(messageId, inThread, errorCard('Amber', `有 ${sameName.length} 条叫「${target}」的指令，请改用 id（发「所有指令」查看）`));
+        await this.replyCard(messageId, inThread, errorCard('Amber', `有 ${sameName.length} 个叫「${target}」的应用，请改用 id（发「所有应用」查看）`));
         return true;
       }
     }
     if (!cmd) {
-      await this.replyCard(messageId, inThread, errorCard('Amber', `没有找到指令「${target}」`));
+      await this.replyCard(messageId, inThread, errorCard('Amber', `没有找到应用「${target}」`));
       return true;
     }
     const toGlobal = verb === '全局' || verb === '设为全局';
     if (toGlobal && !cmd.global && this.store.listActiveGlobal().some(g => g.name === cmd!.name)) {
-      await this.replyCard(messageId, inThread, errorCard('Amber', `已经有一条全局指令叫「${cmd.name}」，不能重名`));
+      await this.replyCard(messageId, inThread, errorCard('Amber', `已经有一个全局应用叫「${cmd.name}」，不能重名`));
       return true;
     }
     this.store.setGlobal(cmd.id, toGlobal);
     this.store.audit(caller.unionId, toGlobal ? 'scope.promote' : 'scope.demote', { id: cmd.id, name: cmd.name });
     log('scope', toGlobal ? 'promote' : 'demote', cmd.id, cmd.name);
     await this.replyCard(messageId, inThread, infoCard('执行范围已修改', toGlobal
-      ? `「${cmd.name}」（${cmd.id}）已设为**全局**：Amber 所在的任何群和私聊都能使用。${cmd.script.secrets?.length ? `\n\n⚠️ 这条指令使用密钥（${cmd.script.secrets.join('、')}）：设为全局后，任何地方执行都会用到同一份密钥。` : ''}`
+      ? `「${cmd.name}」（${cmd.id}）已设为**全局**：Amber 所在的任何群和私聊都能使用。${cmd.script.secrets?.length ? `\n\n⚠️ 这个应用使用密钥（${cmd.script.secrets.join('、')}）：设为全局后，任何地方执行都会用到同一份密钥。` : ''}`
       : `「${cmd.name}」（${cmd.id}）已改回**只在创建处可用**。`));
     return true;
   }
@@ -572,7 +573,7 @@ export class AmberBot {
       try {
         const cmd = findManageable(this.store, caller, parts[1], this.isAdmin(caller.unionId));
         // Check the permission now so nobody gets a confirmation they cannot use (D44).
-        if (cmd.ownerUnionId !== caller.unionId && !this.isAdmin(caller.unionId)) throw new AmberError('forbidden', '只有指令的创建人或管理员可以下线');
+        if (cmd.ownerUnionId !== caller.unionId && !this.isAdmin(caller.unionId)) throw new AmberError('forbidden', '只有应用的创建人或管理员可以下线');
         const schedules = this.store.schedulesOfCommand(cmd.id).length;
         await this.replyCard(msg.message_id, inThread, retireConfirmCard(cmd, schedules, caller.unionId, Date.now(), this.apps.appOfOriginal(cmd)?.status === 'listed'));
       } catch (e) {
@@ -589,7 +590,7 @@ export class AmberBot {
       await this.replyCard(msg.message_id, inThread, this.scheduleList(caller));
       return;
     }
-    if (parts.length === 0 || ['帮助', 'help', '列表', 'list', '指令'].includes(parts[0].toLowerCase())) {
+    if (parts.length === 0 || ['帮助', 'help', '列表', 'list', '应用', '指令'].includes(parts[0].toLowerCase())) {
       await this.replyCard(msg.message_id, inThread, listCard(visibleCommands(this.store, caller), this.scopeLabel(caller)));
       return;
     }
@@ -821,7 +822,7 @@ export class AmberBot {
         return raw(infoCard('定时任务已删除', `定时任务 ${s.id} 已删除。`));
       }
       // Cards from before #4: a schedule can no longer be taken over, only its creator can run the command.
-      if (value.a === 'sch_takeover') return raw(closedCard('不能接手', 'grey', '指令只有创建人自己能执行，定时任务不能再由别人接手。需要的话，等这条指令上架后从 Amber Store 安装一份，再建自己的定时任务。'));
+      if (value.a === 'sch_takeover') return raw(closedCard('不能接手', 'grey', '应用只有创建人自己能执行，定时任务不能再由别人接手。需要的话，等这个应用上架后从 Amber Store 安装一份，再建自己的定时任务。'));
       if (typeof value.a === 'string' && value.a.startsWith('sch_')) {
         const s = this.store.getSchedule(String(value.s));
         if (!s) throw new AmberError('not_found', '定时任务已不存在');
@@ -840,12 +841,12 @@ export class AmberBot {
       }
       if (value.a === 'retire_ok' || value.a === 'retire_no') {
         if (String(value.u) !== caller.unionId) throw new AmberError('forbidden', '只有发起下线的人能确认');
-        if (value.a === 'retire_no') return raw(closedCard('已取消下线', 'grey', '没有下线，指令照常可用。'));
-        if (Date.now() - Number(value.t) > RETIRE_CONFIRM_MS) return raw(closedCard('确认已过期', 'grey', '这张确认卡已超过 5 分钟，没有下线。需要时请重新发送「下线 指令名」。'));
+        if (value.a === 'retire_no') return raw(closedCard('已取消下线', 'grey', '没有下线，应用照常可用。'));
+        if (Date.now() - Number(value.t) > RETIRE_CONFIRM_MS) return raw(closedCard('确认已过期', 'grey', '这张确认卡已超过 5 分钟，没有下线。需要时请重新发送「下线 应用名」。'));
         const c = this.store.getCommand(String(value.c));
-        if (!c || c.status !== 'active' || c.specHash !== String(value.h)) return raw(closedCard('没有下线', 'grey', '这条指令在确认前已经下线或换了新版本。需要时请重新发送「下线 指令名」。'));
+        if (!c || c.status !== 'active' || c.specHash !== String(value.h)) return raw(closedCard('没有下线', 'grey', '这个应用在确认前已经下线或换了新版本。需要时请重新发送「下线 应用名」。'));
         const r = await this.retire(c.id, caller, (await this.nameOf(caller.unionId)) ?? '创建人');
-        return raw(infoCard('指令已下线', `「${r.name}」已下线，不能再执行。${r.schedules ? `它的 ${r.schedules} 个定时任务已暂停，并已通知创建人。` : ''}`));
+        return raw(infoCard('应用已下线', `「${r.name}」已下线，不能再执行。${r.schedules ? `它的 ${r.schedules} 个定时任务已暂停，并已通知创建人。` : ''}`));
       }
       if (value.a === 'list') return raw(listCard(visibleCommands(this.store, caller), this.scopeLabel(caller)));
       if (value.a === 'pick') return raw(formCard(findVisible(this.store, caller, String(value.c))));

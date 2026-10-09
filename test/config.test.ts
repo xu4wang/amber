@@ -55,7 +55,7 @@ test('config: trial from the form, set on the website by the creator, every run 
 
     // Not set yet: runs and schedules are refused with a pointer to the website.
     await env.say(alice, GROUP, '检查 小红');
-    await env.waitFor(() => fake.sent.some(s => new RegExp(`还没设置配置项：仓库。请指令创建人或管理员在网站（${base}）`).test(FakeFeishu.text(fake.cardOf(s.id)))) || undefined);
+    await env.waitFor(() => fake.sent.some(s => new RegExp(`还没设置配置项：仓库。请应用创建人或管理员在网站（${base}）`).test(FakeFeishu.text(fake.cardOf(s.id)))) || undefined);
     const ctx = { chatId: GROUP, chatType: 'group', label: 'TestBot', user: alice.email };
     assert.match((await env.api('POST', '/v1/schedules', { ...ctx, command: '检查', at: '每天 09:00' })).body.message, /还没设置配置项：仓库/);
     const bobCookie = await login(env, bob), aliceCookie = await login(env, alice);

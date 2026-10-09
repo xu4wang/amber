@@ -148,10 +148,10 @@ test('agent: retire a command — creator or admin clicks; others are refused up
     const before = env.fake.sent.length;
     const bad = await env.api('POST', '/v1/commands/retire', { ...ctx(env, env.carol), command: '报表' });
     assert.equal(bad.body.ok, false);
-    assert.match(bad.body.message, /没有找到指令/, 'others do not even see it');
+    assert.match(bad.body.message, /没有找到应用/, 'others do not even see it');
     assert.equal(env.fake.sent.length, before);
     // Without a named person nobody's commands are visible.
-    assert.match((await env.api('POST', '/v1/commands/retire', { ...ctx(env), command: '报表' })).body.message, /没有找到指令/);
+    assert.match((await env.api('POST', '/v1/commands/retire', { ...ctx(env), command: '报表' })).body.message, /没有找到应用/);
     const r = await env.api('POST', '/v1/commands/retire', { ...ctx(env, env.bob), command: '报表' });
     assert.equal(r.body.mode, 'confirm_card');
     const card = env.fake.sent.at(-1)!;

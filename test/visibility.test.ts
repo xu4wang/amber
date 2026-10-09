@@ -46,7 +46,7 @@ test('visibility: only the creator sees and runs a command; an admin looks and r
     // Rebinding decides what runs under the creator's name: the creator only, and only to a newer version of the same command.
     const other = await activate(env, { chatId: GROUP, chatType: 'group', name: '别的', params: [], script: script('print(2)'), options: { schedulable: true } }, bob);
     assert.match(JSON.stringify(await env.click(alice, listMsg, { a: 'sch_rebind', s: mine.id, c: id })), /只有定时任务的创建人可以换绑/);
-    assert.match(JSON.stringify(await env.click(bob, listMsg, { a: 'sch_rebind', s: mine.id, c: other })), /同一条指令的新版本/);
+    assert.match(JSON.stringify(await env.click(bob, listMsg, { a: 'sch_rebind', s: mine.id, c: other })), /同一个应用的新版本/);
     assert.equal(env.amber.store.getSchedule(mine.id)!.commandId, id);
     const adminCard = JSON.stringify(scheduleListCard([{ ...env.amber.bot.scheduler.view(mine, alice.unionId) }], '本群'));
     assert.match(adminCard, /sch_pause/);
@@ -66,26 +66,31 @@ test('visibility: only the creator sees and runs a command; an admin looks and r
     assert.deepEqual((await env.api('POST', '/v1/commands/list', { chatId: GROUP, chatType: 'group', label: 'TestBot' })).body.commands, []);
 
     // Feishu: the list and a one-line run.
-    await env.say(carol, GROUP, '指令');
+    await env.say(carol, GROUP, '应用');
     assert.doesNotMatch(FakeFeishu.text(fake.sent.at(-1)!.card), /报表/);
+    await env.say(bob, GROUP, '应用');
+    assert.match(FakeFeishu.text(fake.sent.at(-1)!.card), /报表/);
+    // #9: the old word still lists them.
     await env.say(bob, GROUP, '指令');
     assert.match(FakeFeishu.text(fake.sent.at(-1)!.card), /报表/);
+    await env.say(alice, GROUP, '所有指令');
+    assert.match(FakeFeishu.text(fake.sent.at(-1)!.card), /报表/, 'the admin listing, under its old name');
     for (const who of [carol, alice]) {
       await env.say(who, GROUP, '报表');
-      await env.waitFor(() => /没有找到指令「报表」/.test(text(fake.sent.at(-1)!.id)) || undefined);
+      await env.waitFor(() => /没有找到应用「报表」/.test(text(fake.sent.at(-1)!.id)) || undefined);
     }
     // Forged card values do not help.
     const msg = fake.sent.at(-1)!.id;
-    assert.match(JSON.stringify(await env.click(carol, msg, { a: 'pick', c: id })), /没有找到指令/);
-    assert.match(JSON.stringify(await env.click(alice, msg, { a: 'run', c: id }, {})), /没有找到指令/);
+    assert.match(JSON.stringify(await env.click(carol, msg, { a: 'pick', c: id })), /没有找到应用/);
+    assert.match(JSON.stringify(await env.click(alice, msg, { a: 'run', c: id }, {})), /没有找到应用/);
     assert.ok(!env.amber.store.runsByCaller(carol.unionId, 5).length && !env.amber.store.runsByCaller(alice.unionId, 5).filter(r => r.commandName === '报表').length);
 
     // Agents: what the named person owns, nothing else.
     const ctx = (u: any) => ({ chatId: GROUP, chatType: 'group', label: 'TestBot', user: u.email });
     assert.deepEqual((await env.api('POST', '/v1/commands/list', ctx(carol))).body.commands.map((c: any) => c.name), []);
     assert.deepEqual((await env.api('POST', '/v1/commands/list', ctx(bob))).body.commands.map((c: any) => c.name).sort(), ['别的', '报表']);
-    assert.match((await env.api('POST', '/v1/runs', { ...ctx(carol), command: '报表' })).body.message, /没有找到指令/);
-    assert.match((await env.api('POST', '/v1/schedules', { ...ctx(alice), command: '报表', at: '每天 09:00' })).body.message, /没有找到指令/);
+    assert.match((await env.api('POST', '/v1/runs', { ...ctx(carol), command: '报表' })).body.message, /没有找到应用/);
+    assert.match((await env.api('POST', '/v1/schedules', { ...ctx(alice), command: '报表', at: '每天 09:00' })).body.message, /没有找到应用/);
 
     // Website: carol does not see it; alice (admin) sees it, reads the code, cannot run or schedule it.
     const carolCookie = await login(env, carol), aliceCookie = await login(env, alice);

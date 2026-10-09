@@ -297,7 +297,7 @@ const LAST = new Map();   // command key -> last result shown this page session
 
 function scopeName(scope) {
   if (scope === 'p2p') return '我的私聊';
-  if (scope === 'global') return '全局指令';
+  if (scope === 'global') return '全局应用';
   const g = DATA.groups.find(x => 'group:' + x.chatId === scope);
   return g ? `群：${g.name}` : scope;
 }
@@ -322,7 +322,7 @@ function schLeaf(s, scope, orphan) {
 function folder(title, scope, cmds, schs, open) {
   const ids = new Set(cmds.map(c => c.id));
   const orphans = schs.filter(s => !ids.has(s.commandId));   // e.g. the command was retired; the schedule is paused
-  const inner = (cmds.length ? cmds.map(c => cmdLeaf(c, scope) + schs.filter(s => s.commandId === c.id).map(s => schLeaf(s, scope, false)).join('')).join('') : '<div class="empty-leaf">还没有指令</div>')
+  const inner = (cmds.length ? cmds.map(c => cmdLeaf(c, scope) + schs.filter(s => s.commandId === c.id).map(s => schLeaf(s, scope, false)).join('')).join('') : '<div class="empty-leaf">还没有应用</div>')
     + orphans.map(s => schLeaf(s, scope, true)).join('');
   return `<details class="node" ${open ? 'open' : ''}><summary>${esc(title)}<span class="count">${cmds.length}</span></summary>${inner}</details>`;
 }
@@ -330,11 +330,11 @@ function folder(title, scope, cmds, schs, open) {
 function renderTree() {
   ITEMS.clear();
   const o = DATA;
-  let html = '<input class="search" id="q" placeholder="搜索指令">';
-  if (o.membershipUnknown) html += '<div class="banner">Amber 暂时无法读取群成员，群里的指令先不显示。</div>';
+  let html = '<input class="search" id="q" placeholder="搜索应用">';
+  if (o.membershipUnknown) html += '<div class="banner">Amber 暂时无法读取群成员，群里的应用先不显示。</div>';
   html += folder('我的私聊', 'p2p', o.p2p.commands, o.p2p.schedules, true);
   for (const g of o.groups) html += folder(`群：${g.name}`, 'group:' + g.chatId, g.commands, g.schedules, true);
-  html += folder('全局指令', 'global', o.global, [], true);
+  html += folder('全局应用', 'global', o.global, [], true);
   if (STORE && STORE.ok) {
     html += `<details class="node"><summary>Amber Store<span class="count">${STORE.apps.length}</span></summary>${STORE.apps.map(a => {
       const key = 'a:' + a.id;
@@ -391,9 +391,9 @@ function welcome() {
   markSelected();
   app.classList.remove('detail');
   const n = DATA.p2p.commands.length + DATA.global.length + DATA.groups.reduce((a, g) => a + g.commands.length, 0);
-  document.getElementById('pane').innerHTML = `<div class="welcome"><h2>选择左侧的一条指令</h2>
-    <p>你一共可以使用 ${n} 条指令。选中后在这里填参数、以你本人的身份执行，结果显示在下方，和在飞书里看到的是同一份内容。</p>
-    <p>需要确认的指令要点两次按钮；允许定时的指令可以在「定时」页创建定时任务。</p></div>`;
+  document.getElementById('pane').innerHTML = `<div class="welcome"><h2>选择左侧的一个应用</h2>
+    <p>你一共可以使用 ${n} 个应用。选中后在这里填参数、以你本人的身份执行，结果显示在下方，和在飞书里看到的是同一份内容。</p>
+    <p>需要确认的应用要点两次按钮；允许定时的应用可以在「定时」页创建定时任务。</p></div>`;
 }
 
 function paramInputs(c) {
@@ -408,13 +408,13 @@ function cmdPane(key, { c, scope }) {
   pane.innerHTML = `${backBtn}
     <div class="pane-head"><h1>${esc(c.name)}</h1>
       ${c.global ? '<span class="chip accent">全局</span>' : ''}${c.options.confirm ? '<span class="chip warn">执行前需确认</span>' : ''}${c.options.schedulable ? '<span class="chip">可定时</span>' : ''}</div>
-    <div class="where">${esc(scopeName(scope))} · 指令 ${esc(c.id)}</div>
+    <div class="where">${esc(scopeName(scope))} · 应用 ${esc(c.id)}</div>
     ${c.description ? `<div class="desc">${esc(c.description)}</div>` : '<div class="desc"></div>'}
     <div class="box">
-      ${c.canRun ? '' : `<p class="note">这是别人的指令：管理员可以查看代码、设置和下线，不能执行。</p>`}
+      ${c.canRun ? '' : `<p class="note">这是别人的应用：管理员可以查看代码、设置和下线，不能执行。</p>`}
       <div class="tabs">${c.canRun ? '<button class="on" data-tab="run">执行</button><button data-tab="sch">定时</button><button data-tab="code">代码</button>' : '<button class="on" data-tab="code">代码</button>'}</div>
       ${c.canRun ? '' : '<form data-form="code"><div id="src" class="note">读取中……</div></form>'}
-      ${!c.canRun ? '' : `<form data-form="run">${c.params.length ? paramInputs(c) : `<p class="note">${(c.config || []).length ? '执行时不用填参数（用页面底部的配置项）。' : '这条指令没有参数。'}</p>`}
+      ${!c.canRun ? '' : `<form data-form="run">${c.params.length ? paramInputs(c) : `<p class="note">${(c.config || []).length ? '执行时不用填参数（用页面底部的配置项）。' : '这个应用没有参数。'}</p>`}
         ${c.options.confirm ? '<p class="note" style="color:var(--warn)">⚠️ 执行前需要确认：请核对参数，按钮要点两次。</p>' : ''}
         <div class="actions"><button class="btn ${c.options.confirm ? 'danger' : 'primary'}" data-do="run">${c.options.confirm ? '确认执行' : '执行'}</button>
           <span class="note">以你本人的身份执行</span></div></form>
@@ -424,31 +424,31 @@ function cmdPane(key, { c, scope }) {
         <div class="field"><label>时区</label><select name="__tz">${(DATA.timezones || []).map(z => `<option value="${esc(z.tz)}">${esc(z.label)}</option>`).join('')}</select></div>
         <p class="note">每次都以你的身份自动执行；结果发到${scope.startsWith('group:') ? '这个群' : '你和 Amber 的私聊'}，没有输出时不发。</p>
         <div class="actions"><button class="btn primary" data-do="sch">${c.options.confirm ? '确认并创建定时任务' : '创建定时任务'}</button></div>
-        <div class="sch-msg note" style="margin-top:8px"></div></form>` : `<form data-form="sch" style="display:none"><p class="note">这条指令审核时没有允许定时执行，所以不能在这里创建定时任务。<br>如需定时，请让你的 agent 提交一个打开「允许定时」的新版本（同名提交），审核通过后就能在这里创建。</p></form>`}
+        <div class="sch-msg note" style="margin-top:8px"></div></form>` : `<form data-form="sch" style="display:none"><p class="note">这个应用审核时没有允许定时执行，所以不能在这里创建定时任务。<br>如需定时，请让你的 agent 提交一个打开「允许定时」的新版本（同名提交），审核通过后就能在这里创建。</p></form>`}
       <form data-form="code" style="display:none"><div id="src" class="note">读取中……</div></form>`}
     </div>
     ${!c.canRun ? '' : `<div class="result-area"><h3 class="note" style="margin:0 0 8px">执行结果</h3>
     <div class="output wait" id="out">${last ? '' : '还没有在这里执行过。'}</div></div>`}
     ${(c.config || []).length ? `<div class="manage"><h3 class="note">配置项</h3>
       <p class="note">这些值不用每次执行时填：在这里设置一次，以后每次执行（包括定时任务）都会自动带上，执行的人不能临时修改。${c.canManage ? '' : '<br>只有创建人或管理员可以设置。'}</p>
-      ${c.config.map(x => `<div class="field"><label>${esc(x.label)}${x.required ? ' *' : ''}</label><span class="examples">${c.canManage ? `<input data-config-input="${esc(x.name)}" ${x.type === 'integer' ? 'inputmode="numeric"' : ''} value="${esc(x.value ?? '')}" placeholder="${x.default != null ? '不填则用默认：' + esc(x.default) : x.required ? '必填' : '可不填'}"> <button type="button" class="btn small" data-config="${esc(x.name)}:set">保存</button>${x.value != null ? ` <button type="button" class="btn small" data-config="${esc(x.name)}:delete">清除</button>` : ''}<br>` : ''}<span class="note">${x.value != null ? '当前值：<code>' + esc(x.value) + '</code>' : x.default != null ? '未设置，使用默认值 <code>' + esc(x.default) + '</code>' : x.required ? '<span style="color:var(--warn)">未设置，设置之前这条指令不能执行</span>' : '未设置'}</span></span></div>`).join('')}
+      ${c.config.map(x => `<div class="field"><label>${esc(x.label)}${x.required ? ' *' : ''}</label><span class="examples">${c.canManage ? `<input data-config-input="${esc(x.name)}" ${x.type === 'integer' ? 'inputmode="numeric"' : ''} value="${esc(x.value ?? '')}" placeholder="${x.default != null ? '不填则用默认：' + esc(x.default) : x.required ? '必填' : '可不填'}"> <button type="button" class="btn small" data-config="${esc(x.name)}:set">保存</button>${x.value != null ? ` <button type="button" class="btn small" data-config="${esc(x.name)}:delete">清除</button>` : ''}<br>` : ''}<span class="note">${x.value != null ? '当前值：<code>' + esc(x.value) + '</code>' : x.default != null ? '未设置，使用默认值 <code>' + esc(x.default) + '</code>' : x.required ? '<span style="color:var(--warn)">未设置，设置之前这个应用不能执行</span>' : '未设置'}</span></span></div>`).join('')}
     </div>` : ''}
     ${(c.secrets || []).length ? `<div class="manage"><h3 class="note">密钥</h3>
-      <p class="note">这条指令运行时需要下面的密钥。值加密保存在 Amber 里，只交给这条指令使用，设置后不能再查看。${c.global ? '<br><b>这是全局指令，每个执行它的人都会用到同一份密钥</b>，请只填权限够用的凭证。' : ''}${c.canManage ? '' : '<br>只有创建人或管理员可以设置。'}</p>
+      <p class="note">这个应用运行时需要下面的密钥。值加密保存在 Amber 里，只交给这个应用使用，设置后不能再查看。${c.global ? '<br><b>这是全局应用，每个执行它的人都会用到同一份密钥</b>，请只填权限够用的凭证。' : ''}${c.canManage ? '' : '<br>只有创建人或管理员可以设置。'}</p>
       ${c.secrets.map(x => `<div class="field"><label>${esc(x.name)}</label><span class="examples">${c.canManage ? `<input type="password" autocomplete="new-password" data-secret-input="${esc(x.name)}" placeholder="${x.set ? '留空不修改' : '填写值（至少 6 个字符）'}"> <button type="button" class="btn small" data-secret="${esc(x.name)}:set">保存</button>${x.set ? ` <button type="button" class="btn small" data-secret="${esc(x.name)}:delete">删除</button>` : ''}<br>` : ''}<span class="note">${x.set ? `已设置${x.last4 ? ' · 末尾 ' + esc(x.last4) : ''}` : '<span style="color:var(--warn)">未设置</span>'}</span></span></div>`).join('')}
     </div>` : ''}
     ${c.orphan ? `<div class="manage"><h3 class="note">重新分配</h3>
-      <p class="note">这条指令的创建人已不在群里，现在没人能执行它。可以把它交给群里的另一个人：Amber 私聊发确认卡，对方点「接收」后成为创建人，原来的配置项和密钥保留；原来的定时任务由对方选择是否以他的身份重建。</p>
+      <p class="note">这个应用的创建人已不在群里，现在没人能执行它。可以把它交给群里的另一个人：Amber 私聊发确认卡，对方点「接收」后成为创建人，原来的配置项和密钥保留；原来的定时任务由对方选择是否以他的身份重建。</p>
       <div class="field"><label>交给</label><span class="examples"><select data-reassign-to><option value="">读取群成员中……</option></select> <button type="button" class="btn small" data-reassign="1">发送确认卡</button></span></div></div>` : ''}
     ${c.listed || c.installed || c.listing || c.publishable ? `<div class="manage"><h3 class="note">Amber Store</h3>
       ${c.upgrade ? `<p class="note"><b>有新版本：第 ${esc(c.upgrade.to)} 版</b>（你现在是第 ${esc(c.upgrade.from)} 版）。不会自动升级。</p><button class="btn" data-upgrade-diff="1">查看改动</button><div id="upgrade-box"></div>` : ''}
-      ${c.listed ? `<p class="note">这条指令已上架到 Amber Store${c.listed.status === 'delisted' ? '（已下架）' : ''}，别人可以安装自己的一份。它以后审核通过的新版本，会成为 Store 里的新版本。</p>` : ''}
+      ${c.listed ? `<p class="note">这个应用已上架到 Amber Store${c.listed.status === 'delisted' ? '（已下架）' : ''}，别人可以安装自己的一份。它以后审核通过的新版本，会成为 Store 里的新版本。</p>` : ''}
       ${c.installed ? `<p class="note">从 Amber Store 安装：「${esc(c.installed.name)}」第 ${esc(c.installed.version)} 版。</p>` : ''}
       ${c.listing ? '<p class="note">上架申请正在审核中。</p>' : ''}
       ${c.publishable ? '<p class="note">上架后，别人可以从 Amber Store 安装自己的一份，安装不再审批。上架要审核人审核一次。</p><button class="btn" data-publish="1">申请上架</button>' : ''}</div>` : ''}
     ${c.canManage ? `<div class="manage"><h3 class="note">管理</h3>
-      <p class="note">要修改这条指令，跟你的 agent 说改什么，它会提交新版本，审核通过后自动替换。不再需要时可以下线：下线后不能再执行，它的定时任务会暂停。</p>
-      <button class="btn" data-retire="1">下线这条指令</button></div>` : ''}`;
+      <p class="note">要修改这个应用，跟你的 agent 说改什么，它会提交新版本，审核通过后自动替换。不再需要时可以下线：下线后不能再执行，它的定时任务会暂停。</p>
+      <button class="btn" data-retire="1">下线这个应用</button></div>` : ''}`;
   if (last && c.canRun) showOutput(document.getElementById('out'), last.r, last.meta);
   if (!c.canRun) loadSource();
   if (c.orphan) loadMembers(scope);
@@ -491,12 +491,12 @@ function appPane({ a }) {
     <div class="box">
       <div class="field"><label>能做什么</label><span>${svc}${a.options && a.options.confirm ? '；执行前需要确认' : ''}${a.options && a.options.schedulable ? '；允许定时' : ''}</span></div>
       <div class="field"><label>执行时填</label><span>${a.params.length ? a.params.map(p => esc(p.label) + (p.required ? ' *' : '')).join('、') : '（不用填）'}</span></div>
-      <div class="field"><label>配置项</label><span>${a.config.length ? a.config.map(p => esc(p.label) + (p.required && p.default == null ? ' *' : '')).join('、') + '<br><span class="note">装好后在指令页面设置一次，以后每次执行自动带上</span>' : '（没有）'}</span></div>
+      <div class="field"><label>配置项</label><span>${a.config.length ? a.config.map(p => esc(p.label) + (p.required && p.default == null ? ' *' : '')).join('、') + '<br><span class="note">装好后在应用页面设置一次，以后每次执行自动带上</span>' : '（没有）'}</span></div>
       <div class="field"><label>密钥</label><span>${a.secrets.length ? a.secrets.map(esc).join('、') + '<br><span class="note">装好后填你自己的，只有你的这一份会用到</span>' : '（没有）'}</span></div>
       ${a.docUrl ? `<div class="field"><label>审核文档</label><span><a href="${esc(a.docUrl)}" target="_blank" rel="noopener">查看</a></span></div>` : ''}
     </div>
     ${a.status === 'listed' ? `<div class="box"><h3 class="note" style="margin-top:0">安装</h3>
-      <p class="note">装好后是你自己的一条指令：只有你能看见、能执行，以你的身份和数据权限执行，配置项和密钥也是你自己的。安装不需要审批。</p>
+      <p class="note">装好后是你自己的一个应用：只有你能看见、能执行，以你的身份和数据权限执行，配置项和密钥也是你自己的。安装不需要审批。</p>
       <div class="field"><label>装到</label><select data-app-target>${(STORE.targets || []).map(t => `<option value="${esc(t.target)}">${esc(t.name)}</option>`).join('')}</select></div>
       <div class="field"><label>名称</label><input data-app-name value="${esc(a.name)}" placeholder="同一个地方不能重名"></div>
       <div class="actions"><button class="btn primary" data-app-install="${esc(a.id)}">安装</button></div></div>` : '<p class="note">这个应用已经下架：已经装好的照常可用，不能再新装。</p>'}
@@ -535,7 +535,7 @@ function exePane({ e }) {
       ${vars.length ? `<dt>环境变量</dt><dd><ul class="paths">${vars.map(([n, x]) => `<li><code>${esc(n)}=${esc(x)}</code></li>`).join('')}</ul></dd>` : ''}
       ${v.realHome ? '<dt>HOME</dt><dd>用户主目录（能访问的仍只有上面这些路径）</dd>' : ''}
       ${v.follow ? `<dt>定义文件</dt><dd><code>${esc(v.follow)}</code><br><span class="note">它的路径、环境变量、Python 变了会自动生效，并通知管理员</span></dd>` : ''}
-    </dl>${cred.size ? '<p class="note cred">⚠️ 标记的是凭证路径：这个环境里的指令能使用这些凭证。</p>' : ''}</div>`;
+    </dl>${cred.size ? '<p class="note cred">⚠️ 标记的是凭证路径：这个环境里的应用能使用这些凭证。</p>' : ''}</div>`;
   }).join('');
   document.getElementById('pane').innerHTML = `${backBtn}
     <div class="pane-head"><h1>${esc(e.name)}</h1><span class="chip">${esc(ST[e.status] || e.status)}${e.status === 'approved' ? (e.online ? ' · 在线' : ' · 离线') : ''}</span></div>
@@ -547,7 +547,7 @@ function exePane({ e }) {
       ${e.decidedBy ? `<dt>处理</dt><dd>${esc(e.decidedBy)} · ${fmtTime(e.decidedAt)}</dd>` : ''}
     </dl>
     ${envs}
-    ${e.status === 'pending' ? `<p class="note">批准前请先和安装的人核对公钥指纹（执行端安装时会打印出来）。批准后，声明了 <code>env: "${esc(e.name)}/环境名"</code> 并通过审核的指令会在这台机器上按各自的沙箱策略执行。</p>
+    ${e.status === 'pending' ? `<p class="note">批准前请先和安装的人核对公钥指纹（执行端安装时会打印出来）。批准后，声明了 <code>env: "${esc(e.name)}/环境名"</code> 并通过审核的应用会在这台机器上按各自的沙箱策略执行。</p>
       <div class="actions"><button class="btn primary" data-exe="approve">批准</button> <button class="btn" data-exe="reject">拒绝</button></div>` : ''}
     ${e.status === 'approved' ? `<p class="note">撤销后立即生效：不再给它派任务，正在等结果的任务立即失败。要恢复，需要在那台机器上重新生成密钥并再次批准。</p>
       <div class="actions"><button class="btn" data-exe="revoke">撤销</button></div>` : ''}
@@ -599,7 +599,7 @@ async function loadSource() {
     </dl>
     ${codeBlock(sc.code, sc.lang)}
     ${x.history.length ? `<p class="note">历史版本：${x.history.map((v, i) => `第 ${x.history.length - i} 版 <code>${esc(v.specHash.slice(0, 8))}</code>（${fmtTime(v.createdAt)}${v.reviewDocUrl ? `，<a href="${esc(v.reviewDocUrl)}" target="_blank" rel="noopener noreferrer">审核文档</a>` : ''}）`).join('；')}</p>` : ''}
-    <p class="note">这就是审核通过、实际运行的代码。版本是指令定义（名称、参数、代码、选项）的哈希，每次执行前都会重新核对。</p>`;
+    <p class="note">这就是审核通过、实际运行的代码。版本是应用定义（名称、参数、代码、选项）的哈希，每次执行前都会重新核对。</p>`;
 }
 
 function formArgs(form) {
@@ -719,7 +719,7 @@ document.addEventListener('click', async ev => {
     inst.disabled = false;
     if (!r.ok) { alert(r.message || r.error); return; }
     const todo = [...(r.needs.config.length ? ['配置项：' + r.needs.config.join('、')] : []), ...(r.needs.secrets.length ? ['密钥：' + r.needs.secrets.join('、')] : [])];
-    alert(`已安装「${r.name}」。${todo.length ? '\n执行前请先在指令页面底部设置' + todo.join('；') + '。' : ''}`);
+    alert(`已安装「${r.name}」。${todo.length ? '\n执行前请先在应用页面底部设置' + todo.join('；') + '。' : ''}`);
     await reload('c:' + r.scope + ':' + r.commandId);
     return;
   }
@@ -823,7 +823,7 @@ document.addEventListener('click', async ev => {
     const [name, op] = sec.dataset.secret.split(':');
     const input = document.querySelector(`[data-secret-input="${CSS.escape(name)}"]`);
     if (op === 'set' && !(input && input.value)) { alert('请先填写值'); return; }
-    if (op === 'delete' && !confirm(`删除密钥 ${name}？删除后这条指令不能运行，直到重新设置。`)) return;
+    if (op === 'delete' && !confirm(`删除密钥 ${name}？删除后这个应用不能运行，直到重新设置。`)) return;
     sec.disabled = true;
     const r = await post(`/web/api/commands/${encodeURIComponent(c.id)}/secrets`, op === 'set' ? { scope, name, value: input.value } : { scope, name, delete: true });
     if (input) input.value = '';

@@ -89,15 +89,15 @@ export class Scheduler {
       const ruleText = describeRule(s.rule);
       // The command must still be the reviewed version this schedule was confirmed for.
       if (!cmd || cmd.status !== 'active' || cmd.specHash !== s.specHash || !cmd.options.schedulable) {
-        const why = !cmd || cmd.status !== 'active' ? '指令已下线' : !cmd.options.schedulable ? '指令不再允许定时执行' : '指令已更新为新版本，需要重新确认';
+        const why = !cmd || cmd.status !== 'active' ? '应用已下线' : !cmd.options.schedulable ? '应用不再允许定时执行' : '应用已更新为新版本，需要重新确认';
         this.pause(s, why);
         await this.notifyCreator(s, `定时任务已暂停：${name}`, `${why}。定时任务 ${s.id}（${ruleText}）已暂停，没有执行。如需继续，请让 agent 用新版本重新创建。`);
         return;
       }
       const caller: Caller = { unionId: s.creatorUnionId, openId: s.creatorOpenId ?? undefined, chatId: s.chatId, chatType: s.chatType, channel: 'schedule' };
       try { findVisible(this.store, caller, cmd.id); } catch {
-        this.pause(s, '指令在这里已不可用');
-        await this.notifyCreator(s, `定时任务已暂停：${name}`, `指令「${name}」在原来的会话里已不可用（可能被取消了全局），定时任务 ${s.id} 已暂停。`);
+        this.pause(s, '应用在这里已不可用');
+        await this.notifyCreator(s, `定时任务已暂停：${name}`, `应用「${name}」在原来的会话里已不可用（可能被取消了全局），定时任务 ${s.id} 已暂停。`);
         return;
       }
       if (s.chatType === 'group') {
@@ -142,7 +142,7 @@ export class Scheduler {
   /** Called when a person confirms a "schedule" request. The clicker becomes the creator. */
   async createFromRequest(req: RequestRow, clicker: Caller): Promise<ScheduleRow> {
     const cmd = this.store.getCommand(req.commandId ?? '');
-    if (!cmd || cmd.status !== 'active' || cmd.specHash !== req.specHash) throw new AmberError('changed', '指令在请求之后已变更或下线，请让 agent 重新发起');
+    if (!cmd || cmd.status !== 'active' || cmd.specHash !== req.specHash) throw new AmberError('changed', '应用在请求之后已变更或下线，请让 agent 重新发起');
     return this.create({ cmd, chatId: req.chatId, chatType: req.chatType, replyTo: req.replyTo, inThread: req.inThread, creator: clicker,
       args: req.args, rule: req.rule, requestedBy: req.requestedBy, via: { requestId: req.id } });
   }
@@ -150,8 +150,8 @@ export class Scheduler {
   /** Creates a schedule for `creator` (a person identified by Feishu: a card click or a website session). */
   async create(o: { cmd: CommandRow; chatId: string; chatType: 'group' | 'p2p'; replyTo: string | null; inThread: boolean; creator: Caller; args: Record<string, string>; rule: unknown; requestedBy: string; via: Record<string, unknown> }): Promise<ScheduleRow> {
     const { cmd, creator } = o;
-    if (cmd.status !== 'active' || computeSpecHash(cmd) !== cmd.specHash) throw new AmberError('changed', '指令未生效或与审核版本不一致');
-    if (!cmd.options.schedulable) throw new AmberError('not_schedulable', '这条指令审核时没有允许定时执行');
+    if (cmd.status !== 'active' || computeSpecHash(cmd) !== cmd.specHash) throw new AmberError('changed', '应用未生效或与审核版本不一致');
+    if (!cmd.options.schedulable) throw new AmberError('not_schedulable', '这个应用审核时没有允许定时执行');
     findVisible(this.store, { ...creator, chatId: o.chatId, chatType: o.chatType }, cmd.id);
     if (this.store.schedulesInChat(o.chatId).length >= MAX_PER_CHAT) throw new AmberError('too_many', `这里已有 ${MAX_PER_CHAT} 个定时任务，请先删除一些`);
     const rule = validateRule(o.rule);
@@ -171,7 +171,7 @@ export class Scheduler {
   /** A command got a new version: pause its schedules and ask each creator to confirm (D38). */
   async onCommandReplaced(prev: CommandRow, next: CommandRow): Promise<void> {
     for (const s of this.store.schedulesOfCommand(prev.id)) {
-      this.store.updateSchedule(s.id, { status: 'paused', pauseReason: '指令已更新为新版本，等待确认换绑' });
+      this.store.updateSchedule(s.id, { status: 'paused', pauseReason: '应用已更新为新版本，等待确认换绑' });
       this.store.audit(null, 'schedule.pause', { id: s.id, reason: 'command_replaced', old: prev.id, new: next.id });
       try {
         await this.deps.send({ unionId: s.creatorUnionId }, rebindCard({ scheduleId: s.id, name: next.name, ruleText: describeRule(s.rule), oldHash: prev.specHash, newId: next.id, newHash: next.specHash, stillSchedulable: next.options.schedulable }));
@@ -183,8 +183,8 @@ export class Scheduler {
   async onCommandRetired(c: CommandRow, by: string): Promise<number> {
     const list = this.store.schedulesOfCommand(c.id);
     for (const s of list) {
-      if (s.status === 'active') this.pause(s, '指令已下线');
-      await this.notifyCreator(s, `定时任务已暂停：${c.name}`, `指令「${c.name}」已被${by}下线，定时任务 ${s.id}（${describeRule(s.rule)}）已暂停。`);
+      if (s.status === 'active') this.pause(s, '应用已下线');
+      await this.notifyCreator(s, `定时任务已暂停：${c.name}`, `应用「${c.name}」已被${by}下线，定时任务 ${s.id}（${describeRule(s.rule)}）已暂停。`);
     }
     return list.length;
   }
@@ -197,7 +197,7 @@ export class Scheduler {
     if (!next || next.status !== 'active') throw new AmberError('changed', '新版本已不可用');
     // Only to a newer version of the same command (same chat and name), never to another command.
     const prev = this.store.getCommand(s.commandId);
-    if (!prev || prev.chatId !== next.chatId || prev.line !== next.line) throw new AmberError('forbidden', '只能换绑到同一条指令的新版本');
+    if (!prev || prev.chatId !== next.chatId || prev.line !== next.line) throw new AmberError('forbidden', '只能换绑到同一个应用的新版本');
     if (!next.options.schedulable) throw new AmberError('not_schedulable', '新版本不允许定时执行');
     // The creator must still be allowed to use it where the schedule lives.
     findVisible(this.store, { unionId: s.creatorUnionId, chatId: s.chatId, chatType: s.chatType, channel: 'schedule' }, next.id);
@@ -214,7 +214,7 @@ export class Scheduler {
 
   resume(s: ScheduleRow, actor: string): ScheduleRow {
     const cmd = this.store.getCommand(s.commandId);
-    if (!cmd || cmd.status !== 'active' || cmd.specHash !== s.specHash) throw new AmberError('changed', '指令已下线或已更新，不能恢复；请让 agent 用新版本重新创建');
+    if (!cmd || cmd.status !== 'active' || cmd.specHash !== s.specHash) throw new AmberError('changed', '应用已下线或已更新，不能恢复；请让 agent 用新版本重新创建');
     this.store.updateSchedule(s.id, { status: 'active', pauseReason: null, failCount: 0, nextRunAt: nextRun(s.rule, Date.now()) });
     this.store.audit(actor, 'schedule.resume', { id: s.id });
     return this.store.getSchedule(s.id)!;

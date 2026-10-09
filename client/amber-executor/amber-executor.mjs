@@ -125,7 +125,7 @@ export function prepare(cfg, payload) {
   if (s.env !== `${cfg.name}/${payload.env}`) throw new Error(`任务的执行位置 ${s.env} 不是本执行端的环境`);
   const env = cfg.envs?.[payload.env];
   if (!env) throw new Error(`本执行端没有环境「${payload.env}」`);
-  if (s.sandbox !== undefined) throw new Error('指令不再声明 sandbox：访问权限由运行环境决定');
+  if (s.sandbox !== undefined) throw new Error('应用不再声明 sandbox：访问权限由运行环境决定');
   const workdir = normalizePath(env.workdir);
   if (!isDir(workdir)) throw new Error(`环境的 workdir 不是已存在的目录：${workdir}`);
   // The environment's approved access, re-checked here against this machine's protected dirs.

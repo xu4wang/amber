@@ -24,7 +24,7 @@ test('draft is claimed, trial-run, reviewed in Feishu and becomes active', async
     await env.click(env.alice, r.claimMessageId, { a: 'claim_submit', c: r.id });
     assert.equal(env.amber.store.getCommand(r.id)!.status, 'pending');
     const [inst] = [...env.fake.approvals.values()];
-    assert.equal(inst.title, 'Amber 指令：问候');
+    assert.equal(inst.title, 'Amber 应用：问候');
     const doc = [...env.fake.docs.values()].pop()!.join('\n');
     assert.match(doc, /print\("你好，"/, 'review doc has the full code');
     assert.match(doc, /你好，小明/, 'review doc has the trial output');
@@ -125,7 +125,7 @@ test('only the owner or an admin can retire a command; its schedules pause', asy
     env.fake.chats.get(GROUP)!.members.add(env.carol.unionId);
     await env.say(env.carol, GROUP, '下线 问候');
     assert.equal(env.amber.store.getCommand(id)!.status, 'active');
-    assert.match(FakeFeishu.text(env.fake.sent.at(-1)!.card), /没有找到指令/, 'carol does not even see it');
+    assert.match(FakeFeishu.text(env.fake.sent.at(-1)!.card), /没有找到应用/, 'carol does not even see it');
     // D44: retiring from Feishu asks once more; only the requester can confirm.
     await env.say(env.bob, GROUP, '下线 问候');
     assert.equal(env.amber.store.getCommand(id)!.status, 'active', 'not retired before confirming');

@@ -75,11 +75,11 @@ test('store: list once, install anywhere you are, each copy with its own setting
     assert.equal(ins3.body.ok, true, JSON.stringify(ins3.body));
     const c3 = env.amber.store.getCommand(ins3.body.commandId)!;
     assert.equal(c3.name, '检查');
-    assert.match((await post(carolC, `/web/api/store/${app.id}/install`, { target: scope })).body.message, /已经有一条叫「检查」/);
+    assert.match((await post(carolC, `/web/api/store/${app.id}/install`, { target: scope })).body.message, /已经有一个叫「检查」/);
     await post(carolC, `/web/api/commands/${c3.id}/config`, { scope, name: 'repo', value: 'carol/other' });
     assert.deepEqual(env.amber.store.configRows(GROUP, '检查').map(r => r.value), ['bob/repo'], "bob's settings untouched");
     // Each person sees only their own: bob his original, carol her copy.
-    await env.say(carol, GROUP, '指令');
+    await env.say(carol, GROUP, '应用');
     assert.equal((FakeFeishu.text(fake.sent.at(-1)!.card).match(/检查/g) ?? []).length >= 1, true);
     await env.say(bob, GROUP, '检查 b');
     await env.waitFor(() => fake.sent.some(s => /repo=bob\/repo who=b token=AAAA/.test(FakeFeishu.text(fake.cardOf(s.id)))) || undefined);
@@ -181,7 +181,7 @@ test('store: only the creator lists; a listing needs every reviewer; missed appr
   try {
     await env.amber.bot.flow.loadReviewers();
     const id = await activate(env, { chatId: GROUP, chatType: 'group', name: '乙', params: [], script: script('print(1)') }, bob);
-    await assert.rejects(env.amber.bot.apps.requestListing(id, { unionId: carol.unionId, openId: carol.openId }), /只有指令的创建人/);
+    await assert.rejects(env.amber.bot.apps.requestListing(id, { unionId: carol.unionId, openId: carol.openId }), /只有应用的创建人/);
     await env.amber.bot.apps.requestListing(id, { unionId: bob.unionId, openId: bob.openId });
     const code = [...fake.approvals.entries()].find(([, a]) => /上架：乙/.test(a.title ?? ''))![0];
     const a = fake.approvals.get(code)!;
@@ -233,7 +233,7 @@ test('store upgrades: the original\'s new version becomes the app\'s; installers
     assert.deepEqual(diff.newConfig, ['分支']);
     assert.match(diff.diff, /\+ print\("v2/);
     assert.equal((await post(bobC, `/web/api/commands/${ins.commandId}/upgrade`, { scope: scope2, confirm: true })).status, 404, 'only its owner');
-    assert.throws(() => env.amber.bot.apps.upgrade(ins.commandId, { unionId: bob.unionId }), /只有指令的创建人可以升级/);
+    assert.throws(() => env.amber.bot.apps.upgrade(ins.commandId, { unionId: bob.unionId }), /只有应用的创建人可以升级/);
     const up = (await post(carolC, `/web/api/commands/${ins.commandId}/upgrade`, { scope: scope2, confirm: true })).body;
     assert.equal(up.ok, true, JSON.stringify(up));
     assert.equal(up.version, 2);

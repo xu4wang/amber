@@ -73,7 +73,7 @@ function readJson(req: IncomingMessage): Promise<any> {
  *  `manage` (read the code, settings, take offline) also lets an admin reach anyone's command. */
 async function target(store: Store, deps: WebDeps, unionId: string, scope: string, commandId: string, manage = false): Promise<{ cmd: CommandRow; chatId: string; chatType: 'group' | 'p2p' }> {
   const cmd = store.getCommand(String(commandId));
-  const nf = new AmberError('not_found', '没有找到这条指令');
+  const nf = new AmberError('not_found', '没有找到这个应用');
   if (!cmd || cmd.status !== 'active') throw nf;
   const adminView = manage && deps.isAdmin(unionId);
   if (scope === 'p2p') {
@@ -196,7 +196,7 @@ export function startWeb(port: number, store: Store, deps: WebDeps): import('nod
         if (req.method === 'GET' && upMatch && deps.apps) {
           // What upgrading an installation would change (#4): its owner only.
           const t = await target(store, deps, who.unionId, String(url.searchParams.get('scope') ?? ''), upMatch[1]);
-          if (t.cmd.ownerUnionId !== who.unionId) throw new AmberError('forbidden', '只有指令的创建人可以升级');
+          if (t.cmd.ownerUnionId !== who.unionId) throw new AmberError('forbidden', '只有应用的创建人可以升级');
           return json(res, 200, { ok: true, ...deps.apps.upgradeDiff(t.cmd) });
         }
         const srcMatch = /^\/web\/api\/store\/([A-Za-z0-9-]{1,40})\/source$/.exec(url.pathname);
@@ -244,7 +244,7 @@ export function startWeb(port: number, store: Store, deps: WebDeps): import('nod
         if (url.pathname === '/web/api/run') {
           rateLimit(who.unionId);
           const t = await target(store, deps, who.unionId, String(body.scope ?? ''), String(body.commandId ?? ''));
-          if (t.cmd.options.confirm && body.confirm !== true) throw new AmberError('needs_confirm', '这条指令需要确认后执行');
+          if (t.cmd.options.confirm && body.confirm !== true) throw new AmberError('needs_confirm', '这个应用需要确认后执行');
           const args: Record<string, string> = {};
           for (const [k, v] of Object.entries(body.args ?? {})) if (v !== null && v !== undefined) args[k] = String(v).slice(0, 2000);
           const r = await runCommand(store, t.cmd, args, { ...person, chatId: t.chatId, chatType: t.chatType },
@@ -253,7 +253,7 @@ export function startWeb(port: number, store: Store, deps: WebDeps): import('nod
         }
         if (url.pathname === '/web/api/schedules') {
           const t = await target(store, deps, who.unionId, String(body.scope ?? ''), String(body.commandId ?? ''));
-          if (t.cmd.options.confirm && body.confirm !== true) throw new AmberError('needs_confirm', '这条指令需要确认后才能定时');
+          if (t.cmd.options.confirm && body.confirm !== true) throw new AmberError('needs_confirm', '这个应用需要确认后才能定时');
           const args: Record<string, string> = {};
           for (const [k, v] of Object.entries(body.args ?? {})) if (v !== null && v !== undefined && String(v) !== '') args[k] = String(v).slice(0, 2000);
           const { parseRule } = await import('./schedule-rule.ts');
@@ -264,9 +264,9 @@ export function startWeb(port: number, store: Store, deps: WebDeps): import('nod
         if ((m = /^\/web\/api\/commands\/([A-Za-z0-9-]{1,40})\/secrets$/.exec(url.pathname))) {
           const t = await target(store, deps, who.unionId, String(body.scope ?? ''), m[1], true);
           const c = t.cmd;
-          if (c.ownerUnionId !== who.unionId && !deps.isAdmin(who.unionId)) throw new AmberError('forbidden', '只有指令的创建人或管理员可以设置密钥');
+          if (c.ownerUnionId !== who.unionId && !deps.isAdmin(who.unionId)) throw new AmberError('forbidden', '只有应用的创建人或管理员可以设置密钥');
           const name = String(body.name ?? '');
-          if (!(c.script.secrets ?? []).includes(name)) throw new AmberError('bad_secret', `这条指令没有声明密钥 ${name}`);
+          if (!(c.script.secrets ?? []).includes(name)) throw new AmberError('bad_secret', `这个应用没有声明密钥 ${name}`);
           const vault = secretVault();
           if (!vault) throw new AmberError('no_vault', '密钥存储不可用');
           if (body.delete === true) {
@@ -279,7 +279,7 @@ export function startWeb(port: number, store: Store, deps: WebDeps): import('nod
           return json(res, 200, { ok: true, secrets: vault.info(lineOf(c), c.script.secrets!) });
         }
         if ((m = /^\/web\/api\/commands\/([A-Za-z0-9-]{1,40})\/reassign$/.exec(url.pathname))) {
-          if (!deps.isAdmin(who.unionId)) throw new AmberError('forbidden', '只有管理员可以重新分配指令');
+          if (!deps.isAdmin(who.unionId)) throw new AmberError('forbidden', '只有管理员可以重新分配应用');
           const t = await target(store, deps, who.unionId, String(body.scope ?? ''), m[1], true);
           const r = await deps.requestReassign(t.cmd.id, String(body.to ?? ''), { unionId: who.unionId, openId: who.openId ?? undefined });
           return json(res, 200, { ok: true, ...r });
@@ -288,9 +288,9 @@ export function startWeb(port: number, store: Store, deps: WebDeps): import('nod
           // Configuration items (#3) are set here only: by the command's creator or an admin.
           const t = await target(store, deps, who.unionId, String(body.scope ?? ''), m[1], true);
           const c = t.cmd;
-          if (c.ownerUnionId !== who.unionId && !deps.isAdmin(who.unionId)) throw new AmberError('forbidden', '只有指令的创建人或管理员可以设置配置项');
+          if (c.ownerUnionId !== who.unionId && !deps.isAdmin(who.unionId)) throw new AmberError('forbidden', '只有应用的创建人或管理员可以设置配置项');
           const p = configParams(c.params).find(x => x.name === String(body.name ?? ''));
-          if (!p) throw new AmberError('bad_config', `这条指令没有配置项 ${String(body.name ?? '').slice(0, 40)}`);
+          if (!p) throw new AmberError('bad_config', `这个应用没有配置项 ${String(body.name ?? '').slice(0, 40)}`);
           if (body.delete === true) {
             store.deleteConfig(c.chatId, c.line, p.name);
             store.audit(who.unionId, 'config.delete', { commandId: c.id, chatId: c.chatId, name: c.name, item: p.name, via: 'web' });

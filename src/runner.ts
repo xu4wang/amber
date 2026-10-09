@@ -101,7 +101,7 @@ export function validateScript(s: unknown): Script {
       secrets = x.secrets.map(String);
       for (const n of secrets) if (!SECRET_NAME.test(n)) throw new Error(`密钥名称 ${n} 不对：只能用大写字母、数字和下划线，以字母开头，最多 64 个字符`);
       if (new Set(secrets).size !== secrets.length) throw new Error('secrets 里有重复的名称');
-      if (secrets.length > MAX_SECRETS) throw new Error(`一条指令最多声明 ${MAX_SECRETS} 个密钥`);
+      if (secrets.length > MAX_SECRETS) throw new Error(`一个应用最多声明 ${MAX_SECRETS} 个密钥`);
     }
     let env: string | undefined;
     if (x.env !== undefined) {
@@ -109,7 +109,7 @@ export function validateScript(s: unknown): Script {
       if (!parseEnv(env)) throw new Error('env 要写成 "执行端名/环境名"，例如 "ledger-mac/台账"（执行端名：小写字母、数字、连字符）');
       for (const name of Object.keys(services)) if (SERVICES[name]?.executor !== true) throw new Error(`服务 ${name} 不允许在执行端上调用（管理员可以在 Amber 配置里为它打开 executor）`);
     }
-    if (x.sandbox !== undefined) throw new Error('指令不再声明 sandbox：能访问哪些文件由运行环境决定。需要访问数据时，用 env 选择一个运行环境');
+    if (x.sandbox !== undefined) throw new Error('应用不再声明 sandbox：能访问哪些文件由运行环境决定。需要访问数据时，用 env 选择一个运行环境');
     let interpreter: string | undefined;
     if (x.interpreter !== undefined) {
       const p = normalizePath(String(x.interpreter));
@@ -126,6 +126,6 @@ export async function runScript(script: Script, input: ScriptInput): Promise<Scr
   // Only sandboxed scripts exist; anything else never runs.
   if (script.kind !== 'script') return { ok: false, content: '', error: '脚本类型只能是 script' };
   // Remote commands are dispatched by the engine; never run one here without its environment.
-  if (script.env) return { ok: false, content: '', error: '这条指令要在执行端上运行' };
+  if (script.env) return { ok: false, content: '', error: '这个应用要在执行端上运行' };
   return runSandboxed({ code: script.code, python: script.interpreter ? normalizePath(script.interpreter) : PYTHON, profileFor: dir => profile(script, dir), input, timeoutMs: script.timeoutMs });
 }

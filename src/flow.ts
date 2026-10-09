@@ -117,7 +117,7 @@ export function claimCard(c: CommandRow, trial?: { by?: string; blocks?: Block[]
   const who = (submittedBy ? `**${sanitizeMarkdown(submittedBy, 80)}**` : 'agent') + (notifyOpenId ? `（替 ${person(notifyOpenId)}）` : '');
   const intro = prev
     ? `${who} 提交了「${sanitizeMarkdown(c.name, 40)}」的**新版本**，等待认领。审核通过后会替换当前版本（${prev.specHash.slice(0, 8)}）。只有原创建人可以认领。\n<font color="grey">请确认这是你让 agent 做的；不认识的草稿直接点「丢弃」。</font>`
-    : `${who} 提交了一条新指令，等待认领。认领人会成为这条指令的创建人，提交后由审核人审核。\n<font color="grey">请确认这是你让 agent 做的；不认识的草稿直接点「丢弃」。</font>`;
+    : `${who} 提交了一个新应用，等待认领。认领人会成为这个应用的创建人，提交后由审核人审核。\n<font color="grey">请确认这是你让 agent 做的；不认识的草稿直接点「丢弃」。</font>`;
   const els: unknown[] = [
     { tag: 'markdown', content: intro },
     { tag: 'markdown', content: specSummary(c) },
@@ -130,7 +130,7 @@ export function claimCard(c: CommandRow, trial?: { by?: string; blocks?: Block[]
     els.push(...renderBlocks(trial.blocks));
   }
   els.push({ tag: 'markdown', content: '<font color="grey">试运行就是以你的身份真实执行一次。</font>' });
-  if (c.script.secrets?.length) els.push({ tag: 'markdown', content: '<font color="grey">这条指令需要密钥：先点「设置密钥」，Amber 会私聊你填写，再试运行。</font>' });
+  if (c.script.secrets?.length) els.push({ tag: 'markdown', content: '<font color="grey">这个应用需要密钥：先点「设置密钥」，Amber 会私聊你填写，再试运行。</font>' });
   const buttons: unknown[] = [];
   if (trial?.blocks) buttons.push(btn('提交审核', { a: 'claim_submit', c: c.id }, 'primary'));
   // Secrets are typed in the clicker's private chat with Amber, never on this card (D48).
@@ -161,7 +161,7 @@ export function claimCard(c: CommandRow, trial?: { by?: string; blocks?: Block[]
 
 export function reviewCard(c: CommandRow, creatorOpenIdForReviewer: string | undefined, state: { approved: number; total: number; mine?: string }): object {
   const els: unknown[] = [
-    { tag: 'markdown', content: `请审核这条指令。需要 **全部 ${state.total} 位**审核人通过才生效，目前已通过 ${state.approved} 位。` },
+    { tag: 'markdown', content: `请审核这个应用。需要 **全部 ${state.total} 位**审核人通过才生效，目前已通过 ${state.approved} 位。` },
     { tag: 'markdown', content: specSummary(c) },
     ...codePanels(c),
     { tag: 'markdown', content: `**创建人**：${person(creatorOpenIdForReviewer)}　**spec**：\`${c.specHash.slice(0, 12)}\`` },
@@ -268,7 +268,7 @@ export class Flow {
     if (!/^oc_[A-Za-z0-9]+$/.test(d.chatId)) throw new AmberError('bad_chat', 'chatId 格式不对');
     if (!d.submittedBy || d.submittedBy.length > 120) throw new AmberError('bad_submitter', '缺少提交来源');
     if (!d.name || d.name.length > 40 || /\s/.test(d.name)) throw new AmberError('bad_name', '名称不能为空、不能有空格、最多 40 个字');
-    if ((d as any).steps !== undefined) throw new AmberError('bad_script', '指令不再有「步骤」：请提交一段 script（参数 + 一段脚本）');
+    if ((d as any).steps !== undefined) throw new AmberError('bad_script', '应用不再有「步骤」：请提交一段 script（参数 + 一段脚本）');
     try { d.script = validateScript(d.script); } catch (e) { throw new AmberError('bad_script', (e as Error).message); }
     checkParams(d.params ?? []);
     if (this.store.nameInProgress(d.chatId, d.name)) throw new AmberError('name_taken', `「${d.name}」已有一个版本在认领或审核中，请等它结束（或在认领卡上丢弃）后再提交`);
@@ -343,9 +343,9 @@ export class Flow {
       const replaced = await this.activate(c, { via: 'feishu_approval', instanceCode });
       const where = c.scopeType === 'p2p' ? '在你和 Amber 的私聊里' : '在本群 @Amber';
       if (meta.claimMessageId) await this.patch(meta.claimMessageId, shell(`已生效：${c.name}`, 'green', [
-        { tag: 'markdown', content: `✅ 飞书审批已通过（${approved.size} 位审核人全部同意），指令「${sanitizeMarkdown(c.name, 40)}」现已生效${replaced ? `，已替换旧版本（${replaced.specHash.slice(0, 8)}）` : ''}。${where}发「${sanitizeMarkdown(c.name, 40)}」即可使用。${rv.docUrl ? `\n\n[查看代码文档](${rv.docUrl})` : ''}` },
+        { tag: 'markdown', content: `✅ 飞书审批已通过（${approved.size} 位审核人全部同意），应用「${sanitizeMarkdown(c.name, 40)}」现已生效${replaced ? `，已替换旧版本（${replaced.specHash.slice(0, 8)}）` : ''}。${where}发「${sanitizeMarkdown(c.name, 40)}」即可使用。${rv.docUrl ? `\n\n[查看代码文档](${rv.docUrl})` : ''}` },
       ]));
-      await note(`**${new Date().toISOString().slice(0, 16).replace('T', ' ')} UTC：飞书审批通过，指令已生效。**`);
+      await note(`**${new Date().toISOString().slice(0, 16).replace('T', ' ')} UTC：飞书审批通过，应用已生效。**`);
     } else if (inst.status === 'REJECTED' || inst.status === 'CANCELED' || inst.status === 'DELETED') {
       this.store.setStatus(c.id, 'rejected');
       dropOrphanSettings(this.store, c.chatId, c.line, null);
@@ -471,9 +471,9 @@ export class Flow {
   async onReviewAction(action: string, cmdId: string, specHash: string, reason: string, caller: Caller): Promise<object> {
     if (!this.reviewers.includes(caller.unionId)) throw new AmberError('not_reviewer', '你不在审核人名单里');
     const c = this.store.getCommand(cmdId);
-    if (!c) throw new AmberError('not_found', '指令不存在');
+    if (!c) throw new AmberError('not_found', '应用不存在');
     if (c.status !== 'pending' || c.specHash !== specHash) {
-      return shell(`审核：${c.name}`, 'grey', [{ tag: 'markdown', content: '这张审核卡已失效（指令已生效、被驳回，或审核期间被修改）。' }]);
+      return shell(`审核：${c.name}`, 'grey', [{ tag: 'markdown', content: '这张审核卡已失效（应用已生效、被驳回，或审核期间被修改）。' }]);
     }
     if (action === 'review_no' && !reason.trim()) throw new AmberError('reason_required', '驳回请填写原因');
     const decision = action === 'review_ok' ? 'approve' : 'reject';
@@ -490,7 +490,7 @@ export class Flow {
       await this.activate(c, { via: 'card_review' });
       const where = c.scopeType === 'p2p' ? '在你和 Amber 的私聊里' : '在本群 @Amber';
       if (meta.claimMessageId) await this.patch(meta.claimMessageId, shell(`已生效：${c.name}`, 'green', [
-        { tag: 'markdown', content: `✅ 指令「${sanitizeMarkdown(c.name, 40)}」已通过全部 ${this.reviewers.length} 位审核人的审核，现已生效。${where}发「${sanitizeMarkdown(c.name, 40)}」即可使用。` },
+        { tag: 'markdown', content: `✅ 应用「${sanitizeMarkdown(c.name, 40)}」已通过全部 ${this.reviewers.length} 位审核人的审核，现已生效。${where}发「${sanitizeMarkdown(c.name, 40)}」即可使用。` },
       ]));
     } else if (meta.claimMessageId) {
       await this.patch(meta.claimMessageId, shell(`审核中：${c.name}`, 'yellow', [{ tag: 'markdown', content: `已提交审核，**${approved} / ${this.reviewers.length}** 位审核人已通过。` }]));

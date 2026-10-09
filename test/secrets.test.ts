@@ -63,7 +63,7 @@ test('secrets: declared, set in private chat by the claimer, masked in output, o
     assert.equal(cmd.status, 'active');
     // Only the creator runs it (#4): bob, another member, does not see it.
     await env.say(bob, GROUP, '查余额');
-    await env.waitFor(() => fake.sent.some(s => /没有找到指令「查余额」/.test(FakeFeishu.text(fake.cardOf(s.id)))) || undefined);
+    await env.waitFor(() => fake.sent.some(s => /没有找到应用「查余额」/.test(FakeFeishu.text(fake.cardOf(s.id)))) || undefined);
     await env.say(alice, GROUP, '查余额');
     const result = await env.waitFor(() => fake.sent.map(s => fake.cardOf(s.id)).find(c => c?.header?.title?.content === 'Amber · 查余额' && /len=20/.test(FakeFeishu.text(c))));
     assert.doesNotMatch(FakeFeishu.text(result), /共用的密钥/, 'not shared: only the creator runs it');
