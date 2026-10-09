@@ -70,7 +70,8 @@ node ~/amber/client/amber-executor/amber-executor.mjs env set 台账 /Users/me/b
 node ~/amber/client/amber-executor/export-botmux-env.mjs --bot cli_xxxx --name 结算助手 --python /opt/homebrew/bin/python3 > /tmp/env.json
 node ~/amber/client/amber-executor/amber-executor.mjs env import /tmp/env.json
 #     只读版本：导出时加 --readonly，用另一个名字导入
-#  查看：… env show
+#  查看：… env show；导出某个环境的 JSON（可以改完再 import）：… env export 台账
+#  env set 只是生成一份最简单的定义再导入；加 --print 只打印这份 JSON 不保存
 
 # 4. 常驻运行（launchd，开机自动启动），同时向 Amber 申请登记
 node ~/amber/client/amber-executor/amber-executor.mjs install-launchd

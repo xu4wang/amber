@@ -192,7 +192,16 @@ test('executor: offline fails the run at once; a changed environment needs appro
     hub.pollWaitMs = 500;
     hub.onlineMs = 1500;
     await cli(dir, 'init', '--name', 'box2', '--amber', `http://127.0.0.1:${env.apiPort}`);
+    // env set is only a shorthand for a definition in the one JSON format; --print shows it, export gives it back.
+    const printed = JSON.parse(await cli(dir, 'env', 'set', 'e', data, '--readonly', '--print'));
+    assert.deepEqual(printed, { name: 'e', workdir: data, access: { readOnly: ['{WORKDIR}'] } });
     await cli(dir, 'env', 'set', 'e', data, '--readonly');
+    const exported = JSON.parse(await cli(dir, 'env', 'export', 'e'));
+    assert.deepEqual(exported, { name: 'e', workdir: data, access: { readOnly: [data] } });
+    writeFileSync(join(base, 'e.json'), JSON.stringify(exported));
+    const before = readFileSync(join(dir, 'config.json'), 'utf8');
+    await cli(dir, 'env', 'import', join(base, 'e.json'));
+    assert.equal(readFileSync(join(dir, 'config.json'), 'utf8'), before, 'export → import is a no-op');
     const start = () => { child = spawn(process.execPath, [EXE, 'run'], { env: { ...process.env, AMBER_EXECUTOR_DIR: dir } }); };
     start();
     const cards = () => fake.sent.filter(s => s.to.unionId === alice.unionId && /执行端申请登记/.test(FakeFeishu.text(s.card)));

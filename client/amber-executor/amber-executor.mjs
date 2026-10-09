@@ -3,10 +3,12 @@
 // No dependencies beyond Node ≥ 22. See docs/executor.md.
 //
 //   amber-executor init --name <name> [--amber <url>]     keys + config (once)
-//   amber-executor env set <env> <workdir> [--python <p>] [--readonly]
-//                                                         a directory environment: {WORKDIR} read-write (or read-only)
-//   amber-executor env import <file.json> [--name <env>]  an environment from a definition file (D51), e.g. one
-//                                                         exported from a botmux bot by export-botmux-env.mjs
+//   amber-executor env import <file.json> [--name <env>]  an environment from a definition file (D51): the one format,
+//                                                         e.g. exported from a botmux bot by export-botmux-env.mjs
+//   amber-executor env set <env> <dir> [--python <p>] [--readonly] [--print]
+//                                                         shorthand: the definition {WORKDIR} read-write (or read-only);
+//                                                         --print only prints it
+//   amber-executor env export <env>                       a stored environment as a definition (edit, then import)
 //   amber-executor env show | env rm <env>
 //   amber-executor status                                  register / show fingerprint and approval
 //   amber-executor run                                     long-poll Amber and run jobs (launchd runs this)
@@ -198,39 +200,53 @@ async function init(args) {
   console.log(`已初始化 ${DIR}\n执行端：${name}\nAmber：${url}（签名公钥 ${jwk.kid ?? ''} 已记录）\n公钥指纹：${showFingerprint(me.fp)}\n\n下一步：amber-executor env set <环境名> <目录>，然后 amber-executor status 申请登记。`);
 }
 
+/** The one way an environment gets into the config: a definition in the JSON format (D51), whatever made it. */
+function importDef(cfg, def, nameOverride) {
+  const envName = nameOverride ?? def.name;
+  if (!envName || !ENV_NAME.test(envName)) die('环境名不对：用 --name 指定，或写在定义里的 name');
+  if (!def.workdir) die('定义缺少 workdir');
+  const workdir = normalizePath(def.workdir);
+  if (!existsSync(workdir)) die(`目录不存在：${workdir}`);
+  let access;
+  try { access = validateEnvAccess(def.access ?? { readWrite: [workdir] }, { workdir }); checkVars(def.vars); } catch (e) { die(e.message); }
+  const python = def.python ?? def.interpreter;
+  cfg.envs = { ...cfg.envs, [envName]: { workdir, ...(python ? { interpreter: normalizePath(python) } : {}), access, ...(def.vars && Object.keys(def.vars).length ? { vars: def.vars } : {}), ...(def.source ? { source: String(def.source).slice(0, 200) } : {}), ...(def.realHome === true ? { realHome: true } : {}) } };
+  const cred = credentialGrants(access);
+  console.log(`环境「${envName}」：${describeAccess(access)}${cred.length ? `\n注意：含凭证路径 ${cred.join('、')}` : ''}`);
+}
+
+/** A stored environment as a definition (the same JSON format; re-importable). */
+function toDef(name, v) {
+  return { name, workdir: v.workdir, ...(v.interpreter ? { python: v.interpreter } : {}), access: v.access ?? { readWrite: [v.workdir] },
+    ...(v.vars ? { vars: v.vars } : {}), ...(v.realHome ? { realHome: true } : {}), ...(v.source ? { source: v.source } : {}) };
+}
+
 function envCmd(args) {
   const cfg = loadConfig();
   const [op, name, dir] = args;
   if (op === 'set') {
-    if (!name || !ENV_NAME.test(name) || !dir) die('用法：amber-executor env set <环境名> <目录> [--python <解释器>] [--readonly]');
-    const workdir = normalizePath(dir);
-    if (!existsSync(workdir)) die(`目录不存在：${workdir}`);
+    // Shorthand for the simplest definition: one directory, read-write (or read-only).
+    if (!name || !ENV_NAME.test(name) || !dir) die('用法：amber-executor env set <环境名> <目录> [--python <解释器>] [--readonly] [--print]');
     const python = flag(args, '--python');
-    // Default (no access field): {WORKDIR} read-write.
-    cfg.envs = { ...cfg.envs, [name]: { workdir, ...(python ? { interpreter: normalizePath(python) } : {}), ...(args.includes('--readonly') ? { access: { readOnly: [workdir] } } : {}) } };
+    const def = { name, workdir: normalizePath(dir), ...(python ? { python: normalizePath(python) } : {}),
+      access: args.includes('--readonly') ? { readOnly: ['{WORKDIR}'] } : { readWrite: ['{WORKDIR}'] } };
+    if (args.includes('--print')) return void console.log(JSON.stringify(def, null, 2));
+    importDef(cfg, def);
   } else if (op === 'import') {
-    const file = name;
-    if (!file || !existsSync(file)) die('用法：amber-executor env import <定义文件.json> [--name <环境名>]');
+    if (!name || !existsSync(name)) die('用法：amber-executor env import <定义文件.json> [--name <环境名>]');
     let def;
-    try { def = JSON.parse(readFileSync(file, 'utf8')); } catch (e) { die(`定义文件不是合法的 JSON：${e.message}`); }
-    const envName = flag(args, '--name') ?? def.name;
-    if (!envName || !ENV_NAME.test(envName)) die('环境名不对：用 --name 指定，或写在定义文件的 name 里');
-    if (!def.workdir) die('定义文件缺少 workdir');
-    const workdir = normalizePath(def.workdir);
-    if (!existsSync(workdir)) die(`目录不存在：${workdir}`);
-    let access;
-    try { access = validateEnvAccess(def.access ?? { readWrite: [workdir] }, { workdir }); checkVars(def.vars); } catch (e) { die(e.message); }
-    const python = def.python ?? def.interpreter;
-    cfg.envs = { ...cfg.envs, [envName]: { workdir, ...(python ? { interpreter: normalizePath(python) } : {}), access, ...(def.vars && Object.keys(def.vars).length ? { vars: def.vars } : {}), ...(def.source ? { source: String(def.source).slice(0, 200) } : {}), ...(def.realHome === true ? { realHome: true } : {}) } };
-    const cred = credentialGrants(access);
-    console.log(`环境「${envName}」：${describeAccess(access)}${cred.length ? `\n注意：含凭证路径 ${cred.join('、')}` : ''}`);
+    try { def = JSON.parse(readFileSync(name, 'utf8')); } catch (e) { die(`定义文件不是合法的 JSON：${e.message}`); }
+    importDef(cfg, def, flag(args, '--name'));
+  } else if (op === 'export') {
+    if (!cfg.envs?.[name]) die(`没有环境「${name}」`);
+    return void console.log(JSON.stringify(toDef(name, cfg.envs[name]), null, 2));
   } else if (op === 'show') {
     for (const [k, v] of Object.entries(cfg.envs ?? {})) console.log(`${k}：{WORKDIR} = ${v.workdir}；${describeAccess(v.access ?? { readWrite: [v.workdir] })}${v.vars ? `；变量 ${Object.keys(v.vars).join('、')}` : ''}${v.source ? `（${v.source}）` : ''}`);
     return;
   } else if (op === 'rm') {
     if (!cfg.envs?.[name]) die(`没有环境「${name}」`);
     delete cfg.envs[name];
-  } else die('用法：amber-executor env set|import|show|rm …');
+  } else die('用法：amber-executor env set|import|export|show|rm …');
   writePrivate(P.config, JSON.stringify(cfg, null, 2));
   console.log(`已保存。环境变了要重新批准：运行 amber-executor status 申请（正在运行的服务会自动重新申请，请重启它：launchctl kickstart -k gui/${process.getuid()}/${LABEL}）`);
 }
