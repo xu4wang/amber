@@ -50,7 +50,7 @@
 | `format` | 字符串 | 否 | 固定为 `"amber-env/1"`。不写视为 `amber-env/1`；写了别的值，使用方必须拒绝 |
 | `name` | 字符串 | 否 | 环境名：Unicode 字母或数字开头（汉字、英文字母、数字都可以），后面可以跟字母、数字、`_`、`-`，最多 32 个字符。导入时可以另外指定，覆盖这里的值 |
 | `workdir` | 字符串 | 是 | 环境的主目录：绝对路径或 `~/…`，不能含 `..`，必须是已存在的目录。脚本从环境变量 `WORKDIR` 拿到它；`access` 里的路径可以用 `{WORKDIR}` 代指它 |
-| `python` | 字符串 | 否 | 这个环境默认用的 Python 解释器：绝对路径或 `~/…`，以 `python`、`python3` 或 `python3.x` 结尾。优先级：脚本自己指定的 > 这里的 > 使用方的默认值（Amber 执行端是 `/usr/bin/python3`） |
+| `python` | 字符串 | 否 | 这个环境默认用的 Python 解释器：绝对路径或 `~/…`，文件名是 `python`、`python3` 或 `python3.x`（如 `python3.12`）。优先级：脚本自己指定的 > 这里的 > 使用方的默认值（Amber 执行端是 `/usr/bin/python3`） |
 | `access` | 对象 | 否 | 访问规则，见下文。**不写就等于 `{"readWrite": ["{WORKDIR}"]}`** |
 | `access.readWrite` | 路径数组 | 否 | 可读可写（包括创建、删除）的路径 |
 | `access.readOnly` | 路径数组 | 否 | 只读的路径 |

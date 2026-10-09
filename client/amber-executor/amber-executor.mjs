@@ -98,7 +98,7 @@ export function prepare(cfg, payload) {
   const access = validateEnvAccess(env.access ?? { readWrite: [workdir] }, { workdir });
   const python = normalizePath(s.interpreter ?? env.interpreter ?? DEFAULT_PYTHON);
   if (hardDenyRoots().some(r => python === r || python.startsWith(r + '/'))) throw new Error('解释器在受保护的目录里');
-  if (!/python[0-9.]*$/.test(python)) throw new Error('解释器要是 Python（以 python、python3 或 python3.x 结尾）');
+  if (!/\/python(3(\.\d+)?)?$/.test(python)) throw new Error('解释器要是 Python（以 python、python3 或 python3.x 结尾）');
   const vars = checkVars(env.vars);
   const timeoutMs = Math.min(Math.max(Number(s.timeoutMs) || 30000, 1000), 120000);
   return { code: s.code, python, timeoutMs, workdir, vars, realHome: env.realHome === true, profileFor: dir => compileToSeatbelt(buildPolicy({ runDir: dir, access }), { all: !!s.network }) };
@@ -224,7 +224,7 @@ function importDef(cfg, def, nameOverride) {
   if (python !== undefined) {
     let p;
     try { p = normalizePath(String(python)); } catch (e) { die(e.message); }
-    if (!/python[0-9.]*$/.test(p)) die(`python 要是 Python 解释器的绝对路径（以 python、python3 或 python3.x 结尾）：${python}`);
+    if (!/\/python(3(\.\d+)?)?$/.test(p)) die(`python 要是 Python 解释器的绝对路径（以 python、python3 或 python3.x 结尾）：${python}`);
   }
   if (def.realHome !== undefined && typeof def.realHome !== 'boolean') die('realHome 只能是 true 或 false');
   if (def.source !== undefined && typeof def.source !== 'string') die('source 要是字符串');

@@ -113,7 +113,7 @@ export function validateScript(s: unknown): Script {
     if (x.interpreter !== undefined) {
       const p = normalizePath(String(x.interpreter));
       if (hardDenyRoots().some(r => p === r || p.startsWith(r + '/'))) throw new Error(`解释器不能放在受保护的目录里：${x.interpreter}`);
-      if (!/python[0-9.]*$/.test(p)) throw new Error('interpreter 只能是 Python 解释器（路径以 python、python3 或 python3.x 结尾）');
+      if (!/\/python(3(\.\d+)?)?$/.test(p)) throw new Error('interpreter 只能是 Python 解释器（路径以 python、python3 或 python3.x 结尾）');
       interpreter = String(x.interpreter).trim();
     }
     return { kind: 'script', lang: 'python', code: x.code, network: !!x.network, ...(declared ? { services } : {}), ...(timeoutMs ? { timeoutMs } : {}), ...(secrets.length ? { secrets } : {}), ...(interpreter ? { interpreter } : {}), ...(env ? { env } : {}) };

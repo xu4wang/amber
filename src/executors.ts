@@ -267,7 +267,7 @@ function validateEnvs(x: unknown): Record<string, ExecutorEnv> {
     const workdir = String(v?.workdir ?? '');
     if (!workdir.startsWith('/') || /(^|\/)\.\.(\/|$)/.test(workdir) || workdir === '/' || /[\0\n\r]/.test(workdir)) throw new AmberError('invalid', `环境「${k}」的 workdir 要是绝对路径，不能是根目录：${workdir}`);
     const interpreter = v?.interpreter === undefined ? undefined : String(v.interpreter);
-    if (interpreter !== undefined && (!interpreter.startsWith('/') || !/python[0-9.]*$/.test(interpreter))) throw new AmberError('invalid', `环境「${k}」的 interpreter 要是 Python 的绝对路径`);
+    if (interpreter !== undefined && (!interpreter.startsWith('/') || !/\/python(3(\.\d+)?)?$/.test(interpreter))) throw new AmberError('invalid', `环境「${k}」的 interpreter 要是 Python 的绝对路径`);
     const access = v?.access === undefined ? undefined : validateRemoteAccess(k, v.access);
     const vars = v?.vars === undefined ? undefined : validateVars(k, v.vars);
     const source = v?.source === undefined ? undefined : String(v.source).slice(0, 200);
@@ -303,7 +303,8 @@ function validateVars(env: string, x: any): Record<string, string> {
   if (entries.length > 20) throw new AmberError('invalid', `环境「${env}」的环境变量太多（最多 20 个）`);
   for (const [k, v] of entries) {
     if (!/^[A-Z][A-Z0-9_]{0,63}$/.test(k) || RESERVED_VARS.test(k)) throw new AmberError('invalid', `环境「${env}」不能设置环境变量 ${k}`);
-    const s = String(v);
+    if (typeof v !== 'string') throw new AmberError('invalid', `环境「${env}」的环境变量 ${k} 的值要是字符串`);
+    const s = v;
     if (s.length > 1024 || /[\0\n\r]/.test(s)) throw new AmberError('invalid', `环境「${env}」的环境变量 ${k} 的值不对`);
     out[k] = s;
   }
