@@ -659,6 +659,8 @@ test('followed environments (D53): changes within the approved follow apply at o
   assert.equal(followDiff({ e: base0 }, { e: base0, f: { workdir: '/z' } }), null, 'a new environment: approval');
   assert.deepEqual(followDiff({ e: base0, f: { workdir: '/z' } }, { e: base0 }), [{ env: 'f', added: {}, removed: {}, vars: [], removedEnv: true }], 'removing one: allowed');
   assert.deepEqual(followDiff({ e: { workdir: '/w' } }, { e: { workdir: '/w', follow: '/envs/e.json' } }), [], 'moving to the folder with the same content: silent');
+  assert.deepEqual(followDiff({ e: { workdir: '/w' } }, { e: { workdir: '/w', access: { readWrite: ['/w'] }, follow: '/envs/e.json' } }), [], 'the default access written out is the same content');
+  assert.deepEqual(followDiff({ e: { workdir: '/w', interpreter: '/p/python3', access: { readOnly: ['/w'] } } }, { e: { access: { readOnly: ['/w'] }, workdir: '/w', interpreter: '/p/python3', follow: '/envs/e.json' } }), [], 'key order does not matter');
   assert.equal(followDiff({ e: { workdir: '/w' } }, { e: { workdir: '/w', follow: '/envs/e.json', access: { readWrite: ['/'] } } }), null, '…but not with other changes');
   assert.equal(followDiff({ e: base0 }, { e: { ...base0, access: { readWrite: ['/w', '/n'] } }, f: { workdir: '/z' } }), null, 'a followed change plus a new environment: approval');
 

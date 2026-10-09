@@ -59,8 +59,10 @@ export function followDiff(prev: Record<string, ExecutorEnv>, next: Record<strin
     if (JSON.stringify(o) === JSON.stringify(n)) continue;
     changed = true;
     if (!o.follow && n.follow) {
+      // Same content, now read from its file (compare the effective form: no access = {WORKDIR} read-write).
       const { follow: _f, ...rest } = n;
-      if (JSON.stringify(rest) === JSON.stringify(o)) continue;   // same content, now read from its file
+      const norm = (x: ExecutorEnv) => JSON.stringify(Object.fromEntries(Object.entries({ ...x, access: effectiveAccess(x) }).sort(([a], [b]) => a.localeCompare(b))));
+      if (norm(rest) === norm(o)) continue;
       return null;
     }
     if (!o.follow || n.follow !== o.follow || (n.source ?? null) !== (o.source ?? null) || n.workdir !== o.workdir || !!n.realHome !== !!o.realHome) return null;
