@@ -400,24 +400,29 @@ export function secretPickCard(items: { c: CommandRow; where: string }[]): objec
 // ---------- executors (D50)
 
 function executorLines(e: ExecutorRow): string {
-  const list = (l?: string[]) => (l ?? []).map(p => `\`${sanitizeMarkdown(p, 300)}\``).join('、');
-  const envs = Object.entries(e.envs).flatMap(([k, v]) => {
-    const a = effectiveAccess(v), cred = credentialPaths(v);
+  const envs = Object.entries(e.envs).sort(([a], [b]) => a.localeCompare(b, 'zh')).flatMap(([k, v]) => {
+    const a = effectiveAccess(v), cred = new Set(credentialPaths(v));
+    // Every path on its own line, sorted; credential paths marked in place.
+    const lines = (l?: string[], mark = true) => [...(l ?? [])].sort().map(p => `　　- \`${sanitizeMarkdown(p, 300)}\`${mark && cred.has(p) ? ' <font color="red">⚠️ 凭证</font>' : ''}`);
+    const vars = Object.entries(v.vars ?? {}).sort(([x], [y]) => x.localeCompare(y));
     return [
-      `- 环境「${sanitizeMarkdown(k, 40)}」${v.source ? `（来源：${sanitizeMarkdown(v.source, 100)}）` : ''}：{WORKDIR} = \`${sanitizeMarkdown(v.workdir, 300)}\`${v.interpreter ? `，Python \`${sanitizeMarkdown(v.interpreter, 300)}\`` : ''}`,
-      ...(a.readWrite?.length ? [`　　可读写：${list(a.readWrite)}`] : []),
-      ...(a.readOnly?.length ? [`　　只读：${list(a.readOnly)}`] : []),
-      ...(a.deny?.length ? [`　　禁止：${list(a.deny)}`] : []),
-      ...(v.vars && Object.keys(v.vars).length ? [`　　环境变量：${Object.entries(v.vars).map(([n, val]) => `\`${sanitizeMarkdown(n, 64)}=${sanitizeMarkdown(val, 200)}\``).join('、')}`] : []),
-      ...(v.realHome ? ['　　HOME：用户主目录（和机器人会话里一样；能访问的仍只有上面这些路径）'] : []),
-      ...(cred.length ? [`　　<font color="red">⚠️ 含凭证路径：${list(cred)}（这个环境里的指令能使用这些凭证）</font>`] : []),
+      '',
+      `**环境「${sanitizeMarkdown(k, 40)}」**${v.source ? `（来源：${sanitizeMarkdown(v.source, 100)}）` : ''}`,
+      `- {WORKDIR}：\`${sanitizeMarkdown(v.workdir, 300)}\``,
+      ...(v.interpreter ? [`- Python：\`${sanitizeMarkdown(v.interpreter, 300)}\``] : []),
+      ...(a.readWrite?.length ? ['- 可读写：', ...lines(a.readWrite)] : []),
+      ...(a.readOnly?.length ? ['- 只读：', ...lines(a.readOnly)] : []),
+      ...(a.deny?.length ? ['- 禁止：', ...lines(a.deny, false)] : []),
+      ...(vars.length ? ['- 环境变量：', ...vars.map(([n, val]) => `　　- \`${sanitizeMarkdown(n, 64)}=${sanitizeMarkdown(val, 200)}\``)] : []),
+      ...(v.realHome ? ['- HOME：用户主目录（能访问的仍只有上面这些路径）'] : []),
+      ...(cred.size ? ['<font color="red">⚠️ 标记的是凭证路径（含凭证路径）：这个环境里的指令能使用这些凭证</font>'] : []),
     ];
   });
   return [
     `**执行端**：${e.name}`,
     `**来源机器**：${sanitizeMarkdown(e.machine, 60)}（按 IP 白名单识别）${e.version ? `　**版本**：${sanitizeMarkdown(e.version, 40)}` : ''}`,
     `**公钥指纹**：\`${showFingerprint(e.fingerprint)}\``,
-    '**环境**：', ...envs,
+    ...envs,
   ].join('\n');
 }
 

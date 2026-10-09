@@ -129,6 +129,12 @@ details.node details.node > summary { font-weight: 500; color: var(--muted); }
 .hljs-subst { color: var(--ink); }
 .kv { display: grid; grid-template-columns: 110px 1fr; gap: 4px 12px; font-size: 14px; margin-bottom: 12px; }
 .kv dt { color: var(--muted); } .kv dd { margin: 0; word-break: break-all; }
+.envblock { border-top: 1px solid var(--line); padding-top: 12px; margin-top: 12px; }
+.envblock h3 { font-size: 15px; margin: 0 0 8px; display: flex; gap: 10px; align-items: baseline; }
+.envblock h3 .sub { font-size: 12px; font-weight: 400; color: var(--muted); }
+ul.paths { list-style: none; margin: 0; padding: 0; }
+ul.paths li { padding: 1px 0; word-break: break-all; }
+.cred { color: var(--warn); }
 .manage { margin-top: 28px; padding-top: 12px; border-top: 1px dashed var(--line); }
 .manage h3 { margin: 0 0 6px; }
 .welcome { color: var(--muted); max-width: 560px; margin-top: 40px; }
@@ -441,22 +447,31 @@ function schPane({ s, scope }) {
 
 function exePane({ e }) {
   const ST = { pending: '等待管理员批准', approved: '已批准', rejected: '已拒绝', revoked: '已撤销' };
-  const codes = l => (l || []).map(p => `<code>${esc(p)}</code>`).join('、');
-  const envs = Object.entries(e.envs).map(([k, v]) => `<dt>环境「${esc(k)}」</dt><dd>${v.source ? `来源：${esc(v.source)}<br>` : ''}{WORKDIR} = <code>${esc(v.workdir)}</code>${v.interpreter ? `<br>Python <code>${esc(v.interpreter)}</code>` : ''}
-    ${v.access.readWrite?.length ? `<br>可读写：${codes(v.access.readWrite)}` : ''}${v.access.readOnly?.length ? `<br>只读：${codes(v.access.readOnly)}` : ''}${v.access.deny?.length ? `<br>禁止：${codes(v.access.deny)}` : ''}
-    ${v.vars && Object.keys(v.vars).length ? `<br>环境变量：${Object.entries(v.vars).map(([n, x]) => `<code>${esc(n)}=${esc(x)}</code>`).join('、')}` : ''}
-    ${v.realHome ? '<br>HOME：用户主目录（能访问的仍只有上面这些路径）' : ''}
-    ${v.credential?.length ? `<br><span style="color:var(--warn)">⚠️ 含凭证路径：${codes(v.credential)}（这个环境里的指令能使用这些凭证）</span>` : ''}</dd>`).join('');
+  // One block per environment; every path on its own line, sorted; credential paths marked in place.
+  const pathList = (l, cred) => `<ul class="paths">${[...(l || [])].sort().map(p => `<li><code>${esc(p)}</code>${cred.has(p) ? ' <span class="cred">⚠️ 凭证</span>' : ''}</li>`).join('')}</ul>`;
+  const envs = Object.entries(e.envs).sort(([a], [b]) => a.localeCompare(b, 'zh')).map(([k, v]) => {
+    const cred = new Set(v.credential || []);
+    const vars = Object.entries(v.vars || {}).sort(([a], [b]) => a.localeCompare(b));
+    return `<div class="envblock"><h3>环境「${esc(k)}」${v.source ? `<span class="sub">来源：${esc(v.source)}</span>` : ''}</h3><dl class="kv">
+      <dt>{WORKDIR}</dt><dd><code>${esc(v.workdir)}</code></dd>
+      ${v.interpreter ? `<dt>Python</dt><dd><code>${esc(v.interpreter)}</code></dd>` : ''}
+      ${v.access.readWrite?.length ? `<dt>可读写</dt><dd>${pathList(v.access.readWrite, cred)}</dd>` : ''}
+      ${v.access.readOnly?.length ? `<dt>只读</dt><dd>${pathList(v.access.readOnly, cred)}</dd>` : ''}
+      ${v.access.deny?.length ? `<dt>禁止</dt><dd>${pathList(v.access.deny, new Set())}</dd>` : ''}
+      ${vars.length ? `<dt>环境变量</dt><dd><ul class="paths">${vars.map(([n, x]) => `<li><code>${esc(n)}=${esc(x)}</code></li>`).join('')}</ul></dd>` : ''}
+      ${v.realHome ? '<dt>HOME</dt><dd>用户主目录（能访问的仍只有上面这些路径）</dd>' : ''}
+    </dl>${cred.size ? '<p class="note cred">⚠️ 标记的是凭证路径：这个环境里的指令能使用这些凭证。</p>' : ''}</div>`;
+  }).join('');
   document.getElementById('pane').innerHTML = `${backBtn}
     <div class="pane-head"><h1>${esc(e.name)}</h1><span class="chip">${esc(ST[e.status] || e.status)}${e.status === 'approved' ? (e.online ? ' · 在线' : ' · 离线') : ''}</span></div>
     <div class="where">执行端 ${esc(e.id)} · 来源机器 ${esc(e.machine)}${e.version ? ' · 版本 ' + esc(e.version) : ''}</div>
     <div class="box" style="margin-top:16px"><dl class="kv">
       <dt>公钥指纹</dt><dd><code>${esc(e.fingerprint)}</code></dd>
-      ${envs}
       <dt>申请时间</dt><dd>${fmtTime(e.createdAt)}</dd>
       <dt>最后在线</dt><dd>${e.lastSeen ? fmtTime(e.lastSeen) : '从未'}</dd>
       ${e.decidedBy ? `<dt>处理</dt><dd>${esc(e.decidedBy)} · ${fmtTime(e.decidedAt)}</dd>` : ''}
     </dl>
+    ${envs}
     ${e.status === 'pending' ? `<p class="note">批准前请先和安装的人核对公钥指纹（执行端安装时会打印出来）。批准后，声明了 <code>env: "${esc(e.name)}/环境名"</code> 并通过审核的指令会在这台机器上按各自的沙箱策略执行。</p>
       <div class="actions"><button class="btn primary" data-exe="approve">批准</button> <button class="btn" data-exe="reject">拒绝</button></div>` : ''}
     ${e.status === 'approved' ? `<p class="note">撤销后立即生效：不再给它派任务，正在等结果的任务立即失败。要恢复，需要在那台机器上重新生成密钥并再次批准。</p>
