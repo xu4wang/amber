@@ -4,6 +4,7 @@
 //   first run a successful trial with their own identity.
 // - Every configured reviewer must approve the exact spec_hash (D16); any reject rejects.
 import type * as lark from '@larksuiteoapi/node-sdk';
+import { randomUUID } from 'node:crypto';
 import type { Store, CommandRow, ParamDef, Script, CommandOptions } from './db.ts';
 import { normalizeOptions } from './db.ts';
 import { computeSpecHash } from './db.ts';
@@ -271,9 +272,25 @@ export class Flow {
     if ((d as any).steps !== undefined) throw new AmberError('bad_script', '应用不再有「步骤」：请提交一段 script（参数 + 一段脚本）');
     try { d.script = validateScript(d.script); } catch (e) { throw new AmberError('bad_script', (e as Error).message); }
     checkParams(d.params ?? []);
-    if (this.store.nameInProgress(d.chatId, d.name)) throw new AmberError('name_taken', `「${d.name}」已有一个版本在认领或审核中，请等它结束（或在认领卡上丢弃）后再提交`);
-    // Same name as an active command here = a new version of it (D38).
-    const prev = this.store.activeByName(d.chatId, d.name);
+    // Who the agent is working for, if it says so: it decides which same-named app this is a new version of.
+    let claimerId: string | undefined;
+    if (d.claimer) {
+      const { ids } = await this.resolveEmails([d.claimer]);
+      if (!ids[0]) throw new AmberError('claimer_unresolved', `找不到认领人 ${d.claimer}`);
+      claimerId = ids[0];
+    }
+    // Same name as an active app here = a new version of it (D38). Several people may each have an app of that
+    // name in one chat (clones, #4 visibility): the claimer's own one; without a claimer, the only one there is.
+    // Store installations are never replaced by a submission: they are upgraded from the Store.
+    const same = this.store.activeByChatName(d.chatId, d.name).filter(c => !this.store.installOf(c.id));
+    let prev: CommandRow | undefined;
+    if (claimerId) prev = same.find(c => c.ownerUnionId === claimerId);
+    else if (same.length === 1) prev = same[0];
+    else if (same.length > 1) throw new AmberError('ambiguous', `这里有好几个叫「${d.name}」的应用，提交时请带上 claimer（让你固化的那个人的邮箱），Amber 才知道是谁的那个的新版本`);
+    // A brand-new app takes its name as its line when that is free here; otherwise a line of its own.
+    const line = prev ? prev.line : this.store.activeByName(d.chatId, d.name) || this.store.nameInProgress(d.chatId, d.name) ? `${d.name}#${randomUUID().slice(0, 8)}` : d.name;
+    if (prev && this.store.nameInProgress(d.chatId, line)) throw new AmberError('name_taken', `「${d.name}」已有一个版本在认领或审核中，请等它结束（或在认领卡上丢弃）后再提交`);
+    if (!prev && !claimerId && this.store.nameInProgress(d.chatId, d.name)) throw new AmberError('name_taken', `「${d.name}」已有一个版本在认领或审核中，请等它结束（或在认领卡上丢弃）后再提交`);
     if ((d as any).sideEffect !== undefined) throw new AmberError('bad_options', '已不区分读写：请用 options.confirm（执行前确认）/ options.schedulable（允许定时）');
     // D47: read-only data commands are usually wanted on a schedule, so a draft that does not say
     // otherwise is schedulable. It is still shown on the claim card and reviewed like any option.
@@ -281,10 +298,8 @@ export class Flow {
     const options = normalizeOptions({ ...rawOptions, schedulable: rawOptions.schedulable === undefined ? true : rawOptions.schedulable });
     let expectedClaimer: string | undefined;
     if (d.chatType === 'p2p') {
-      if (!d.claimer) throw new AmberError('claimer_required', '私聊草稿需要指定认领人（email）');
-      const { ids } = await this.resolveEmails([d.claimer]);
-      if (!ids[0]) throw new AmberError('claimer_unresolved', `找不到认领人 ${d.claimer}`);
-      expectedClaimer = ids[0];
+      if (!claimerId) throw new AmberError('claimer_required', '私聊草稿需要指定认领人（email）');
+      expectedClaimer = claimerId;
       if (prev && prev.ownerUnionId !== expectedClaimer) throw new AmberError('not_owner', `「${d.name}」的新版本只能由原创建人认领`);
       // Anti-spam: an agent picks the claimer for p2p drafts, so cap how many claim cards one person can receive.
       if (this.store.recentDraftsFor(expectedClaimer, 3600_000) >= 5) throw new AmberError('rate_limited', '这位认领人一小时内已收到 5 张认领卡，请稍后再提交');
@@ -292,14 +307,10 @@ export class Flow {
     // Group drafts: an optional claimer (the person who asked the agent) is only @-mentioned on the
     // claim card so they notice it (D46). It grants nothing: any group member may still claim.
     let notifyOpenId: string | undefined;
-    if (d.chatType !== 'p2p' && d.claimer) {
-      const { ids } = await this.resolveEmails([d.claimer]);
-      if (!ids[0]) throw new AmberError('claimer_unresolved', `找不到认领人 ${d.claimer}`);
-      notifyOpenId = await this.openIdOf(ids[0]);
-    }
+    if (d.chatType !== 'p2p' && claimerId) notifyOpenId = await this.openIdOf(claimerId);
     const row = this.store.insertCommand({
       scopeType: d.chatType, chatId: d.chatId, ownerUnionId: expectedClaimer ?? '', name: d.name, description: d.description ?? '',
-      params: d.params ?? [], script: d.script, options, status: 'draft',
+      params: d.params ?? [], script: d.script, options, status: 'draft', line,
     });
     this.store.setMeta(row.id, { expectedClaimer: expectedClaimer ?? null, originMessageId: d.originMessageId ?? null, submittedBy: d.submittedBy ?? null, replaces: prev?.id ?? null });
     this.store.audit(null, 'draft.submit', { id: row.id, name: row.name, chatId: row.chatId, chatType: d.chatType, submittedBy: d.submittedBy, machine: d.machine ?? null, specHash: row.specHash, replaces: prev?.id ?? null });

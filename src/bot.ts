@@ -1,8 +1,9 @@
 import * as lark from '@larksuiteoapi/node-sdk';
+import { randomUUID } from 'node:crypto';
 import type { Store, CommandRow, ScopeType } from './db.ts';
 import type { Caller, Block } from './engine.ts';
 import { ENV_NOT_GLOBAL, visibleCommands, findVisible, findManageable, runCommand, AmberError, secretVault, lineOf, dropOrphanSettings, runParams } from './engine.ts';
-import { Mentions, reassignCard, listCard, formCard, runningCard, resultCard, errorCard, infoCard, retireConfirmCard, closedCard, secretFormCard, secretPickCard, executorApprovalCard, executorDecidedCard, executorListCard, executorFollowCard } from './cards.ts';
+import { Mentions, reassignCard, cloneCard, listCard, formCard, runningCard, resultCard, errorCard, infoCard, retireConfirmCard, closedCard, secretFormCard, secretPickCard, executorApprovalCard, executorDecidedCard, executorListCard, executorFollowCard } from './cards.ts';
 import { ExecutorHub } from './executors.ts';
 import { AppStore } from './apps.ts';
 import type { AmberConfig } from './config.ts';
@@ -258,6 +259,74 @@ export class AmberBot {
     }
     this.store.audit(admin.unionId, 'command.reassign_request', { commandId: c.id, name: c.name, chatId: c.chatId, from: c.ownerUnionId, to: toUnionId, requestId: req.id });
     return { requestId: req.id };
+  }
+
+  /** The creator offers a copy of their group app to another member of the group (#8). Nothing changes until
+   *  that person accepts; their copy is then a separate app of theirs. */
+  async requestClone(cmdId: string, toUnionId: string, from: { unionId: string; openId?: string }): Promise<{ requestId: string }> {
+    const c = this.store.getCommand(cmdId);
+    if (!c || c.status !== 'active') throw new AmberError('not_found', '没有找到这个应用');
+    if (c.ownerUnionId !== from.unionId) throw new AmberError('forbidden', '只有应用的创建人可以复制给别人');
+    if (c.scopeType !== 'group') throw new AmberError('bad_target', '只有群里的应用可以复制给同群的人');
+    if (this.store.installOf(c.id)) throw new AmberError('bad_target', '从 Amber Store 装的应用不能复制；对方可以自己去 Store 安装');
+    if (toUnionId === from.unionId) throw new AmberError('bad_target', '不能复制给自己');
+    this.memberCache.delete(c.chatId);
+    if (await this.isMember(c.chatId, toUnionId) !== true) throw new AmberError('bad_target', '只能复制给这个群的成员');
+    // One open offer per person: a new one replaces the old.
+    for (const r of this.store.awaitingOffers('clone', c.id).filter(r => r.targetUnionId === toUnionId)) this.store.transitionRequest(r.id, 'awaiting', 'canceled', { actorUnionId: from.unionId });
+    const req = this.store.insertRequest({ kind: 'clone', commandId: c.id, specHash: c.specHash, chatId: c.chatId, chatType: 'group', targetUnionId: toUnionId,
+      args: { from: from.unionId }, rule: null, scheduleId: null, requestedBy: from.unionId, replyTo: null, inThread: false });
+    const card = cloneCard({ requestId: req.id, name: c.name, chatName: (await this.chatName(c.chatId)) ?? '这个群', fromOpenId: from.openId, description: c.description,
+      config: this.store.configRows(c.chatId, c.line).filter(r => c.params.some(p => p.scope === 'config' && p.name === r.name)).length, secrets: c.script.secrets ?? [], env: c.script.env });
+    try {
+      const mid = await this.flow.send({ unionId: toUnionId }, card);
+      if (mid) this.store.setRequestMessage(req.id, mid);
+    } catch {
+      this.store.transitionRequest(req.id, 'awaiting', 'failed', { error: 'card_failed' });
+      throw new AmberError('send_failed', '没能把确认卡发给对方，请稍后再试');
+    }
+    this.store.audit(from.unionId, 'command.clone_offer', { requestId: req.id, commandId: c.id, name: c.name, chatId: c.chatId, to: toUnionId });
+    return { requestId: req.id };
+  }
+
+  private async onCloneClick(value: Record<string, string>, form: Record<string, string>, caller: Caller): Promise<object> {
+    const req = this.store.getRequest(String(value.r));
+    if (!req || req.kind !== 'clone') throw new AmberError('not_found', '这个请求已不存在');
+    if (req.targetUnionId !== caller.unionId) throw new AmberError('forbidden', '这张卡片是发给别人的');
+    if (req.status !== 'awaiting') throw new AmberError('closed', '这个请求已经处理过或被取消了');
+    const src = req.commandId ? this.store.getCommand(req.commandId) : undefined;
+    if (value.a === 'cl_no') {
+      this.store.transitionRequest(req.id, 'awaiting', 'canceled', { actorUnionId: caller.unionId });
+      this.store.audit(caller.unionId, 'command.clone_decline', { requestId: req.id, commandId: req.commandId });
+      return closedCard('没有接收', 'grey', `你没有接收「${src?.name ?? '应用'}」。`);
+    }
+    if (Date.now() - req.createdAt > REASSIGN_TTL_MS) {
+      this.store.transitionRequest(req.id, 'awaiting', 'expired');
+      throw new AmberError('expired', '这张卡片已超过 7 天，请让对方重新发起');
+    }
+    const name = String(form.name ?? src?.name ?? '').trim();
+    if (!name || name.length > 40 || /\s/.test(name)) throw new AmberError('bad_name', '名称不能为空、不能有空格、最多 40 个字');
+    const fail = (why: string) => { this.store.transitionRequest(req.id, 'awaiting', 'failed', { error: why }); return closedCard('没有接收', 'red', why); };
+    if (!src || src.status !== 'active' || src.specHash !== req.specHash || src.ownerUnionId !== (req.args.from ?? '')) return fail('这个应用在发起之后已经更新、下线或换了负责人，请让对方重新发起。');
+    this.memberCache.delete(src.chatId);
+    if (await this.isMember(src.chatId, caller.unionId) !== true) return fail('你已不在这个群里，不能接收。');
+    // Re-read after the await, then no more awaits until the copy exists.
+    const now = this.store.getCommand(src.id);
+    if (!now || now.status !== 'active' || now.specHash !== req.specHash) return fail('这个应用在发起之后已经更新或下线，请让对方重新发起。');
+    if (visibleCommands(this.store, { ...caller, chatId: src.chatId, chatType: 'group' }).some(c => c.name === name)) throw new AmberError('name_taken', `你在这个群里已经有一个叫「${name}」的应用，请换个名字再点接收`);
+    if (!this.store.transitionRequest(req.id, 'awaiting', 'running', { actorUnionId: caller.unionId })) throw new AmberError('closed', '这个请求已经处理过了');
+    // A separate app: same reviewed code, its own line and owner. Configuration values come along (not secret);
+    // secrets and schedules do not.
+    const copy = this.store.insertCommand({ scopeType: 'group', chatId: src.chatId, ownerUnionId: caller.unionId, name, description: now.description,
+      params: now.params, script: now.script, options: now.options, status: 'active', line: `${name}#${randomUUID().slice(0, 8)}` });
+    this.store.setMeta(copy.id, { ownerOpenId: caller.openId ?? null });
+    const declared = new Set(now.params.filter(p => p.scope === 'config').map(p => p.name));
+    for (const r of this.store.configRows(now.chatId, now.line)) if (declared.has(r.name)) this.store.putConfig(copy.chatId, copy.line, r.name, r.value, caller.unionId);
+    this.store.transitionRequest(req.id, 'running', 'done', { actorUnionId: caller.unionId });
+    this.store.audit(caller.unionId, 'command.clone', { requestId: req.id, from: now.id, fromSpec: now.specHash, to: copy.id, chatId: copy.chatId, name });
+    try { await this.flow.send({ unionId: req.requestedBy }, infoCard('对方已接收', `「${now.name}」已复制给对方，现在是对方自己的应用。`)); } catch { /* best effort */ }
+    const needs = now.script.secrets?.length ? `它需要密钥（${now.script.secrets.join('、')}），请先在网站上这个应用的页面里填写，填好之前不能执行。` : '';
+    return closedCard(`已接收：${name}`, 'green', `「${name}」现在是你自己的应用，在这个群里 @Amber 发「${name}」就能执行。${needs}`);
   }
 
   /** The person an orphaned command was offered to clicks: accept (optionally rebuilding its schedules as them) or decline. */
@@ -817,6 +886,7 @@ export class AmberBot {
         return raw(await this.agent.onClick(value.a === 'req_ok', String(value.r), caller, chatId, messageId));
       }
       if (value.a === 'rs_ok' || value.a === 'rs_no') return raw(await this.onReassignClick(value, caller));
+      if (value.a === 'cl_ok' || value.a === 'cl_no') return raw(await this.onCloneClick(value, d.action?.form_value ?? {}, caller));
       if (value.a === 'sch_rebind' || value.a === 'sch_drop') {
         const s = this.store.getSchedule(String(value.s));
         if (!s) throw new AmberError('not_found', '定时任务已不存在');

@@ -42,8 +42,9 @@ test('reassign: an admin offers an orphaned command; the member who accepts owns
     env.amber.store.updateSchedule(s2.id, { status: 'paused', pauseReason: '手动暂停' });
     const ov = await (await fetch(`${base}/web/api/overview`, { headers: { cookie: aliceCookie } })).json();
     assert.equal(ov.groups[0].commands.find((c: any) => c.id === id).orphan, true, 'admins see it marked');
-    // Only admins pick from the group's members, and only members can be chosen.
-    assert.equal((await fetch(`${base}/web/api/groups/${GROUP}/members`, { headers: { cookie: carolCookie } })).status, 404);
+    // Admins (and the group's members) list its members; only members can be chosen.
+    const bobCookie = await login(env, bob);
+    assert.equal((await fetch(`${base}/web/api/groups/${GROUP}/members`, { headers: { cookie: bobCookie } })).status, 404, 'not a member any more');
     const members = (await (await fetch(`${base}/web/api/groups/${GROUP}/members`, { headers: { cookie: aliceCookie } })).json()).members;
     assert.deepEqual(members.map((x: any) => x.name).sort(), ['alice', 'carol']);
     assert.equal((await offer(carolCookie, carol.unionId)).status, 403, 'not an admin');

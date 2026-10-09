@@ -437,6 +437,9 @@ function cmdPane(key, { c, scope }) {
       <p class="note">这个应用运行时需要下面的密钥。值加密保存在 Amber 里，只交给这个应用使用，设置后不能再查看。${c.global ? '<br><b>这是全局应用，每个执行它的人都会用到同一份密钥</b>，请只填权限够用的凭证。' : ''}${c.canManage ? '' : '<br>只有创建人或管理员可以设置。'}</p>
       ${c.secrets.map(x => `<div class="field"><label>${esc(x.name)}</label><span class="examples">${c.canManage ? `<input type="password" autocomplete="new-password" data-secret-input="${esc(x.name)}" placeholder="${x.set ? '留空不修改' : '填写值（至少 6 个字符）'}"> <button type="button" class="btn small" data-secret="${esc(x.name)}:set">保存</button>${x.set ? ` <button type="button" class="btn small" data-secret="${esc(x.name)}:delete">删除</button>` : ''}<br>` : ''}<span class="note">${x.set ? `已设置${x.last4 ? ' · 末尾 ' + esc(x.last4) : ''}` : '<span style="color:var(--warn)">未设置</span>'}</span></span></div>`).join('')}
     </div>` : ''}
+    ${c.canClone ? `<div class="manage"><h3 class="note">复制给群成员</h3>
+      <p class="note">把这个应用复制一份给群里的另一个人。对方在飞书上点「接收」后，那一份就是他自己的应用：以他的身份执行，配置项会复制过去，密钥要他自己填；之后和你的这个互不影响。代码已经审核过，不用再审。</p>
+      <div class="field"><label>给</label><span class="examples"><select data-clone-to><option value="">读取群成员中……</option></select> <button type="button" class="btn small" data-clone="1">发送</button></span></div></div>` : ''}
     ${c.orphan ? `<div class="manage"><h3 class="note">重新分配</h3>
       <p class="note">这个应用的创建人已不在群里，现在没人能执行它。可以把它交给群里的另一个人：Amber 私聊发确认卡，对方点「接收」后成为创建人，原来的配置项和密钥保留；原来的定时任务由对方选择是否以他的身份重建。</p>
       <div class="field"><label>交给</label><span class="examples"><select data-reassign-to><option value="">读取群成员中……</option></select> <button type="button" class="btn small" data-reassign="1">发送确认卡</button></span></div></div>` : ''}
@@ -452,10 +455,11 @@ function cmdPane(key, { c, scope }) {
   if (last && c.canRun) showOutput(document.getElementById('out'), last.r, last.meta);
   if (!c.canRun) loadSource();
   if (c.orphan) loadMembers(scope);
+  if (c.canClone) loadMembers(scope, '[data-clone-to]');
 }
 
-async function loadMembers(scope) {
-  const sel = document.querySelector('[data-reassign-to]');
+async function loadMembers(scope, selector = '[data-reassign-to]') {
+  const sel = document.querySelector(selector);
   const chat = scope.replace(/^group:/, '');
   const x = await fetch(`/web/api/groups/${encodeURIComponent(chat)}/members`).then(r => r.json()).catch(() => ({ ok: false }));
   if (!sel) return;
@@ -791,6 +795,17 @@ document.addEventListener('click', async ev => {
     if (!r.ok) { alert(r.message || r.error); pub.disabled = false; return; }
     alert('已提交上架审核，结果会私聊通知你。');
     await reload(SEL);
+    return;
+  }
+  const cl = ev.target.closest('[data-clone]');
+  if (cl) {
+    const { c, scope } = ITEMS.get(SEL);
+    const sel = document.querySelector('[data-clone-to]');
+    if (!sel || !sel.value) { alert('请先选择群成员'); return; }
+    cl.disabled = true;
+    const r = await post(`/web/api/commands/${encodeURIComponent(c.id)}/clone`, { scope, to: sel.value });
+    cl.disabled = false;
+    alert(r.ok ? '已私聊发出确认卡，对方接收后就是他自己的应用。' : (r.message || r.error));
     return;
   }
   const ra = ev.target.closest('[data-reassign]');

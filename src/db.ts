@@ -109,7 +109,7 @@ export interface ListingRow {
   reason: string | null; createdAt: number;
 }
 
-export type RequestKind = 'run' | 'schedule' | 'schedule_resume' | 'schedule_delete' | 'retire' | 'scope_global' | 'scope_local' | 'reassign';
+export type RequestKind = 'run' | 'schedule' | 'schedule_resume' | 'schedule_delete' | 'retire' | 'scope_global' | 'scope_local' | 'reassign' | 'clone';
 export type RequestStatus = 'awaiting' | 'running' | 'done' | 'failed' | 'canceled' | 'expired';
 export interface RequestRow {
   id: string; kind: RequestKind; commandId: string | null; specHash: string | null; chatId: string; chatType: ScopeType;
@@ -501,6 +501,11 @@ export class Store {
     return !!this.db.prepare(`SELECT 1 FROM commands WHERE chat_id = ? AND COALESCE(line, name) = ? AND status IN ('pending','draft')`).get(chatId, line);
   }
 
+  /** Active apps in a chat with this name, whatever their line (several people may each have one). */
+  activeByChatName(chatId: string, name: string): CommandRow[] {
+    return (this.db.prepare(`SELECT * FROM commands WHERE chat_id = ? AND name = ? AND status = 'active' ORDER BY created_at`).all(chatId, name) as Record<string, unknown>[]).map(r => this.toRow(r));
+  }
+
   /** The active version of a line in a chat. For a submitted command the line is its name, so this is also
    *  "the active command with this name" — never a Store installation, which has a line of its own. */
   activeByName(chatId: string, line: string): CommandRow | undefined {
@@ -582,6 +587,11 @@ export class Store {
       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(row.id, row.kind, row.commandId, row.specHash, row.chatId, row.chatType, row.targetUnionId,
       JSON.stringify(row.args), row.rule ? JSON.stringify(row.rule) : null, row.scheduleId, row.requestedBy, row.replyTo, row.inThread ? 1 : 0, row.status, row.createdAt);
     return row;
+  }
+
+  /** Offers of a given kind still waiting for a click. */
+  awaitingOffers(kind: RequestKind, commandId: string): RequestRow[] {
+    return (this.db.prepare(`SELECT id FROM requests WHERE kind = ? AND command_id = ? AND status = 'awaiting'`).all(kind, commandId) as { id: string }[]).map(r => this.getRequest(r.id)!);
   }
 
   /** Reassignments of a command still waiting for the new owner's click. */

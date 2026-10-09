@@ -345,6 +345,25 @@ export function reassignCard(o: { requestId: string; name: string; chatName: str
   ]);
 }
 
+/** Someone offers a copy of their app to a member of the same group; it is a separate app once accepted. */
+export function cloneCard(o: { requestId: string; name: string; chatName: string; fromOpenId?: string; description: string; config: number; secrets: string[]; env?: string }): object {
+  const notes = [
+    o.config ? `原来设置的 ${o.config} 个配置项会一起复制过来，可以在网站上改。` : '',
+    o.secrets.length ? `它需要密钥（${sanitizeMarkdown(o.secrets.join('、'), 200)}）：不会复制，接收后在网站上填你自己的。` : '',
+    o.env ? `它在执行端环境「${sanitizeMarkdown(o.env, 60)}」里运行，复制后也在那里运行，能访问的数据和原来一样。` : '',
+  ].filter(Boolean).join('\n');
+  return shell(`Amber · 送你一个应用：${o.name}`, 'blue', [
+    { tag: 'markdown', content: `${o.fromOpenId ? person(o.fromOpenId) : '有人'} 想把群「${sanitizeMarkdown(o.chatName, 40)}」里的应用「**${sanitizeMarkdown(o.name, 40)}**」复制一份给你。${o.description ? `\n<font color="grey">${sanitizeMarkdown(o.description, 200)}</font>` : ''}\n\n接收后它是你自己的一个新应用：只有你能执行，以你的身份和数据权限执行；你可以提交新版本（照常审核）或下线，和原来那个不再有关系。代码已经审核过，不用再审。${notes ? `\n\n${notes}` : ''}` },
+    { tag: 'form', name: 'clone', elements: [
+      { tag: 'input', name: 'name', label: { tag: 'plain_text', content: '名称' }, label_position: 'left', default_value: o.name, placeholder: { tag: 'plain_text', content: '同一个群里你的应用不能重名' } },
+      buttonRow([
+        btn('接收', { a: 'cl_ok', r: o.requestId }, 'primary', { form_action_type: 'submit', name: 'ok' }),
+        btn('不接收', { a: 'cl_no', r: o.requestId }, 'danger', { form_action_type: 'submit', name: 'no' }),
+      ]),
+    ] },
+  ]);
+}
+
 export function closedCard(title: string, template: string, md: string): object {
   return shell(`Amber · ${title}`, template, [{ tag: 'markdown', content: md }]);
 }

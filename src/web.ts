@@ -47,6 +47,7 @@ export interface WebDeps {
   isOrphan(c: CommandRow): Promise<boolean | undefined>;
   groupMembers(chatId: string): Promise<{ unionId: string; name: string }[]>;
   requestReassign(cmdId: string, toUnionId: string, admin: { unionId: string; openId?: string }): Promise<{ requestId: string }>;
+  requestClone?(cmdId: string, toUnionId: string, from: { unionId: string; openId?: string }): Promise<{ requestId: string }>;
   /** Amber Store (#4), and the groups Amber is in (where apps can be installed). */
   apps?: AppStore;
   botGroups?(): Promise<{ chatId: string; name: string }[]>;
@@ -206,9 +207,10 @@ export function startWeb(port: number, store: Store, deps: WebDeps): import('nod
           return json(res, 200, { ok: true, ...deps.apps!.source(app) });
         }
         if (req.method === 'GET' && url.pathname.startsWith('/web/api/groups/')) {
-          // Members of a group, for an admin offering an orphaned command to someone (#4).
+          // Members of a group: for an admin offering an orphaned app to someone (#4), or a member copying their app
+          // to another member (#8). Only admins and the group's own members may list it.
           const g = /^\/web\/api\/groups\/(oc_[A-Za-z0-9]+)\/members$/.exec(url.pathname);
-          if (!g || !deps.isAdmin(who.unionId)) return json(res, 404, { ok: false, error: 'not_found' });
+          if (!g || (!deps.isAdmin(who.unionId) && await deps.isMember(g[1], who.unionId) !== true)) return json(res, 404, { ok: false, error: 'not_found' });
           return json(res, 200, { ok: true, members: await deps.groupMembers(g[1]) });
         }
         if (req.method === 'GET' && url.pathname === '/web/api/runs') {
@@ -277,6 +279,13 @@ export function startWeb(port: number, store: Store, deps: WebDeps): import('nod
             store.audit(who.unionId, 'secret.set', { commandId: c.id, chatId: c.chatId, name: c.name, secrets: [name], via: 'web' });
           }
           return json(res, 200, { ok: true, secrets: vault.info(lineOf(c), c.script.secrets!) });
+        }
+        if ((m = /^\/web\/api\/commands\/([A-Za-z0-9-]{1,40})\/clone$/.exec(url.pathname))) {
+          // #8: the creator copies their group app to another member; it is theirs once they accept.
+          if (!deps.requestClone) throw new AmberError('not_found', '不支持');
+          const t = await target(store, deps, who.unionId, String(body.scope ?? ''), m[1]);
+          const r = await deps.requestClone(t.cmd.id, String(body.to ?? ''), { unionId: who.unionId, openId: who.openId ?? undefined });
+          return json(res, 200, { ok: true, ...r });
         }
         if ((m = /^\/web\/api\/commands\/([A-Za-z0-9-]{1,40})\/reassign$/.exec(url.pathname))) {
           if (!deps.isAdmin(who.unionId)) throw new AmberError('forbidden', '只有管理员可以重新分配应用');
@@ -412,6 +421,7 @@ function storeInfo(c: CommandRow, viewer: string | undefined, store: Store, apps
     listing: !!pending,
     publishable: !!viewer && c.ownerUnionId === viewer && !apps.whyNotListable(c, viewer),
     upgrade: !!viewer && c.ownerUnionId === viewer ? apps.upgradeOf(c) ?? null : null,
+    canClone: !!viewer && c.ownerUnionId === viewer && c.scopeType === 'group' && c.status === 'active' && !inst,
   };
 }
 
