@@ -7,6 +7,8 @@ import { join } from 'node:path';
 import { tmpdir, homedir } from 'node:os';
 
 export const MAX_OUTPUT_BYTES = 256 * 1024;
+/** Last three non-empty lines, joined, capped so one long line (a JSON table) cannot flood the error. */
+const tail = (s        ) => { const t = s.trim().split('\n').filter(l => l.trim()).slice(-3).join(' / '); return t.length > 500 ? '…' + t.slice(-500) : t; };
                                                                                
 
 /** `profileFor` gets the run's private dir (also cwd, HOME and TMPDIR); inputs go in on stdin as JSON. */
@@ -33,7 +35,11 @@ export async function runSandboxed(o                                            
         clearTimeout(timer);
         if (big) return resolve({ ok: false, content: '', error: '输出超过 256KB' });
         if (signal) return resolve({ ok: false, content: '', error: '运行超时或被终止' });
-        if (code !== 0) return resolve({ ok: false, content: '', error: `脚本退出码 ${code}${err ? `：${err.trim().split('\n').slice(-3).join(' / ')}` : ''}` });
+        if (code !== 0) {
+          // A script may report its failure on either stream; show the tail of both, stderr first.
+          const why = [err, out.toString('utf8')].map(tail).filter(Boolean).join(' / ');
+          return resolve({ ok: false, content: '', error: `脚本退出码 ${code}${why ? `：${why}` : ''}` });
+        }
         resolve({ ok: true, content: out.toString('utf8') });
       });
       child.stdin.on('error', () => { /* script exited without reading stdin */ });

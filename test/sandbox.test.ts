@@ -125,3 +125,18 @@ test('sandbox: a declared interpreter is used (packages from its own environment
   assert.equal(r.ok, true, r.error);
   assert.doesNotMatch(r.content, /CommandLineTools/);
 });
+
+test('sandbox: a failing script shows the tail of stdout as well as stderr', async () => {
+  const fail = async (code: string) => {
+    const r = await runScript(validateScript({ kind: 'script', lang: 'python', code, timeoutMs: 15000 }), { params: {}, caller: { unionId: 'u', chatId: 'c', channel: 'bot' }, runId: 'r' });
+    assert.equal(r.ok, false);
+    return r.error ?? '';
+  };
+  // Reason printed to stdout only (the case that used to show a bare exit code).
+  assert.equal(await fail('import sys\nprint("## 标题")\nprint("查询失败：validation_error permission_denied")\nsys.exit(1)'), '脚本退出码 1：## 标题 / 查询失败：validation_error permission_denied');
+  // Both streams: stderr first.
+  assert.equal(await fail('import sys\nprint("out")\nsys.exit("err")'), '脚本退出码 1：err / out');
+  // Silent failure keeps the bare form; a huge stdout line is capped.
+  assert.equal(await fail('import sys\nsys.exit(3)'), '脚本退出码 3');
+  assert.ok((await fail('import sys\nprint("x" * 100000)\nsys.exit(1)')).length < 600);
+});
