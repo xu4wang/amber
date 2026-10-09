@@ -59,7 +59,17 @@ export function computeSpecHash(c: Pick<CommandRow, 'name' | 'params' | 'script'
 
 export type ExecutorStatus = 'pending' | 'approved' | 'rejected' | 'revoked';
 /** An environment on an executor: the directory {WORKDIR} stands for, and the Python to use there. */
-export interface ExecutorEnv { workdir: string; interpreter?: string }
+export interface ExecutorEnv {
+  workdir: string; interpreter?: string;
+  /** What scripts in this environment may access (D51). Absent = {WORKDIR} read-write. */
+  access?: { readOnly?: string[]; readWrite?: string[]; deny?: string[] };
+  /** Extra environment variables for scripts, e.g. LARKSUITE_CLI_CONFIG_DIR for a bot's lark-cli identity. */
+  vars?: Record<string, string>;
+  /** Where the definition came from, e.g. "botmux:cli_xxx". Shown to admins. */
+  source?: string;
+  /** HOME is the user's real home (as in the bot's own sessions) instead of the run dir. */
+  realHome?: boolean;
+}
 export interface ExecutorRow {
   id: string; name: string; fingerprint: string; signPub: string; boxPub: string; envs: Record<string, ExecutorEnv>;
   machine: string; version: string; status: ExecutorStatus; createdAt: number; decidedBy: string | null; decidedAt: number | null; lastSeen: number | null;

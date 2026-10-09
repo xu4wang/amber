@@ -1,14 +1,15 @@
 // Runs a command's script. A command is parameters + one script (D23/D26/D28): no executor
 // registry, no SQL step, no multi-step. One kind of script:
 //   script      — Python code, run inside a macOS sandbox built from sandbox-policy.ts (D49): system
-//                 dirs and language toolchains readable, credentials and Amber's keys never, anything
-//                 else only as the command declares in script.sandbox; it writes only to its per-run
-//                 temp dir (also cwd, HOME and TMPDIR). Network is one of: none (default), internet, or a list of
+//                 dirs and language toolchains readable, credentials and Amber's keys never. A command
+//                 declares no paths: on Amber's machine it sees only its per-run temp dir (also cwd,
+//                 HOME and TMPDIR); with script.env it runs on an executor with that environment's
+//                 access (D51). Network is one of: none (default), internet, or a list of
 //                 registered local services. A script that talks to services gets a signed execution
 //                 identity token per service (D27) but no internet, so query results cannot leave.
 // The script's output is content: Markdown, optionally with ```vega-lite and ```table blocks (D24/D25).
 import { SECRET_NAME, MAX_SECRETS } from './secrets.ts';
-import { buildPolicy, compileToSeatbelt, validateAppSandbox, normalizePath, mandatoryDenyRoots, type AppSandbox } from './sandbox-policy.ts';
+import { buildPolicy, compileToSeatbelt, normalizePath, hardDenyRoots } from './sandbox-policy.ts';
 import { runSandboxed } from './sandbox-run.ts';
 import { EXECUTOR_NAME, ENV_NAME } from './exec-proto.ts';
 
@@ -19,8 +20,6 @@ export interface Script {
   kind: ScriptKind; lang: 'python'; code: string; network?: boolean; services?: Record<string, ServiceUse>; timeoutMs?: number;
   /** Names of the command secrets this script needs (D48). Reviewed with the code; values are set separately. */
   secrets?: string[];
-  /** Extra file access beyond the baseline (D49), reviewed with the code. */
-  sandbox?: AppSandbox;
   /** Absolute path of the Python interpreter to use (e.g. a venv with packages), reviewed with the code. Default: the system Python. */
   interpreter?: string;
   /** Where it runs (D50): "<executor>/<environment>" — an approved executor on the machine that holds the data. Default: on Amber's machine. */
@@ -60,7 +59,7 @@ function profile(script: Script, runDir: string): string {
     if (d?.tcpPort) tcpPorts.push(d.tcpPort);
     if (d?.unixSocket) unixSockets.push(d.unixSocket);
   }
-  return compileToSeatbelt(buildPolicy({ runDir, app: script.sandbox }), { all: !!script.network, tcpPorts, unixSockets });
+  return compileToSeatbelt(buildPolicy({ runDir }), { all: !!script.network, tcpPorts, unixSockets });
 }
 
 export interface ScriptInput {
@@ -109,16 +108,15 @@ export function validateScript(s: unknown): Script {
       if (!parseEnv(env)) throw new Error('env 要写成 "执行端名/环境名"，例如 "ledger-mac/台账"（执行端名：小写字母、数字、连字符）');
       if (declared) throw new Error('在执行端上运行的指令不能调用内部服务（services）');
     }
-    let sandbox: AppSandbox | undefined;
-    try { sandbox = validateAppSandbox(x.sandbox, { remote: !!env }); } catch (e) { throw new Error((e as Error).message); }
+    if (x.sandbox !== undefined) throw new Error('指令不再声明 sandbox：能访问哪些文件由运行环境决定。需要访问数据时，用 env 选择一个运行环境');
     let interpreter: string | undefined;
     if (x.interpreter !== undefined) {
       const p = normalizePath(String(x.interpreter));
-      if (mandatoryDenyRoots().some(r => p === r || p.startsWith(r + '/'))) throw new Error(`解释器不能放在受保护的目录里：${x.interpreter}`);
+      if (hardDenyRoots().some(r => p === r || p.startsWith(r + '/'))) throw new Error(`解释器不能放在受保护的目录里：${x.interpreter}`);
       if (!/python[0-9.]*$/.test(p)) throw new Error('interpreter 只能是 Python 解释器（路径以 python、python3 或 python3.x 结尾）');
       interpreter = String(x.interpreter).trim();
     }
-    return { kind: 'script', lang: 'python', code: x.code, network: !!x.network, ...(declared ? { services } : {}), ...(timeoutMs ? { timeoutMs } : {}), ...(secrets.length ? { secrets } : {}), ...(sandbox ? { sandbox } : {}), ...(interpreter ? { interpreter } : {}), ...(env ? { env } : {}) };
+    return { kind: 'script', lang: 'python', code: x.code, network: !!x.network, ...(declared ? { services } : {}), ...(timeoutMs ? { timeoutMs } : {}), ...(secrets.length ? { secrets } : {}), ...(interpreter ? { interpreter } : {}), ...(env ? { env } : {}) };
   }
   throw new Error('脚本类型只能是 script');
 }

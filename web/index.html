@@ -441,7 +441,12 @@ function schPane({ s, scope }) {
 
 function exePane({ e }) {
   const ST = { pending: '等待管理员批准', approved: '已批准', rejected: '已拒绝', revoked: '已撤销' };
-  const envs = Object.entries(e.envs).map(([k, v]) => `<dt>环境「${esc(k)}」</dt><dd>{WORKDIR} = <code>${esc(v.workdir)}</code>${v.interpreter ? `<br>Python <code>${esc(v.interpreter)}</code>` : ''}</dd>`).join('');
+  const codes = l => (l || []).map(p => `<code>${esc(p)}</code>`).join('、');
+  const envs = Object.entries(e.envs).map(([k, v]) => `<dt>环境「${esc(k)}」</dt><dd>${v.source ? `来源：${esc(v.source)}<br>` : ''}{WORKDIR} = <code>${esc(v.workdir)}</code>${v.interpreter ? `<br>Python <code>${esc(v.interpreter)}</code>` : ''}
+    ${v.access.readWrite?.length ? `<br>可读写：${codes(v.access.readWrite)}` : ''}${v.access.readOnly?.length ? `<br>只读：${codes(v.access.readOnly)}` : ''}${v.access.deny?.length ? `<br>禁止：${codes(v.access.deny)}` : ''}
+    ${v.vars && Object.keys(v.vars).length ? `<br>环境变量：${Object.entries(v.vars).map(([n, x]) => `<code>${esc(n)}=${esc(x)}</code>`).join('、')}` : ''}
+    ${v.realHome ? '<br>HOME：用户主目录（能访问的仍只有上面这些路径）' : ''}
+    ${v.credential?.length ? `<br><span style="color:var(--warn)">⚠️ 含凭证路径：${codes(v.credential)}（这个环境里的指令能使用这些凭证）</span>` : ''}</dd>`).join('');
   document.getElementById('pane').innerHTML = `${backBtn}
     <div class="pane-head"><h1>${esc(e.name)}</h1><span class="chip">${esc(ST[e.status] || e.status)}${e.status === 'approved' ? (e.online ? ' · 在线' : ' · 离线') : ''}</span></div>
     <div class="where">执行端 ${esc(e.id)} · 来源机器 ${esc(e.machine)}${e.version ? ' · 版本 ' + esc(e.version) : ''}</div>
@@ -489,8 +494,7 @@ async function loadSource() {
   const gutter = code.split('\n').map((_, i) => i + 1).join('\n');
   el.className = '';
   el.innerHTML = `<dl class="kv">
-      <dt>运行方式</dt><dd>${esc(how)}，${esc(net)}，超时 ${sc.timeoutMs / 1000} 秒</dd>${sc.sandbox ? `
-      <dt>沙箱</dt><dd>${esc([sc.sandbox.readOnly?.length ? '只读 ' + sc.sandbox.readOnly.join('、') : '', sc.sandbox.readWrite?.length ? '读写 ' + sc.sandbox.readWrite.join('、') : '', sc.sandbox.deny?.length ? '禁止 ' + sc.sandbox.deny.join('、') : ''].filter(Boolean).join('；'))}</dd>` : ''}${sc.interpreter ? `
+      <dt>运行方式</dt><dd>${esc(how)}，${esc(net)}，超时 ${sc.timeoutMs / 1000} 秒</dd>${sc.interpreter ? `
       <dt>解释器</dt><dd>${esc(sc.interpreter)}</dd>` : ''}${sc.env ? `
       <dt>执行位置</dt><dd>执行端 ${esc(sc.env)}</dd>` : ''}${(sc.secrets || []).length ? `
       <dt>密钥</dt><dd>${esc(sc.secrets.join('、'))}（值不在代码里，运行时由 Amber 交给脚本）</dd>` : ''}

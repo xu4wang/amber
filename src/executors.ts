@@ -29,6 +29,7 @@ export const PICKUP_MS = 30_000;
 /** Extra time for a picked-up job beyond the script's own timeout. */
 export const RESULT_GRACE_MS = 30_000;
 const MAX_ENVS = 20;
+const MAX_ACCESS_PATHS = 100;
 const MAX_PENDING = 10;
 const MAX_NONCES = 50_000;
 /** Jobs waiting for or running on one executor; more fail at once instead of piling up. */
@@ -216,7 +217,7 @@ export class ExecutorHub {
     if (!e) return `执行端 ${p.executor} 的环境「${p.env}」（这个执行端还没有登记或没有批准）`;
     const d = e.envs[p.env];
     if (!d) return `执行端 ${p.executor} 的环境「${p.env}」（这个执行端没有这个环境）`;
-    return `执行端 ${p.executor}（${e.machine}）的环境「${p.env}」，{WORKDIR} = ${d.workdir}${d.interpreter ? `，Python ${d.interpreter}` : ''}`;
+    return `执行端 ${p.executor}（${e.machine}）的环境「${p.env}」${d.source ? `（${d.source}）` : ''}：${describeEnvAccess(d)}${d.interpreter ? `；Python ${d.interpreter}` : ''}`;
   }
 
   /** Runs a remote command: never on Amber's machine. */
@@ -267,9 +268,63 @@ function validateEnvs(x: unknown): Record<string, ExecutorEnv> {
     if (!workdir.startsWith('/') || /(^|\/)\.\.(\/|$)/.test(workdir) || workdir === '/' || /[\0\n\r]/.test(workdir)) throw new AmberError('invalid', `环境「${k}」的 workdir 要是绝对路径，不能是根目录：${workdir}`);
     const interpreter = v?.interpreter === undefined ? undefined : String(v.interpreter);
     if (interpreter !== undefined && (!interpreter.startsWith('/') || !/python[0-9.]*$/.test(interpreter))) throw new AmberError('invalid', `环境「${k}」的 interpreter 要是 Python 的绝对路径`);
-    out[k] = { workdir, ...(interpreter ? { interpreter } : {}) };
+    const access = v?.access === undefined ? undefined : validateRemoteAccess(k, v.access);
+    const vars = v?.vars === undefined ? undefined : validateVars(k, v.vars);
+    const source = v?.source === undefined ? undefined : String(v.source).slice(0, 200);
+    if (v?.realHome !== undefined && typeof v.realHome !== 'boolean') throw new AmberError('invalid', `环境「${k}」的 realHome 只能是 true/false`);
+    out[k] = { workdir, ...(interpreter ? { interpreter } : {}), ...(access ? { access } : {}), ...(vars ? { vars } : {}), ...(source ? { source } : {}), ...(v?.realHome === true ? { realHome: true } : {}) };
   }
   return out;
+}
+
+/** The executor resolves and checks paths against its own protected dirs; here: shape, absolute, no `..`, not `/`. */
+function validateRemoteAccess(env: string, x: any): NonNullable<ExecutorEnv['access']> {
+  if (!x || typeof x !== 'object' || Array.isArray(x)) throw new AmberError('invalid', `环境「${env}」的 access 格式不对`);
+  const out: NonNullable<ExecutorEnv['access']> = {};
+  let n = 0;
+  for (const key of Object.keys(x)) if (!['readOnly', 'readWrite', 'deny'].includes(key)) throw new AmberError('invalid', `环境「${env}」的 access 里不认识的字段：${key}`);
+  for (const key of ['readOnly', 'readWrite', 'deny'] as const) {
+    if (x[key] === undefined) continue;
+    if (!Array.isArray(x[key])) throw new AmberError('invalid', `环境「${env}」的 access.${key} 要是路径数组`);
+    const list = x[key].map(String);
+    for (const p of list) if (!p.startsWith('/') || /(^|\/)\.\.(\/|$)/.test(p) || /[\0\n\r]/.test(p) || (key !== 'deny' && p === '/')) throw new AmberError('invalid', `环境「${env}」的路径不对：${p}`);
+    n += list.length;
+    if (list.length) out[key] = list;
+  }
+  if (n > MAX_ACCESS_PATHS) throw new AmberError('invalid', `环境「${env}」的路径太多（最多 ${MAX_ACCESS_PATHS} 条）`);
+  return out;
+}
+
+const RESERVED_VARS = /^(PATH|HOME|TMPDIR|WORKDIR|LANG|PYTHON.*|DYLD_.*|LD_.*|NODE_OPTIONS)$/;
+function validateVars(env: string, x: any): Record<string, string> {
+  if (!x || typeof x !== 'object' || Array.isArray(x)) throw new AmberError('invalid', `环境「${env}」的 vars 格式不对`);
+  const out: Record<string, string> = {};
+  const entries = Object.entries(x);
+  if (entries.length > 20) throw new AmberError('invalid', `环境「${env}」的环境变量太多（最多 20 个）`);
+  for (const [k, v] of entries) {
+    if (!/^[A-Z][A-Z0-9_]{0,63}$/.test(k) || RESERVED_VARS.test(k)) throw new AmberError('invalid', `环境「${env}」不能设置环境变量 ${k}`);
+    const s = String(v);
+    if (s.length > 1024 || /[\0\n\r]/.test(s)) throw new AmberError('invalid', `环境「${env}」的环境变量 ${k} 的值不对`);
+    out[k] = s;
+  }
+  return out;
+}
+
+/** An environment's effective access: absent = {WORKDIR} read-write. */
+export const effectiveAccess = (e: ExecutorEnv): NonNullable<ExecutorEnv['access']> => e.access ?? { readWrite: [e.workdir] };
+
+/** Paths in a credential store, recognised by name on any machine (for the warning on approval cards). */
+const CRED_NAMES = /(^|\/)(\.ssh|\.gnupg|\.aws|\.azure|\.netrc|\.git-credentials|\.npmrc|\.pypirc|\.docker|\.kube|\.password-store|\.1password|\.lark-cli|\.lark-cli-bots|\.botmux|\.claude|\.claude\.json|\.codex|Keychains|Cookies|lark-cli|gh|glab-cli|gcloud|1Password)(\/|$)/;
+export function credentialPaths(e: ExecutorEnv): string[] {
+  const a = effectiveAccess(e);
+  return [...(a.readWrite ?? []), ...(a.readOnly ?? [])].filter(p => CRED_NAMES.test(p));
+}
+
+/** One line: what scripts in this environment can access. */
+export function describeEnvAccess(e: ExecutorEnv): string {
+  const a = effectiveAccess(e);
+  const parts = [a.readWrite?.length ? `读写 ${a.readWrite.join('、')}` : '', a.readOnly?.length ? `只读 ${a.readOnly.join('、')}` : '', a.deny?.length ? `禁止 ${a.deny.join('、')}` : ''].filter(Boolean);
+  return (parts.join('；') || '不能访问任何数据') + `（{WORKDIR} = ${e.workdir}）`;
 }
 
 export { showFingerprint };

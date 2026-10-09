@@ -3,16 +3,19 @@
 // No dependencies beyond Node ≥ 22. See docs/executor.md.
 //
 //   amber-executor init --name <name> [--amber <url>]     keys + config (once)
-//   amber-executor env set <env> <workdir> [--python <p>]  what {WORKDIR} means for an environment
-//   amber-executor env rm <env>
+//   amber-executor env set <env> <workdir> [--python <p>] [--readonly]
+//                                                         a directory environment: {WORKDIR} read-write (or read-only)
+//   amber-executor env import <file.json> [--name <env>]  an environment from a definition file (D51), e.g. one
+//                                                         exported from a botmux bot by export-botmux-env.mjs
+//   amber-executor env show | env rm <env>
 //   amber-executor status                                  register / show fingerprint and approval
 //   amber-executor run                                     long-poll Amber and run jobs (launchd runs this)
 //   amber-executor install-launchd | uninstall-launchd
 //
 // Every job is signed by Amber (key pinned at init) and encrypted to this executor's key. Before
 // running, the executor checks the signature, the addressee, the expiry, that it has not seen the job
-// before, and recomputes the spec hash; then runs the code under the job's own reviewed sandbox
-// policy (same rules as Amber, lib/ is generated from Amber's sources) with {WORKDIR} set here.
+// before, and recomputes the spec hash; then runs the code in a sandbox built from the environment's
+// approved access (same rules as Amber, lib/ is generated from Amber's sources). Commands declare no paths.
 import { readFileSync, writeFileSync, existsSync, mkdirSync, chmodSync, renameSync, unlinkSync, realpathSync } from 'node:fs';
 import { createPublicKey } from 'node:crypto';
 import { homedir } from 'node:os';
@@ -20,7 +23,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'node:child_process';
 import { newExecutorKeys, keyFromPem, pubB64, fingerprint, showFingerprint, signRequest, openJob, specHashOf, redact, EXECUTOR_NAME, ENV_NAME } from './lib/exec-proto.mjs';
-import { setSandboxContext, validateAppSandbox, buildPolicy, compileToSeatbelt, normalizePath, mandatoryDenyRoots } from './lib/sandbox-policy.mjs';
+import { setSandboxContext, validateEnvAccess, buildPolicy, compileToSeatbelt, normalizePath, hardDenyRoots, credentialGrants, describeAccess } from './lib/sandbox-policy.mjs';
 import { runSandboxed } from './lib/sandbox-run.mjs';
 
 export const VERSION = '1';
@@ -85,12 +88,25 @@ export function prepare(cfg, payload) {
   const env = cfg.envs?.[payload.env];
   if (!env) throw new Error(`本执行端没有环境「${payload.env}」`);
   if (s.services && Object.keys(s.services).length) throw new Error('执行端不支持调用内部服务');
+  if (s.sandbox !== undefined) throw new Error('指令不再声明 sandbox：访问权限由运行环境决定');
   const workdir = normalizePath(env.workdir);
-  validateAppSandbox(s.sandbox, { workdir });   // with {WORKDIR} resolved: protected dirs checked here
+  // The environment's approved access, re-checked here against this machine's protected dirs.
+  const access = validateEnvAccess(env.access ?? { readWrite: [workdir] }, { workdir });
   const python = normalizePath(s.interpreter ?? env.interpreter ?? DEFAULT_PYTHON);
-  if (mandatoryDenyRoots().some(r => python === r || python.startsWith(r + '/'))) throw new Error('解释器在受保护的目录里');
+  if (hardDenyRoots().some(r => python === r || python.startsWith(r + '/'))) throw new Error('解释器在受保护的目录里');
+  const vars = checkVars(env.vars);
   const timeoutMs = Math.min(Math.max(Number(s.timeoutMs) || 30000, 1000), 120000);
-  return { code: s.code, python, timeoutMs, workdir, profileFor: dir => compileToSeatbelt(buildPolicy({ runDir: dir, app: s.sandbox, workdir }), { all: !!s.network }) };
+  return { code: s.code, python, timeoutMs, workdir, vars, realHome: env.realHome === true, profileFor: dir => compileToSeatbelt(buildPolicy({ runDir: dir, access }), { all: !!s.network }) };
+}
+
+const RESERVED_VARS = /^(PATH|HOME|TMPDIR|WORKDIR|LANG|PYTHON.*|DYLD_.*|LD_.*|NODE_OPTIONS)$/;
+function checkVars(v) {
+  const out = {};
+  for (const [k, x] of Object.entries(v ?? {})) {
+    if (!/^[A-Z][A-Z0-9_]{0,63}$/.test(k) || RESERVED_VARS.test(k)) throw new Error(`环境变量 ${k} 不能设置`);
+    out[k] = String(x);
+  }
+  return out;
 }
 
 export async function handle(cfg, me, amberPub, envelope) {
@@ -101,7 +117,7 @@ export async function handle(cfg, me, amberPub, envelope) {
     secrets = payload.input?.secrets ?? {};
     const job = prepare(cfg, payload);
     log('job start', envelope.jobId, payload.spec.name, payload.env, `run ${payload.runId}`);
-    const r = await runSandboxed({ code: job.code, python: job.python, profileFor: job.profileFor, input: payload.input, timeoutMs: job.timeoutMs, env: { WORKDIR: job.workdir } });
+    const r = await runSandboxed({ code: job.code, python: job.python, profileFor: job.profileFor, input: payload.input, timeoutMs: job.timeoutMs, env: { ...job.vars, WORKDIR: job.workdir }, ...(job.realHome ? { home: homedir() } : {}) });
     // The log never sees a secret: the error text can contain one (e.g. an exception message).
     log('job done', envelope.jobId, r.ok ? 'ok' : `failed: ${redact(r.error ?? '', secrets)}`);
     await call(cfg, me, '/v1/executor/result', { jobId: envelope.jobId, ok: r.ok, content: redact(r.content, secrets), ...(r.error ? { error: redact(r.error, secrets) } : {}) });
@@ -186,15 +202,35 @@ function envCmd(args) {
   const cfg = loadConfig();
   const [op, name, dir] = args;
   if (op === 'set') {
-    if (!name || !ENV_NAME.test(name) || !dir) die('用法：amber-executor env set <环境名> <目录> [--python <解释器>]');
+    if (!name || !ENV_NAME.test(name) || !dir) die('用法：amber-executor env set <环境名> <目录> [--python <解释器>] [--readonly]');
     const workdir = normalizePath(dir);
     if (!existsSync(workdir)) die(`目录不存在：${workdir}`);
     const python = flag(args, '--python');
-    cfg.envs = { ...cfg.envs, [name]: { workdir, ...(python ? { interpreter: normalizePath(python) } : {}) } };
+    // Default (no access field): {WORKDIR} read-write.
+    cfg.envs = { ...cfg.envs, [name]: { workdir, ...(python ? { interpreter: normalizePath(python) } : {}), ...(args.includes('--readonly') ? { access: { readOnly: [workdir] } } : {}) } };
+  } else if (op === 'import') {
+    const file = name;
+    if (!file || !existsSync(file)) die('用法：amber-executor env import <定义文件.json> [--name <环境名>]');
+    let def;
+    try { def = JSON.parse(readFileSync(file, 'utf8')); } catch (e) { die(`定义文件不是合法的 JSON：${e.message}`); }
+    const envName = flag(args, '--name') ?? def.name;
+    if (!envName || !ENV_NAME.test(envName)) die('环境名不对：用 --name 指定，或写在定义文件的 name 里');
+    if (!def.workdir) die('定义文件缺少 workdir');
+    const workdir = normalizePath(def.workdir);
+    if (!existsSync(workdir)) die(`目录不存在：${workdir}`);
+    let access;
+    try { access = validateEnvAccess(def.access ?? { readWrite: [workdir] }, { workdir }); checkVars(def.vars); } catch (e) { die(e.message); }
+    const python = def.python ?? def.interpreter;
+    cfg.envs = { ...cfg.envs, [envName]: { workdir, ...(python ? { interpreter: normalizePath(python) } : {}), access, ...(def.vars && Object.keys(def.vars).length ? { vars: def.vars } : {}), ...(def.source ? { source: String(def.source).slice(0, 200) } : {}), ...(def.realHome === true ? { realHome: true } : {}) } };
+    const cred = credentialGrants(access);
+    console.log(`环境「${envName}」：${describeAccess(access)}${cred.length ? `\n注意：含凭证路径 ${cred.join('、')}` : ''}`);
+  } else if (op === 'show') {
+    for (const [k, v] of Object.entries(cfg.envs ?? {})) console.log(`${k}：{WORKDIR} = ${v.workdir}；${describeAccess(v.access ?? { readWrite: [v.workdir] })}${v.vars ? `；变量 ${Object.keys(v.vars).join('、')}` : ''}${v.source ? `（${v.source}）` : ''}`);
+    return;
   } else if (op === 'rm') {
     if (!cfg.envs?.[name]) die(`没有环境「${name}」`);
     delete cfg.envs[name];
-  } else die('用法：amber-executor env set|rm …');
+  } else die('用法：amber-executor env set|import|show|rm …');
   writePrivate(P.config, JSON.stringify(cfg, null, 2));
   console.log(`已保存。环境变了要重新批准：运行 amber-executor status 申请（正在运行的服务会自动重新申请，请重启它：launchctl kickstart -k gui/${process.getuid()}/${LABEL}）`);
 }
@@ -241,6 +277,8 @@ function flag(args, name) { const i = args.indexOf(name); return i >= 0 ? args[i
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
   const [cmd, ...args] = process.argv.slice(2);
+  // Our own config dir is protected in every command, not only while running jobs.
+  setSandboxContext({ configDir: DIR });
   const run = { init: () => init(args), env: () => envCmd(args), status, run: runLoop, 'install-launchd': () => launchd(true), 'uninstall-launchd': () => launchd(false) }[cmd];
   if (!run) { console.log(readFileSync(fileURLToPath(import.meta.url), 'utf8').split('\n').slice(1, 10).map(l => l.replace(/^\/\/ ?/, '')).join('\n')); process.exit(cmd ? 1 : 0); }
   await run();

@@ -92,9 +92,8 @@ amber global 天气 --user user@example.com          # 设为全局 / amber loca
   - ` ```vega-lite `：图表（柱状图、折线图、饼图（mark: arc，theta=数值、color=类别）会转成飞书原生图表；其他图只在网站上显示）
   - ` ```table `：数据表，`{"columns":[{"name","label","type":"text|number"}],"rows":[…],"total":N}`
 - **运行环境**（沙盒）：当前目录是本次运行的临时目录（也是 `HOME`、`TMPDIR`，结束后删除）；系统目录和常见语言工具链（Homebrew、nvm、pyenv 等）可读，外部命令能用；`$HOME` 下的其他文件默认不可见；默认不联网（需要时设 `"network": true`）；默认用系统 Python 3.9（只有标准库）；默认 30 秒超时（`timeoutMs` 最多 120000）；输出最多 256KB；代码最多 64KB。
-- **要访问本机文件时**（比如机器人建的台账）：在 `script` 里声明 `"sandbox": {"readOnly": ["/绝对路径/台账"], "readWrite": ["/绝对路径/导出"], "deny": [...]}`（也可以写 `~/…`）。只声明真正需要的路径，能只读就不要读写；代码里用绝对路径访问（不要用相对路径，当前目录是临时目录）。~/.ssh、各类凭证、Amber 自己的配置目录声明了也打不开，提交时会被拒绝。
-- **数据在另一台机器上时**（Amber 不在那台机器上）：那台机器要装好并批准一个执行端（docs/executor.md）。在 `script` 里写 `"env": "执行端名/环境名"`，沙箱路径用 `{WORKDIR}/子目录` 表示那个环境的目录，代码里用 `os.environ["WORKDIR"]` 拼绝对路径。不知道有哪些执行端和环境时，问用户（管理员私聊 Amber 发「执行端」可以看到）。
-- **需要第三方包时**：在 `script` 里写 `"interpreter": "/opt/homebrew/bin/python3"` 或某个虚拟环境里的 python（绝对路径），这个解释器自己装好的包都能用；虚拟环境放在 `$HOME` 下时，要把它的目录加进 `sandbox.readOnly`。
+- **要访问数据时**（比如机器人建的台账）：脚本**不写任何路径声明**，在 `script` 里写 `"env": "执行端名/环境名"`，选一个已批准的**运行环境**，能访问的就是那个环境的权限。机器人环境（从 botmux 导出的）和那个机器人在自己沙箱里能访问的一样，lark-cli 用的也是它的身份；目录环境是 `{WORKDIR}` 那个目录。代码里用 `os.environ["WORKDIR"]` 或绝对路径访问（当前目录是临时目录）。不知道有哪些环境时问用户（管理员私聊 Amber 发「执行端」可以看到）。不写 `env` 的指令在 Amber 本机跑，看不到任何业务数据。
+- **需要第三方包时**：在 `script` 里写 `"interpreter": "/opt/homebrew/bin/python3"` 或某个虚拟环境里的 python（绝对路径），这个解释器自己装好的包都能用；在执行端上跑时，一般用运行环境里配好的 Python，不用自己写。
 - 把用户刚才实际跑通的逻辑原样搬进脚本，先在本机用一份示例输入跑一遍。
 
 ### 2. 写草稿文件
@@ -115,7 +114,7 @@ amber global 天气 --user user@example.com          # 设为全局 / amber loca
 - 参数类型：`string`（可加 `maxLength`、`pattern`）或 `integer`（可加 `min`、`max`）；`"defaultFrom": "caller.city"` 表示不填时用执行人的办公城市。
 - `options.confirm`：执行前必须确认（会改数据、有风险时打开）。
 - `options.schedulable`：允许定时执行。**不写时默认为 true**；不适合定时的（比如有副作用、或结果每次都需要人看着执行的）请显式写 `false`。
-- `script.kind` 只能用 `script`（所有指令都在沙箱里运行）。要读写文件就声明 `sandbox`，见上面「要访问本机文件时」。
+- `script.kind` 只能用 `script`（所有指令都在沙箱里运行）。不要写 `sandbox` 字段（会被拒绝），访问数据靠 `env`，见上面「要访问数据时」。
 - **需要 token、密码时**：在 `script` 里写 `"secrets": ["API_TOKEN"]`（只写名字：大写字母、数字、下划线，最多 10 个），脚本从输入的 `secrets` 里取值。**不要向用户要密钥的值，也不要把值写进代码或草稿**；告诉用户：认领卡上点「设置密钥」（或私聊 Amber 发「设置密钥 指令名」），在私聊卡片上填写，然后再试运行。不要打印密钥（打印出来也会被遮成 `***`）。群指令的密钥由所有执行人共用；只给一个人用的凭证，指令要提交到私聊（`p2p`）。需要密钥的指令总是要人点确认卡才能执行，`amber show` 会列出还没设置的密钥。
 
 ### 修改已有指令

@@ -9,14 +9,16 @@ export const MAX_OUTPUT_BYTES = 256 * 1024;
 export interface SandboxResult { ok: boolean; content: string; error?: string }
 
 /** `profileFor` gets the run's private dir (also cwd, HOME and TMPDIR); inputs go in on stdin as JSON. */
-export async function runSandboxed(o: { code: string; python: string; profileFor: (runDir: string) => string; input: unknown; timeoutMs?: number; env?: Record<string, string> }): Promise<SandboxResult> {
+/** `home`: HOME for the script (default: the run dir). Only reachable as far as the profile allows. With a real home,
+ *  Python also loads the user's own site-packages (`-E` instead of `-I`), as it does in that user's sessions. */
+export async function runSandboxed(o: { code: string; python: string; profileFor: (runDir: string) => string; input: unknown; timeoutMs?: number; env?: Record<string, string>; home?: string }): Promise<SandboxResult> {
   const work = realpathSync(mkdtempSync(join(tmpdir(), 'amber-run-')));
   try {
     const file = join(work, 'main.py');
     writeFileSync(file, o.code);
-    const args = ['-p', o.profileFor(work), o.python, '-I', file];
+    const args = ['-p', o.profileFor(work), o.python, o.home ? '-E' : '-I', file];
     // Nothing user-supplied is ever placed on a command line.
-    const env: Record<string, string> = { PATH: `/opt/homebrew/bin:/usr/local/bin:${homedir()}/.local/bin:/usr/bin:/bin:/usr/sbin:/sbin`, ...o.env, TMPDIR: work, HOME: work, LANG: 'en_US.UTF-8', PYTHONIOENCODING: 'utf-8' };
+    const env: Record<string, string> = { PATH: `/opt/homebrew/bin:/usr/local/bin:${homedir()}/.local/bin:/usr/bin:/bin:/usr/sbin:/sbin`, ...o.env, TMPDIR: work, HOME: o.home ?? work, LANG: 'en_US.UTF-8', PYTHONIOENCODING: 'utf-8' };
     return await new Promise<SandboxResult>(resolve => {
       const child = spawn('/usr/bin/sandbox-exec', args, { cwd: work, env, stdio: ['pipe', 'pipe', 'pipe'] });
       let out = Buffer.alloc(0);

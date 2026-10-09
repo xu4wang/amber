@@ -30,8 +30,7 @@ Amber 是**琥珀**。琥珀把一瞬间的东西封存起来，过很多年取�
 ## 设计原则
 
 - **只有「指令」一个概念**：指令 = 参数 + 一段脚本，代码就写在指令里，没有执行器、渲染器、步骤这些概念。
-  - `script`（脚本）：在 macOS 沙盒里运行。系统目录和常见语言工具链（Homebrew、nvm、pyenv 等）可读，所以外部依赖能用；`$HOME` 下的其他文件默认不可见，需要访问的路径在 `script.sandbox` 里声明（只读 / 读写 / 禁止三档，随代码审核）；凭证目录（~/.ssh、各类登录凭证、Amber 自己的密钥和数据库）任何声明都打不开。只能写本次运行的临时目录和声明为读写的路径，声明了才能联网。可以用 `script.interpreter` 指定带第三方包的 Python。规则模型移植自 botmux 的 FsPolicy。
-  - 所有指令都在沙箱里运行，没有其他运行方式。需要访问文件就在 `script.sandbox` 里声明；数据在别的机器上就用[执行端](docs/executor.md)。
+  - `script`（脚本）：所有指令都在 macOS 沙盒里运行。系统目录和常见语言工具链（Homebrew、nvm、pyenv 等）可读，所以外部依赖能用；**指令自己不写路径**，能访问哪些数据由它选的**运行环境**决定（在执行端上登记、管理员批准，可以直接从 botmux 机器人导出，和那个机器人能访问的完全一样）。不选环境就只能读写本次运行的临时目录。Amber 和执行端的密钥、~/.ssh、钥匙串任何环境都打不开。声明了才能联网。可以用 `script.interpreter` 指定带第三方包的 Python。规则模型移植自 botmux 的 FsPolicy。见[执行端](docs/executor.md)。
 - **输出只是内容**：脚本输出 Markdown；其中的 ` ```vega-lite ` 和 ` ```table ` 代码块由各渠道自己适配（飞书卡片转成原生图表和表格，网页可以完整显示同一份内容）。
 - **不区分读写**：脚本会不会改数据由沙盒、审核人和服务方的权限共同把关。指令只有两个选项，随代码一起审核：`confirm`（执行前需要在表单上确认）和 `schedulable`（允许定时执行）。认领时一律试运行，试运行就是真实执行一次。
 - **作用域**：指令属于创建它的群或私聊；管理员可以把它设为全局可用。
@@ -50,7 +49,7 @@ Amber 是**琥珀**。琥珀把一瞬间的东西封存起来，过很多年取�
 | [安装与部署](docs/install.md) | 环境要求、配置文件、launchd 常驻、nginx、运维 |
 | [飞书应用配置](docs/feishu-setup.md) | 权限清单、长连接事件、审批定义、知识库、发布检查 |
 | [amber 命令行与 skill](docs/cli-and-skill.md) | 安装、命令、三档行为、定时任务、接口 |
-| [执行端](docs/executor.md) | 数据在别的机器上时（比如机器人建的台账）：在那台机器装执行端，管理员批准后，指令就在那里按审核过的沙箱策略执行 |
+| [执行端](docs/executor.md) | 数据在别的机器上时（比如机器人建的台账）：在那台机器装执行端、登记运行环境（可从 botmux 机器人导出），管理员批准后，指令就在那个环境里执行 |
 | [可信身份：完整示例](docs/identity-example.md) | 用 Python 写一个信任 Amber 凭证的服务，并让固化指令以执行人身份调用它 |
 | [可信身份](docs/identity.md) | 身份从哪来、网站登录、执行身份凭证与服务方验证（含 Node / Python 示例） |
 | [给 agent 的 skill](skills/amber/SKILL.md) | agent 怎么调用 Amber、怎么提交新指令 |
@@ -66,7 +65,7 @@ node src/main.ts       # 飞书长连接 + agent 接口 127.0.0.1:7341 + 网站 
 
 按优先级（详见 [ROADMAP.md](ROADMAP.md)，总览 [#5](https://github.com/xu4wang/amber/issues/5)）：
 
-1. **在数据所在的机器上执行**（[#6](https://github.com/xu4wang/amber/issues/6)）：Amber 执行端 + 应用沙箱策略。应用声明需要访问的路径并随代码审核，在 Amber 沙箱里执行，能访问机器人在本机建立的数据（如台账）
+1. **在数据所在的机器上执行**（[#6](https://github.com/xu4wang/amber/issues/6)）：Amber 执行端 + 运行环境。环境定义能访问的数据（可从 botmux 机器人导出），管理员批准；指令只选环境，能访问机器人在本机建立的数据（如台账）
 2. **bot 类型参数和唤起机器人**（[#1](https://github.com/xu4wang/amber/issues/1)）：指令结果交给本群的另一个机器人继续处理
 3. **验收：GitLab 仓库检查**（[#2](https://github.com/xu4wang/amber/issues/2)）
 4. **配置项**（[#3](https://github.com/xu4wang/amber/issues/3)）：安装时填写、以后自动带上的参数

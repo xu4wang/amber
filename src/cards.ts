@@ -1,5 +1,6 @@
 import type { CommandRow, ExecutorRow } from './db.ts';
 import { showFingerprint } from './exec-proto.ts';
+import { effectiveAccess, credentialPaths } from './executors.ts';
 import type { Block } from './engine.ts';
 import type { SecretInfo } from './secrets.ts';
 
@@ -399,7 +400,19 @@ export function secretPickCard(items: { c: CommandRow; where: string }[]): objec
 // ---------- executors (D50)
 
 function executorLines(e: ExecutorRow): string {
-  const envs = Object.entries(e.envs).map(([k, v]) => `- 环境「${sanitizeMarkdown(k, 40)}」：{WORKDIR} = \`${sanitizeMarkdown(v.workdir, 300)}\`${v.interpreter ? `，Python \`${sanitizeMarkdown(v.interpreter, 300)}\`` : ''}`);
+  const list = (l?: string[]) => (l ?? []).map(p => `\`${sanitizeMarkdown(p, 300)}\``).join('、');
+  const envs = Object.entries(e.envs).flatMap(([k, v]) => {
+    const a = effectiveAccess(v), cred = credentialPaths(v);
+    return [
+      `- 环境「${sanitizeMarkdown(k, 40)}」${v.source ? `（来源：${sanitizeMarkdown(v.source, 100)}）` : ''}：{WORKDIR} = \`${sanitizeMarkdown(v.workdir, 300)}\`${v.interpreter ? `，Python \`${sanitizeMarkdown(v.interpreter, 300)}\`` : ''}`,
+      ...(a.readWrite?.length ? [`　　可读写：${list(a.readWrite)}`] : []),
+      ...(a.readOnly?.length ? [`　　只读：${list(a.readOnly)}`] : []),
+      ...(a.deny?.length ? [`　　禁止：${list(a.deny)}`] : []),
+      ...(v.vars && Object.keys(v.vars).length ? [`　　环境变量：${Object.entries(v.vars).map(([n, val]) => `\`${sanitizeMarkdown(n, 64)}=${sanitizeMarkdown(val, 200)}\``).join('、')}`] : []),
+      ...(v.realHome ? ['　　HOME：用户主目录（和机器人会话里一样；能访问的仍只有上面这些路径）'] : []),
+      ...(cred.length ? [`　　<font color="red">⚠️ 含凭证路径：${list(cred)}（这个环境里的指令能使用这些凭证）</font>`] : []),
+    ];
+  });
   return [
     `**执行端**：${e.name}`,
     `**来源机器**：${sanitizeMarkdown(e.machine, 60)}（按 IP 白名单识别）${e.version ? `　**版本**：${sanitizeMarkdown(e.version, 40)}` : ''}`,
@@ -411,7 +424,7 @@ function executorLines(e: ExecutorRow): string {
 /** Sent to every admin when an executor registers. Approving lets Amber send it jobs. */
 export function executorApprovalCard(e: ExecutorRow, h: string): object {
   return shell('Amber · 执行端申请登记', 'orange', [
-    { tag: 'markdown', content: `${executorLines(e)}\n\n批准后，声明了 \`env: "${e.name}/环境名"\` 并通过审核的指令会在这台机器上、按各自审核过的沙箱策略执行。**请先和安装的人核对公钥指纹**（执行端安装时会打印出来），确认是你们自己装的。` },
+    { tag: 'markdown', content: `${executorLines(e)}\n\n批准后，声明了 \`env: "${e.name}/环境名"\` 并通过审核的指令会在这台机器上执行，**能访问的就是上面列出的路径**（指令自己不能再加）。**请先和安装的人核对公钥指纹**（执行端安装时会打印出来），确认是你们自己装的。` },
     buttonRow([btn('批准', { a: 'exe_ok', e: e.id, h }, 'primary'), btn('拒绝', { a: 'exe_no', e: e.id, h }, 'danger')]),
   ]);
 }

@@ -13,7 +13,7 @@ import type { Caller } from './engine.ts';
 import { runCommand, AmberError, secretVault } from './engine.ts';
 import type { Signer } from './identity.ts';
 import type { Scheduler } from './scheduler.ts';
-import { envsHash, type ExecutorHub } from './executors.ts';
+import { envsHash, effectiveAccess, credentialPaths, type ExecutorHub } from './executors.ts';
 import { showFingerprint } from './exec-proto.ts';
 import { describeRule, formatAt, defaultTz, timezones } from './schedule-rule.ts';
 
@@ -189,7 +189,7 @@ export function startWeb(port: number, store: Store, deps: WebDeps): import('nod
           const c = t.cmd;
           const review = store.getReview(c.id);
           return json(res, 200, { ok: true, id: c.id, name: c.name, specHash: c.specHash, createdAt: c.createdAt,
-            script: { kind: c.script.kind, lang: c.script.lang, network: !!c.script.network, services: c.script.services ?? {}, secrets: c.script.secrets ?? [], sandbox: c.script.sandbox ?? null, interpreter: c.script.interpreter ?? null, env: c.script.env ?? null, timeoutMs: c.script.timeoutMs ?? 30000, code: c.script.code },
+            script: { kind: c.script.kind, lang: c.script.lang, network: !!c.script.network, services: c.script.services ?? {}, secrets: c.script.secrets ?? [], interpreter: c.script.interpreter ?? null, env: c.script.env ?? null, timeoutMs: c.script.timeoutMs ?? 30000, code: c.script.code },
             params: c.params, options: c.options, reviewDocUrl: review.docUrl ?? null,
             history: store.versionsOf(c.id).map(v => ({ id: v.id, specHash: v.specHash, createdAt: v.createdAt, reviewDocUrl: store.getReview(v.id).docUrl ?? null })) });
         }
@@ -342,7 +342,7 @@ async function executorViews(store: Store, deps: WebDeps) {
   for (const e of store.listExecutors()) {
     out.push({
       id: e.id, name: e.name, machine: e.machine, version: e.version, status: e.status, online: e.status === 'approved' && deps.hub!.online(e),
-      envs: e.envs, fingerprint: showFingerprint(e.fingerprint), createdAt: e.createdAt, lastSeen: e.lastSeen, decidedAt: e.decidedAt,
+      envs: Object.fromEntries(Object.entries(e.envs).map(([k, v]) => [k, { ...v, access: effectiveAccess(v), credential: credentialPaths(v) }])), fingerprint: showFingerprint(e.fingerprint), createdAt: e.createdAt, lastSeen: e.lastSeen, decidedAt: e.decidedAt,
       decidedBy: e.decidedBy ? (await deps.nameOf(e.decidedBy)) ?? e.decidedBy : null,
       // Binds a decision to what the page showed, like the card.
       ...(e.status === 'pending' ? { h: envsHash(e.name, e.envs) } : {}),

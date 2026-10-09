@@ -1,9 +1,12 @@
 // GENERATED from src/sandbox-policy.ts by scripts/build-executor.mjs — do not edit.
-// App sandbox policy (D49). Every script runs under macOS Seatbelt with a policy built from:
-//   baseline   system + language toolchains readable, so scripts can use external dependencies
-//   app        what the command declares in script.sandbox (reviewed with the code)
-//   run        this run's private temp dir (read-write; also the cwd and TMPDIR)
-//   mandatory  credentials and Amber's own keys — denied last, nothing can re-open them
+// Sandbox policy (D49, D51). Every script runs under macOS Seatbelt with a policy built from:
+//   baseline     system + language toolchains readable, so scripts can use external dependencies;
+//                credential stores denied (they can be re-opened only by an approved environment)
+//   environment  what the environment the command runs in grants (D51): an executor environment's
+//                access, approved by an admin with the environment. Commands declare no paths of their own.
+//   run          this run's private temp dir (read-write; also the cwd, HOME and TMPDIR)
+//   hard denies  Amber's and the executor's own config dirs (keys, database), ~/.ssh and keychains —
+//                emitted last, nothing re-opens them
 // Model (three tiers, deny by default, the deepest matching rule wins) and the macOS baseline are
 // ported from botmux's FsPolicy (src/adapters/cli/fs-policy.ts, MIT License, © botmux contributors),
 // narrowed for scripts: no ~/Library, ~/.cache or /private/var/folders grants (HOME is the run dir).
@@ -12,31 +15,38 @@ import { homedir } from 'node:os';
 import { posix } from 'node:path';
 
                                                          
-                                                                    
+                                                      
                                                                                 
-/** script.sandbox as submitted: absolute paths or ~/… paths. */
-                                                                                          
+/** An environment's file access (D51). Paths: absolute, ~/… or {WORKDIR}/… (resolved on the executor). */
+                                                                                         
 
-export const MAX_SANDBOX_PATHS = 50;
+export const MAX_ACCESS_PATHS = 100;
 
 let CTX = { home: homedir(), configDir: '' };
-/** Set once at startup: the home directory and Amber's config dir (signing key, secrets key, database). */
+/** Set once at startup: the home directory and this process's config dir (signing key, secrets key, database / executor keys). */
 export function setSandboxContext(c                                      )       { CTX = { home: c.home ?? homedir(), configDir: c.configDir }; }
 
-/** Credentials and Amber's own keys. Denied after everything else; declaring them is refused at submit time. */
-export function mandatoryDenyRoots(home = CTX.home, configDir = CTX.configDir)           {
+/** Never readable or writable, whatever an environment says: Amber's and the executor's own keys, SSH keys, keychains. */
+export function hardDenyRoots(home = CTX.home, configDir = CTX.configDir)           {
   const h = home;
   return [
     ...(configDir ? [configDir] : []),
-    // Amber's and the executor's default config dirs, whichever process this is.
     `${h}/.config/amber`, `${h}/.config/amber-executor`,
-    `${h}/.ssh`, `${h}/.gnupg`, `${h}/.aws`, `${h}/.azure`, `${h}/.netrc`, `${h}/.git-credentials`,
+    `${h}/.ssh`, `${h}/Library/Keychains`, '/Library/Keychains',
+  ];
+}
+
+/** Credential stores, denied by default. An environment may re-open a path inside them (e.g. a bot's own
+ *  lark-cli config); the approval card flags such grants. */
+export function credentialRoots(home = CTX.home)           {
+  const h = home;
+  return [
+    `${h}/.gnupg`, `${h}/.aws`, `${h}/.azure`, `${h}/.netrc`, `${h}/.git-credentials`,
     `${h}/.npmrc`, `${h}/.pypirc`, `${h}/.docker`, `${h}/.kube`,
     `${h}/.config/gh`, `${h}/.config/glab-cli`, `${h}/.config/gcloud`, `${h}/.config/op`, `${h}/.config/1Password`,
     `${h}/.1password`, `${h}/.password-store`,
     `${h}/.lark-cli`, `${h}/.lark-cli-bots`, `${h}/Library/Application Support/lark-cli`,
-    `${h}/.botmux`, `${h}/.config/botmux`, `${h}/.claude`, `${h}/.claude.json`, `${h}/.codex`,
-    `${h}/Library/Keychains`, `${h}/Library/Cookies`, '/Library/Keychains',
+    `${h}/.botmux`, `${h}/.config/botmux`, `${h}/.claude`, `${h}/.claude.json`, `${h}/.codex`, `${h}/Library/Cookies`,
   ];
 }
 
@@ -56,61 +66,66 @@ function baseline(h        )           {
     // Publish / registry tokens that live inside the trees above.
     deny(`${h}/.cargo/credentials`), deny(`${h}/.cargo/credentials.toml`), deny(`${h}/.gem/credentials`),
     deny(`${h}/.m2/settings.xml`), deny(`${h}/.m2/settings-security.xml`), deny(`${h}/.gradle/gradle.properties`),
+    // Credential stores: denied here at their own depth, so a deeper environment grant can re-open one file or dir.
+    ...credentialRoots(h).map(deny),
   ];
 }
 
 const within = (p        , root        ) => p === root || p.startsWith(root === '/' ? '/' : `${root}/`);
 
-/** The executor's per-environment directory (D50): `{WORKDIR}` or `{WORKDIR}/…` in a sandbox path. */
+/** The environment's directory (D50): `{WORKDIR}` or `{WORKDIR}/…` in an environment's access paths. */
 export const WORKDIR_VAR = '{WORKDIR}';
 export const usesWorkdir = (raw        ) => raw.trim() === WORKDIR_VAR || raw.trim().startsWith(WORKDIR_VAR + '/');
 
 /** Expands ~ (and {WORKDIR} when given) and normalizes; throws on anything that is not an absolute path. */
 export function normalizePath(raw        , home = CTX.home, workdir         )         {
-  if (typeof raw !== 'string' || !raw.trim()) throw new Error('沙箱路径不能为空');
+  if (typeof raw !== 'string' || !raw.trim()) throw new Error('路径不能为空');
   let p = raw.trim();
   if (usesWorkdir(p)) {
-    if (!workdir) throw new Error(`${WORKDIR_VAR} 只能用在执行端上运行的指令里（要声明 env）`);
+    if (!workdir) throw new Error(`${WORKDIR_VAR} 只能用在环境定义里`);
     p = workdir + p.slice(WORKDIR_VAR.length);
   }
   if (p === '~' || p.startsWith('~/')) p = home + p.slice(1);
-  if (!p.startsWith('/')) throw new Error(`沙箱路径必须是绝对路径（或 ~/ 开头）：${raw}`);
-  if (/[\0\n\r]/.test(p)) throw new Error(`沙箱路径含有非法字符：${raw}`);
+  if (!p.startsWith('/')) throw new Error(`路径必须是绝对路径（或 ~/、{WORKDIR}/ 开头）：${raw}`);
+  if (/[\0\n\r]/.test(p)) throw new Error(`路径含有非法字符：${raw}`);
   p = posix.normalize(p);
   return p.length > 1 ? p.replace(/\/+$/, '') : p;
 }
 
-/** Checks a submitted script.sandbox. Returns it with paths as written (trimmed), or throws with a message for the submitter.
- *  `remote`: the command runs on an executor, so {WORKDIR} paths are allowed; they are checked against the
- *  protected dirs on the executor once the directory is known (`workdir`). */
-export function validateAppSandbox(x         , opt                                         = {})                         {
-  if (x === undefined || x === null) return undefined;
-  if (typeof x !== 'object' || Array.isArray(x)) throw new Error('sandbox 要写成 {"readOnly": [...], "readWrite": [...], "deny": [...]}');
+/** Checks an environment's access and returns it with every path resolved to an absolute path
+ *  (~ and {WORKDIR} expanded). Throws with a message for the person setting up the environment. */
+export function validateEnvAccess(x         , opt                                      = {})            {
+  const home = opt.home ?? CTX.home;
+  if (x === undefined || x === null) return {};
+  if (typeof x !== 'object' || Array.isArray(x)) throw new Error('access 要写成 {"readOnly": [...], "readWrite": [...], "deny": [...]}');
   const o = x                           ;
-  for (const k of Object.keys(o)) if (!['readOnly', 'readWrite', 'deny'].includes(k)) throw new Error(`sandbox 里不认识的字段：${k}（只能是 readOnly / readWrite / deny；联网用 network 字段）`);
-  const out             = {};
+  for (const k of Object.keys(o)) if (!['readOnly', 'readWrite', 'deny'].includes(k)) throw new Error(`access 里不认识的字段：${k}（只能是 readOnly / readWrite / deny）`);
+  const out            = {};
   let n = 0;
-  const roots = mandatoryDenyRoots();
+  const hard = hardDenyRoots(home);
   for (const k of ['readOnly', 'readWrite', 'deny']         ) {
     if (o[k] === undefined) continue;
-    if (!Array.isArray(o[k])) throw new Error(`sandbox.${k} 要写成路径数组`);
-    const list = (o[k]             ).map(v => String(v).trim());
-    for (const raw of list) {
-      if (usesWorkdir(raw) && !opt.workdir) {
-        if (!opt.remote) throw new Error(`${WORKDIR_VAR} 只能用在执行端上运行的指令里（要声明 env）`);
-        if (/(^|\/)\.\.(\/|$)/.test(raw)) throw new Error(`沙箱路径不能含 ..：${raw}`);
-        continue;
-      }
-      const p = normalizePath(raw, CTX.home, opt.workdir);
+    if (!Array.isArray(o[k])) throw new Error(`access.${k} 要写成路径数组`);
+    const list           = [];
+    for (const raw of o[k]             ) {
+      if (/(^|\/)\.\.(\/|$)/.test(String(raw))) throw new Error(`路径不能含 ..：${raw}`);
+      const p = normalizePath(String(raw), home, opt.workdir);
       if (k !== 'deny' && p === '/') throw new Error('不能开放整个根目录');
-      const hit = roots.find(r => within(p, r));
-      if (hit && k !== 'deny') throw new Error(`不能开放 ${raw}：它在受保护的目录 ${hit.replace(CTX.home, '~')} 里（凭证、密钥）`);
+      const hit = hard.find(r => within(p, r) || within(r, p));
+      if (hit && k !== 'deny') throw new Error(`不能开放 ${raw}：它就是或包含受保护的目录 ${hit.replace(home, '~')}（密钥、SSH、钥匙串）`);
+      list.push(p);
     }
     n += list.length;
-    if (list.length) out[k] = list;
+    if (list.length) out[k] = [...new Set(list)];
   }
-  if (n > MAX_SANDBOX_PATHS) throw new Error(`沙箱路径最多 ${MAX_SANDBOX_PATHS} 条`);
-  return Object.keys(out).length ? out : undefined;
+  if (n > MAX_ACCESS_PATHS) throw new Error(`一个环境最多 ${MAX_ACCESS_PATHS} 条路径`);
+  return out;
+}
+
+/** Grants that re-open something inside a credential store (shown as a warning on the approval card). */
+export function credentialGrants(a           , home = CTX.home)           {
+  const roots = credentialRoots(home);
+  return [...(a.readWrite ?? []), ...(a.readOnly ?? [])].filter(p => roots.some(r => within(p, r) || within(r, p)));
 }
 
 /** Real path when it exists (Seatbelt matches resolved paths: /tmp → /private/tmp), else the path itself. */
@@ -125,23 +140,28 @@ const RESTRICT                           = { readWrite: 0, readOnly: 1, deny: 2 
 
                                                                 
 
-/** All rules for one run, sorted shallow → deep (same depth: less restrictive first), mandatory denies separate (emitted last). */
-export function buildPolicy(o                                                                                           )         {
+/** All rules for one run, sorted shallow → deep (same depth: less restrictive first), hard denies separate (emitted last).
+ *  `access` must already be validated (absolute paths). */
+export function buildPolicy(o                                                                           )         {
   const home = o.home ?? CTX.home;
   const rules           = [...baseline(home)];
-  for (const [k, access] of [['readOnly', 'readOnly'], ['readWrite', 'readWrite'], ['deny', 'deny']]         ) {
-    for (const raw of o.app?.[k] ?? []) rules.push({ path: normalizePath(raw, home, o.workdir), access, source: 'app' });
+  for (const k of ['readOnly', 'readWrite', 'deny']         ) {
+    for (const p of o.access?.[k] ?? []) rules.push({ path: p, access: k, source: 'env' });
   }
   rules.push({ path: o.runDir, access: 'readWrite', source: 'run' });
   const seen = new Map                ();
   for (const r of rules) {
     const c = { ...r, path: canonical(r.path) };
     const prev = seen.get(c.path);
-    // Same path twice: the more restrictive wins.
-    if (!prev || RESTRICT[c.access] > RESTRICT[prev.access]) seen.set(c.path, c);
+    // Same path twice: the more restrictive wins — except that an environment rule beats a baseline rule
+    // at the same path (an approved environment re-opening, or closing, exactly that path).
+    const envOverBaseline = prev && prev.source !== c.source && (c.source === 'env' || prev.source === 'env') && (prev.source === 'baseline' || c.source === 'baseline');
+    if (!prev) seen.set(c.path, c);
+    else if (envOverBaseline) { if (c.source === 'env') seen.set(c.path, c); }
+    else if (RESTRICT[c.access] > RESTRICT[prev.access]) seen.set(c.path, c);
   }
   const sorted = [...seen.values()].sort((a, b) => depth(a.path) - depth(b.path) || RESTRICT[a.access] - RESTRICT[b.access] || (a.path < b.path ? -1 : 1));
-  const mandatory = [...new Set(mandatoryDenyRoots(home, o.configDir ?? CTX.configDir).map(canonical))];
+  const mandatory = [...new Set(hardDenyRoots(home, o.configDir ?? CTX.configDir).map(canonical))];
   return { rules: sorted, mandatory };
 }
 
@@ -184,8 +204,8 @@ export function compileToSeatbelt(policy        , net                           
 }
 
 /** One line for cards and review documents. */
-export function describeSandbox(s             , home = CTX.home)         {
-  if (!s) return '';
+export function describeAccess(a            , home = CTX.home)         {
+  if (!a) return '';
   const show = (l           ) => (l ?? []).map(p => p.replace(home, '~')).join('、');
-  return [s.readOnly?.length ? `只读 ${show(s.readOnly)}` : '', s.readWrite?.length ? `读写 ${show(s.readWrite)}` : '', s.deny?.length ? `禁止 ${show(s.deny)}` : ''].filter(Boolean).join('；');
+  return [a.readWrite?.length ? `读写 ${show(a.readWrite)}` : '', a.readOnly?.length ? `只读 ${show(a.readOnly)}` : '', a.deny?.length ? `禁止 ${show(a.deny)}` : ''].filter(Boolean).join('；');
 }
