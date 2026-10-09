@@ -766,6 +766,12 @@ export class Store {
     return (this.db.prepare(`SELECT * FROM apps ${status ? 'WHERE status = ?' : ''} ORDER BY name`).all(...(status ? [status] : [])) as Record<string, unknown>[]).map(r => this.appRow(r)!);
   }
 
+  setAppOrigin(id: string, chatId: string, line: string, maintainer: string): void {
+    this.db.prepare('UPDATE apps SET origin_chat_id = ?, origin_line = ?, maintainer_union_id = ?, updated_at = ? WHERE id = ?').run(chatId, line, maintainer, Date.now(), id);
+  }
+
+  setAppMaintainer(id: string, maintainer: string): void { this.db.prepare('UPDATE apps SET maintainer_union_id = ?, updated_at = ? WHERE id = ?').run(maintainer, Date.now(), id); }
+
   setAppStatus(id: string, status: AppRow['status']): void { this.db.prepare('UPDATE apps SET status = ?, updated_at = ? WHERE id = ?').run(status, Date.now(), id); }
 
   addAppVersion(appId: string, commandId: string, specHash: string, docUrl: string | null): number {

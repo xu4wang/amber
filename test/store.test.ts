@@ -194,3 +194,111 @@ test('store: only the creator lists; a listing needs every reviewer; missed appr
     assert.equal(env.amber.store.listApps().length, 1);
   } finally { await env.close(); }
 });
+
+test('store upgrades: the original\'s new version becomes the app\'s; installers are told and upgrade when they choose', async () => {
+  const env = await makeEnv();
+  const { fake, bob, carol } = env;
+  const base = `http://127.0.0.1:${env.webPort}`;
+  const post = (cookie: string, path: string, body: unknown) => fetch(base + path, { method: 'POST', headers: { cookie, origin: base, 'content-type': 'application/json' }, body: JSON.stringify(body) }).then(async x => ({ status: x.status, body: await x.json() }));
+  const get = (cookie: string, path: string) => fetch(base + path, { headers: { cookie } }).then(async x => ({ status: x.status, body: await x.json() }));
+  const V1 = script('import json,sys\np=json.load(sys.stdin)["params"]\nprint("v1 " + p.get("repo",""))');
+  const V2 = script('import json,sys\np=json.load(sys.stdin)["params"]\nprint("v2 " + p.get("repo","") + " " + p.get("branch",""))');
+  const P1 = [{ name: 'repo', label: '仓库', type: 'string', required: true, scope: 'config' }];
+  const P2 = [...P1, { name: 'branch', label: '分支', type: 'string', required: true, scope: 'config' }];
+  try {
+    fake.chats.set(GROUP2, { mode: 'group', name: '二群', members: new Set(['BOT', carol.unionId]) });
+    const id = await activate(env, { chatId: GROUP, chatType: 'group', name: '检查', params: P1, script: V1, options: { schedulable: true } }, bob, { repo: 'r' });
+    await env.amber.bot.apps.requestListing(id, { unionId: bob.unionId, openId: bob.openId });
+    await env.approveLatest();
+    const app = env.amber.store.listApps()[0];
+    const carolC = await login(env, carol), bobC = await login(env, bob);
+    const scope2 = 'group:' + GROUP2;
+    const ins = (await post(carolC, `/web/api/store/${app.id}/install`, { target: scope2 })).body;
+    await post(carolC, `/web/api/commands/${ins.commandId}/config`, { scope: scope2, name: 'repo', value: 'carol/repo' });
+    const sch = (await post(carolC, '/web/api/schedules', { scope: scope2, commandId: ins.commandId, at: '每天 09:00' })).body;
+    assert.equal(sch.ok, true, JSON.stringify(sch));
+    assert.equal((await get(carolC, `/web/api/commands/${ins.commandId}/upgrade?scope=${scope2}`)).body.message, '已经是最新版本');
+
+    // bob's new version goes live: it is the app's version 2, and carol hears about it.
+    await activate(env, { chatId: GROUP, chatType: 'group', name: '检查', params: P2, script: V2, options: { schedulable: true } }, bob, { repo: 'r', branch: 'b' });
+    assert.match([...fake.docs.values()].pop()!.join('\n'), /已上架到 Amber Store/, 'the review doc says so');
+    assert.equal(env.amber.store.appVersions(app.id)[0].version, 2);
+    assert.ok(fake.sent.some(s => s.to.unionId === carol.unionId && /有新版本：检查/.test(FakeFeishu.text(s.card))));
+    assert.ok(!fake.sent.some(s => s.to.unionId === bob.unionId && /有新版本/.test(FakeFeishu.text(s.card))), 'not the maintainer: he has no installation');
+    // Nothing changes until carol upgrades.
+    assert.equal((await post(carolC, '/web/api/run', { scope: scope2, commandId: ins.commandId, args: {} })).body.markdown, 'v1 carol/repo');
+    const view = (await get(carolC, '/web/api/overview')).body.groups.flatMap((g: any) => g.commands).find((c: any) => c.id === ins.commandId);
+    assert.deepEqual([view.upgrade.from, view.upgrade.to], [1, 2]);
+    const diff = (await get(carolC, `/web/api/commands/${ins.commandId}/upgrade?scope=${scope2}`)).body;
+    assert.deepEqual(diff.newConfig, ['分支']);
+    assert.match(diff.diff, /\+ print\("v2/);
+    assert.equal((await post(bobC, `/web/api/commands/${ins.commandId}/upgrade`, { scope: scope2, confirm: true })).status, 404, 'only its owner');
+    assert.throws(() => env.amber.bot.apps.upgrade(ins.commandId, { unionId: bob.unionId }), /只有指令的创建人可以升级/);
+    const up = (await post(carolC, `/web/api/commands/${ins.commandId}/upgrade`, { scope: scope2, confirm: true })).body;
+    assert.equal(up.ok, true, JSON.stringify(up));
+    assert.equal(up.version, 2);
+    const old = env.amber.store.getCommand(ins.commandId)!, now = env.amber.store.getCommand(up.commandId)!;
+    assert.deepEqual([old.status, now.status, now.line, now.name, now.ownerUnionId], ['retired', 'active', old.line, '检查', carol.unionId]);
+    assert.equal(env.amber.store.getSchedule(sch.scheduleId)!.commandId, now.id, 'the schedule moved along');
+    assert.match((await post(carolC, '/web/api/run', { scope: scope2, commandId: now.id, args: {} })).body.message, /还没设置配置项：分支/);
+    await post(carolC, `/web/api/commands/${now.id}/config`, { scope: scope2, name: 'branch', value: 'main' });
+    assert.equal((await post(carolC, '/web/api/run', { scope: scope2, commandId: now.id, args: {} })).body.markdown, 'v2 carol/repo main', 'settings carried over');
+    // Delisted: new versions of the original no longer reach the Store.
+    await post(bobC, `/web/api/store/${app.id}/delist`, { confirm: true });
+    await activate(env, { chatId: GROUP, chatType: 'group', name: '检查', params: P2, script: script('print(3)'), options: { schedulable: true } }, bob, { repo: 'r', branch: 'b' });
+    assert.equal(env.amber.store.appVersions(app.id)[0].version, 2);
+  } finally { await env.close(); }
+});
+
+test('store originals: retiring keeps or delists; a development-mode install becomes the new original; admins hand over maintenance', async () => {
+  const env = await makeEnv();
+  const { fake, alice, bob, carol } = env;
+  const base = `http://127.0.0.1:${env.webPort}`;
+  const post = (cookie: string, path: string, body: unknown) => fetch(base + path, { method: 'POST', headers: { cookie, origin: base, 'content-type': 'application/json' }, body: JSON.stringify(body) }).then(async x => ({ status: x.status, body: await x.json() }));
+  const get = (cookie: string, path: string) => fetch(base + path, { headers: { cookie } }).then(async x => ({ status: x.status, body: await x.json() }));
+  try {
+    fake.chats.get(GROUP)!.members.add(carol.unionId);
+    fake.chats.set(GROUP2, { mode: 'group', name: '二群', members: new Set(['BOT', bob.unionId, carol.unionId]) });
+    const id = await activate(env, { chatId: GROUP, chatType: 'group', name: '检查', params: [], script: script('print("v1")'), options: { schedulable: true } }, bob);
+    await env.amber.bot.apps.requestListing(id, { unionId: bob.unionId, openId: bob.openId });
+    await env.approveLatest();
+    const app = env.amber.store.listApps()[0];
+    const bobC = await login(env, bob), carolC = await login(env, carol), aliceC = await login(env, alice);
+    // While the original is live, there is no development-mode install.
+    assert.match((await post(bobC, `/web/api/store/${app.id}/install`, { target: 'group:' + GROUP2, dev: true })).body.message, /原版还在使用中/);
+    // The Feishu retire card says what happens to the app.
+    await env.say(bob, GROUP, '下线 检查');
+    assert.match(FakeFeishu.text(fake.sent.at(-1)!.card), /应用仍留在 Store/);
+    // Retire the original, keeping the app in the Store.
+    const r = await post(bobC, `/web/api/commands/${id}/retire`, { scope: 'group:' + GROUP, confirm: true, delist: false });
+    assert.equal(r.body.delisted, undefined);
+    assert.equal(env.amber.store.getApp(app.id)!.status, 'listed');
+    const view = (await get(bobC, '/web/api/store')).body.apps[0];
+    assert.deepEqual([view.originActive, view.canDevInstall], [false, true]);
+    // Only the maintainer (or an admin) installs in development mode.
+    assert.equal((await post(carolC, `/web/api/store/${app.id}/install`, { target: 'group:' + GROUP2, dev: true })).status, 403);
+    assert.match((await post(bobC, `/web/api/store/${app.id}/install`, { target: 'p2p', dev: true })).body.message, /只能装到群里/);
+    const dev = (await post(bobC, `/web/api/store/${app.id}/install`, { target: 'group:' + GROUP2, dev: true })).body;
+    assert.equal(dev.ok, true, JSON.stringify(dev));
+    const d = env.amber.store.getCommand(dev.commandId)!;
+    assert.deepEqual([d.line, d.ownerUnionId, env.amber.store.installOf(d.id)], ['检查', bob.unionId, undefined]);
+    assert.deepEqual([env.amber.store.getApp(app.id)!.originChatId, env.amber.store.getApp(app.id)!.originLine], [GROUP2, '检查']);
+    // Its new versions are the app's.
+    await activate(env, { chatId: GROUP2, chatType: 'group', name: '检查', params: [], script: script('print("v2")'), options: { schedulable: true } }, bob);
+    assert.equal(env.amber.store.appVersions(app.id)[0].version, 2);
+    // An admin hands maintenance to carol; she can delist and relist.
+    assert.equal((await post(bobC, `/web/api/store/${app.id}/maintainer`, { email: carol.email })).status, 403);
+    assert.equal((await post(aliceC, `/web/api/store/${app.id}/maintainer`, { email: carol.email })).body.ok, true);
+    assert.equal(env.amber.store.getApp(app.id)!.maintainerUnionId, carol.unionId);
+    assert.equal((await post(carolC, `/web/api/store/${app.id}/delist`, { confirm: true })).body.status, 'delisted');
+    assert.equal((await post(bobC, `/web/api/store/${app.id}/relist`, { confirm: true })).status, 403);
+    assert.equal((await post(carolC, `/web/api/store/${app.id}/relist`, { confirm: true })).body.status, 'listed');
+    // Retiring an original with "delist too".
+    const cur = env.amber.store.activeByName(GROUP2, '检查')!;
+    assert.match((await post(bobC, `/web/api/commands/${cur.id}/retire`, { scope: 'group:' + GROUP2, confirm: true, delist: true })).body.message, /只有应用的维护人/);
+    assert.equal(env.amber.store.getCommand(cur.id)!.status, 'active', 'nothing changed');
+    const r2 = await post(aliceC, `/web/api/commands/${cur.id}/retire`, { scope: 'group:' + GROUP2, confirm: true, delist: true });
+    assert.equal(r2.body.delisted, true);
+    assert.equal(env.amber.store.getApp(app.id)!.status, 'delisted');
+  } finally { await env.close(); }
+});

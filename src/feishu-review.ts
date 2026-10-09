@@ -17,7 +17,7 @@ export interface ReviewConfig {
 
 const FENCE = '`'.repeat(3);
 
-type DocOpts = { creator: string; submittedBy?: string; trial?: string; prev?: CommandRow; listing?: boolean };
+type DocOpts = { creator: string; submittedBy?: string; trial?: string; prev?: CommandRow; listing?: boolean; listed?: boolean };
 
 function docMarkdown(c: CommandRow, opts: DocOpts): string {
   const params = c.params.length
@@ -39,7 +39,7 @@ function docMarkdown(c: CommandRow, opts: DocOpts): string {
     const body = d === null ? '代码改动太大，无法逐行比较，请直接看下面的完整代码。'
       : !d.text ? '代码没有变化（只改了参数、选项、说明或运行方式）。'
       : `新增 ${d.stat.added} 行，删除 ${d.stat.removed} 行。\n\n${FENCE}diff\n${d.text.slice(0, 30000).split(FENCE).join('``\u200b`')}\n${FENCE}`;
-    change = `## 与当前版本的差异\n\n这是「${c.name}」的新版本，审核通过后替换当前版本 ${opts.prev.specHash.slice(0, 12)}。\n\n${body}`;
+    change = `## 与当前版本的差异\n\n这是「${c.name}」的新版本，审核通过后替换当前版本 ${opts.prev.specHash.slice(0, 12)}。${opts.listed ? '\n\n**这条指令已上架到 Amber Store**：审核通过后，这个版本也会成为 Store 里的新版本，装了它的人会收到升级通知（自己决定是否升级）。' : ''}\n\n${body}`;
   }
   // #4: listing a command that is already live, so that others can install their own copy.
   if (opts.listing) change = `## 上架到 Amber Store\n\n这条指令已经审核通过、正在使用。上架后，其他人可以从 Amber Store 安装自己的一份（自己的配置项和密钥，以安装人自己的身份执行），安装不再审批。\n\n除了平常的审核，请额外检查：代码里有没有写死只适用于某个群或某个人的内容（群名、成员、特定的仓库或账号等）。这些应该改成配置项，否则别人装了也用不了。`;

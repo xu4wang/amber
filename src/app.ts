@@ -43,7 +43,7 @@ export async function startAmber(cfg: AmberConfig, opts: { apiPort: number; webP
     signer: bot.signer,
     scheduler: bot.scheduler,
     origin: new URL(cfg.webBaseUrl).origin,
-    retire: (id, actor, by) => bot.retire(id, actor, by),
+    retire: (id, actor, by, opts) => bot.retire(id, actor, by, opts),
     isAdmin: u => bot.isAdminPublic(u),
     hub: bot.hub,
     apps: bot.apps,

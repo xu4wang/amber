@@ -318,10 +318,10 @@ export function requestCard(o: {
 }
 
 /** D44: retiring from Feishu asks once more; only the person who asked can confirm, for 5 minutes. */
-export function retireConfirmCard(c: CommandRow, schedules: number, requester: string, issuedAt: number): object {
+export function retireConfirmCard(c: CommandRow, schedules: number, requester: string, issuedAt: number, listed = false): object {
   const v = { c: c.id, h: c.specHash, u: requester, t: String(issuedAt) };
   return shell('Amber · 确认下线', 'red', [
-    { tag: 'markdown', content: `确定下线「${sanitizeMarkdown(c.name, 80)}」？\n\n下线后这条指令不能再执行${schedules ? `，它的 **${schedules} 个定时任务**会暂停并通知创建人` : ''}。下线不能撤销，需要时只能重新提交、审核。\n<font color="grey">只有发起下线的人能确认，5 分钟内有效。</font>` },
+    { tag: 'markdown', content: `确定下线「${sanitizeMarkdown(c.name, 80)}」？\n\n下线后这条指令不能再执行${schedules ? `，它的 **${schedules} 个定时任务**会暂停并通知创建人` : ''}。下线不能撤销，需要时只能重新提交、审核。${listed ? '\n\n它已上架到 Amber Store：下线后应用仍留在 Store（别人照常可以安装，但不会再有新版本）。要同时下架，请到网站上下线。' : ''}\n<font color="grey">只有发起下线的人能确认，5 分钟内有效。</font>` },
     { tag: 'column_set', columns: [
       { tag: 'column', width: 'auto', elements: [btn('确认下线', { a: 'retire_ok', ...v }, 'danger')] },
       { tag: 'column', width: 'auto', elements: [btn('取消', { a: 'retire_no', ...v })] },

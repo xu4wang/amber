@@ -41,7 +41,7 @@ export interface WebDeps {
   signer: Signer;
   scheduler: Scheduler;
   /** Take a command offline (creator or admin only; schedules pause). */
-  retire(cmdId: string, actor: { unionId: string }, byLabel: string): Promise<{ name: string; schedules: number }>;
+  retire(cmdId: string, actor: { unionId: string }, byLabel: string, opts?: { delist?: boolean }): Promise<{ name: string; schedules: number; delisted?: boolean }>;
   isAdmin(unionId: string): boolean;
   /** #4 orphans: is the command's creator gone from its group; who is in a group; offer a command to a member. */
   isOrphan(c: CommandRow): Promise<boolean | undefined>;
@@ -192,6 +192,13 @@ export function startWeb(port: number, store: Store, deps: WebDeps): import('nod
           for (const g of (await deps.botGroups?.().catch(() => [])) ?? []) if (await deps.isMember(g.chatId, who.unionId) === true) targets.push({ target: `group:${g.chatId}`, name: g.name || g.chatId });
           return json(res, 200, { ok: true, apps: await Promise.all(apps.map(a => deps.apps!.view(a, who.unionId))), targets });
         }
+        const upMatch = /^\/web\/api\/commands\/([A-Za-z0-9-]{1,40})\/upgrade$/.exec(url.pathname);
+        if (req.method === 'GET' && upMatch && deps.apps) {
+          // What upgrading an installation would change (#4): its owner only.
+          const t = await target(store, deps, who.unionId, String(url.searchParams.get('scope') ?? ''), upMatch[1]);
+          if (t.cmd.ownerUnionId !== who.unionId) throw new AmberError('forbidden', '只有指令的创建人可以升级');
+          return json(res, 200, { ok: true, ...deps.apps.upgradeDiff(t.cmd) });
+        }
         const srcMatch = /^\/web\/api\/store\/([A-Za-z0-9-]{1,40})\/source$/.exec(url.pathname);
         if (req.method === 'GET' && srcMatch) {
           const app = deps.apps && store.getApp(srcMatch[1]);
@@ -304,15 +311,26 @@ export function startWeb(port: number, store: Store, deps: WebDeps): import('nod
           const r = await deps.apps.requestListing(t.cmd.id, { unionId: who.unionId, openId: who.openId ?? undefined });
           return json(res, 200, { ok: true, ...r });
         }
-        if ((m = /^\/web\/api\/store\/([A-Za-z0-9-]{1,40})\/(install|delist)$/.exec(url.pathname))) {
+        if ((m = /^\/web\/api\/commands\/([A-Za-z0-9-]{1,40})\/upgrade$/.exec(url.pathname))) {
           if (!deps.apps) throw new AmberError('not_found', '没有开启 Amber Store');
-          if (m[2] === 'delist') {
-            if (body.confirm !== true) throw new AmberError('needs_confirm', '请确认后再下架');
-            const a = deps.apps.delist(m[1], who.unionId);
+          if (body.confirm !== true) throw new AmberError('needs_confirm', '请确认后再升级');
+          const t = await target(store, deps, who.unionId, String(body.scope ?? ''), m[1]);
+          const n = deps.apps.upgrade(t.cmd.id, { unionId: who.unionId, openId: who.openId ?? undefined });
+          return json(res, 200, { ok: true, commandId: n.id, version: store.installOf(n.id)?.version ?? null });
+        }
+        if ((m = /^\/web\/api\/store\/([A-Za-z0-9-]{1,40})\/(install|delist|relist|maintainer)$/.exec(url.pathname))) {
+          if (!deps.apps) throw new AmberError('not_found', '没有开启 Amber Store');
+          if (m[2] === 'delist' || m[2] === 'relist') {
+            if (body.confirm !== true) throw new AmberError('needs_confirm', '请确认后再操作');
+            const a = m[2] === 'delist' ? deps.apps.delist(m[1], who.unionId) : deps.apps.relist(m[1], who.unionId);
             return json(res, 200, { ok: true, status: a.status });
           }
+          if (m[2] === 'maintainer') {
+            const a = await deps.apps.setMaintainer(m[1], String(body.email ?? ''), who.unionId);
+            return json(res, 200, { ok: true, maintainer: (await deps.nameOf(a.maintainerUnionId)) ?? '' });
+          }
           rateLimit(who.unionId);
-          const c = await deps.apps.install(m[1], { unionId: who.unionId, openId: who.openId ?? undefined }, String(body.target ?? ''), body.name === undefined ? undefined : String(body.name));
+          const c = await deps.apps.install(m[1], { unionId: who.unionId, openId: who.openId ?? undefined }, String(body.target ?? ''), body.name === undefined ? undefined : String(body.name), { dev: body.dev === true });
           return json(res, 200, { ok: true, commandId: c.id, name: c.name, scope: c.scopeType === 'p2p' ? 'p2p' : `group:${c.chatId}`,
             needs: { config: configParams(c.params).filter(p => p.required && p.default === undefined).map(p => p.label ?? p.name), secrets: c.script.secrets ?? [] } });
         }
@@ -332,7 +350,7 @@ export function startWeb(port: number, store: Store, deps: WebDeps): import('nod
         if ((m = /^\/web\/api\/commands\/([A-Za-z0-9-]{1,40})\/retire$/.exec(url.pathname))) {
           const t = await target(store, deps, who.unionId, String(body.scope ?? ''), m[1], true);
           if (body.confirm !== true) throw new AmberError('needs_confirm', '请确认后再下线');
-          const r = await deps.retire(t.cmd.id, { unionId: who.unionId }, (await deps.nameOf(who.unionId)) ?? '创建人');
+          const r = await deps.retire(t.cmd.id, { unionId: who.unionId }, (await deps.nameOf(who.unionId)) ?? '创建人', { delist: body.delist === true });
           return json(res, 200, { ok: true, ...r });
         }
         if ((m = /^\/web\/api\/schedules\/([A-Za-z0-9-]{1,40})\/(pause|resume|delete|run)$/.exec(url.pathname))) {
@@ -393,6 +411,7 @@ function storeInfo(c: CommandRow, viewer: string | undefined, store: Store, apps
     installed: inst ? { appId: inst.appId, name: from?.name ?? '', version: inst.version } : null,
     listing: !!pending,
     publishable: !!viewer && c.ownerUnionId === viewer && !apps.whyNotListable(c, viewer),
+    upgrade: !!viewer && c.ownerUnionId === viewer ? apps.upgradeOf(c) ?? null : null,
   };
 }
 

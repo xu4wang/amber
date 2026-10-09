@@ -82,10 +82,14 @@ export class AmberBot {
     this.agent = new AgentGate(store, deps);
     this.scheduler = new Scheduler(store, deps);
     this.agent.scheduler = this.scheduler;
-    this.flow.onReplaced = (prev, next) => this.scheduler.onCommandReplaced(prev, next);
+    this.flow.isListed = c => !!this.apps.appOfOriginal(c);
+    this.flow.onReplaced = async (prev, next) => {
+      await this.scheduler.onCommandReplaced(prev, next);
+      await this.apps.onVersionLive(prev, next);
+    };
     this.hub = new ExecutorHub(store, this.signer);
     this.apps = new AppStore(store, this.flow, {
-      isMember: (c, u) => this.isMember(c, u), isAdmin: u => this.isAdmin(u), nameOf: u => this.nameOf(u), openIdOf: u => this.flow.openIdOf(u),
+      isMember: (c, u) => this.isMember(c, u), isAdmin: u => this.isAdmin(u), nameOf: u => this.nameOf(u), openIdOf: u => this.flow.openIdOf(u), webUrl: cfg.webBaseUrl, resolveUser: e => this.resolveUser(e),
     });
     this.hub.approvalCard = executorApprovalCard;
     this.hub.followCard = executorFollowCard;
@@ -96,15 +100,21 @@ export class AmberBot {
   }
 
   /** Take a command offline (D39). Only its creator or an admin. Its schedules pause. */
-  async retire(cmdId: string, actor: { unionId: string }, byLabel: string): Promise<{ name: string; schedules: number }> {
+  async retire(cmdId: string, actor: { unionId: string }, byLabel: string, opts: { delist?: boolean } = {}): Promise<{ name: string; schedules: number; delisted?: boolean }> {
     const c = this.store.getCommand(cmdId);
     if (!c || c.status !== 'active') throw new AmberError('not_found', '指令不存在或已下线');
     if (c.ownerUnionId !== actor.unionId && !this.isAdmin(actor.unionId)) throw new AmberError('forbidden', '只有指令的创建人或管理员可以下线');
+    // Check before anything changes: delisting is for the app's maintainer or an admin (#4).
+    const app = this.apps.appOfOriginal(c);
+    const delist = !!opts.delist && app?.status === 'listed';
+    if (delist && app!.maintainerUnionId !== actor.unionId && !this.isAdmin(actor.unionId)) throw new AmberError('forbidden', '只有应用的维护人或管理员可以下架；不下架的话可以直接下线');
     this.store.setStatus(c.id, 'retired');
     this.store.audit(actor.unionId, 'command.retire', { id: c.id, name: c.name, specHash: c.specHash });
     log('command retired', c.id, c.name);
     dropOrphanSettings(this.store, c.chatId, c.line, actor.unionId);
     const schedules = await this.scheduler.onCommandRetired(c, byLabel);
+    // An app's original (#4): by default the app stays in the Store (no more new versions); or it goes too.
+    if (delist) { this.apps.delist(app!.id, actor.unionId); return { name: c.name, schedules, delisted: true }; }
     return { name: c.name, schedules };
   }
 
@@ -564,7 +574,7 @@ export class AmberBot {
         // Check the permission now so nobody gets a confirmation they cannot use (D44).
         if (cmd.ownerUnionId !== caller.unionId && !this.isAdmin(caller.unionId)) throw new AmberError('forbidden', '只有指令的创建人或管理员可以下线');
         const schedules = this.store.schedulesOfCommand(cmd.id).length;
-        await this.replyCard(msg.message_id, inThread, retireConfirmCard(cmd, schedules, caller.unionId, Date.now()));
+        await this.replyCard(msg.message_id, inThread, retireConfirmCard(cmd, schedules, caller.unionId, Date.now(), this.apps.appOfOriginal(cmd)?.status === 'listed'));
       } catch (e) {
         await this.replyCard(msg.message_id, inThread, errorCard('Amber', e instanceof AmberError ? e.message : '出错了'));
       }

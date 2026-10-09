@@ -387,6 +387,8 @@ export class Flow {
 
   /** Called after a version is activated: retire the version it replaced and hand over (D38). */
   onReplaced: (prev: CommandRow, next: CommandRow) => Promise<void> = async () => {};
+  /** Amber Store (#4): is this command an app's original (its new versions become the app's)? */
+  isListed: (c: CommandRow) => boolean = () => false;
 
   private async activate(c: CommandRow, via: Record<string, unknown>): Promise<CommandRow | undefined> {
     const prev = this.prevOf(c.id);
@@ -439,7 +441,8 @@ export class Flow {
         if (this.reviewerOpenIds.length !== this.reviewers.length) throw new AmberError('no_reviewers', '审核人名单无法解析成飞书账号，暂时不能提交审核');
         const creator = (await this.nameOf(caller.unionId)) ?? '认领人';
         try {
-          const doc = await this.review.createDoc(fresh, { creator, submittedBy: meta.submittedBy, trial: this.store.lastTrialResult(c.id), prev: this.prevOf(c.id) });
+          const prevC = this.prevOf(c.id);
+          const doc = await this.review.createDoc(fresh, { creator, submittedBy: meta.submittedBy, trial: this.store.lastTrialResult(c.id), prev: prevC, listed: !!prevC && this.isListed(prevC) });
           const instance = await this.review.startApproval(fresh, caller.openId, this.reviewerOpenIds, doc.url, creator, this.prevOf(c.id));
           this.store.setReview(c.id, { instance, docUrl: doc.url, docId: doc.docId });
           this.store.audit(caller.unionId, 'review.feishu_started', { id: c.id, instance, doc: doc.url });

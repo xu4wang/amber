@@ -114,6 +114,7 @@ details.node details.node > summary { font-weight: 500; color: var(--muted); }
 .output td.num { text-align: right; font-variant-numeric: tabular-nums; }
 .output .meta { color: var(--muted); font-size: 12px; margin-top: 10px; border-top: 1px dashed var(--line); padding-top: 8px; }
 .output .chart { width: 100%; margin: 8px 0; }
+pre.diff { background: var(--code-bg); border: 1px solid var(--line); border-radius: 10px; padding: 10px; overflow: auto; max-height: 50vh; font: 12px/1.5 ui-monospace, Menlo, monospace; white-space: pre; }
 .code { display: grid; grid-template-columns: auto 1fr; background: var(--code-bg); border: 1px solid var(--line); border-radius: 10px; overflow: auto; max-height: 70vh; font: 13px/1.6 ui-monospace, Menlo, monospace; }
 .code pre { margin: 0; padding: 10px 0; }
 .code .gutter { text-align: right; color: var(--muted); user-select: none; padding: 10px 12px 10px 14px; border-right: 1px solid var(--line); }
@@ -440,6 +441,7 @@ function cmdPane(key, { c, scope }) {
       <p class="note">这条指令的创建人已不在群里，现在没人能执行它。可以把它交给群里的另一个人：Amber 私聊发确认卡，对方点「接收」后成为创建人，原来的配置项和密钥保留；原来的定时任务由对方选择是否以他的身份重建。</p>
       <div class="field"><label>交给</label><span class="examples"><select data-reassign-to><option value="">读取群成员中……</option></select> <button type="button" class="btn small" data-reassign="1">发送确认卡</button></span></div></div>` : ''}
     ${c.listed || c.installed || c.listing || c.publishable ? `<div class="manage"><h3 class="note">Amber Store</h3>
+      ${c.upgrade ? `<p class="note"><b>有新版本：第 ${esc(c.upgrade.to)} 版</b>（你现在是第 ${esc(c.upgrade.from)} 版）。不会自动升级。</p><button class="btn" data-upgrade-diff="1">查看改动</button><div id="upgrade-box"></div>` : ''}
       ${c.listed ? `<p class="note">这条指令已上架到 Amber Store${c.listed.status === 'delisted' ? '（已下架）' : ''}，别人可以安装自己的一份。它以后审核通过的新版本，会成为 Store 里的新版本。</p>` : ''}
       ${c.installed ? `<p class="note">从 Amber Store 安装：「${esc(c.installed.name)}」第 ${esc(c.installed.version)} 版。</p>` : ''}
       ${c.listing ? '<p class="note">上架申请正在审核中。</p>' : ''}
@@ -498,8 +500,16 @@ function appPane({ a }) {
       <div class="field"><label>装到</label><select data-app-target>${(STORE.targets || []).map(t => `<option value="${esc(t.target)}">${esc(t.name)}</option>`).join('')}</select></div>
       <div class="field"><label>名称</label><input data-app-name value="${esc(a.name)}" placeholder="同一个地方不能重名"></div>
       <div class="actions"><button class="btn primary" data-app-install="${esc(a.id)}">安装</button></div></div>` : '<p class="note">这个应用已经下架：已经装好的照常可用，不能再新装。</p>'}
+    ${a.canDevInstall ? `<div class="box"><h3 class="note" style="margin-top:0">开发模式安装</h3>
+      <p class="note">原版已经下线。以开发模式装进一个群后，这一份就成为新的原版：以后在那个群里用同一个名字提交新版本、审核通过后，就是 Store 里的新版本。你会成为这个应用的维护人。</p>
+      <div class="field"><label>装到</label><select data-dev-target>${(STORE.targets || []).filter(t => t.target !== 'p2p').map(t => `<option value="${esc(t.target)}">${esc(t.name)}</option>`).join('')}</select></div>
+      <div class="field"><label>名称</label><input data-dev-name value="${esc(a.name)}"></div>
+      <div class="actions"><button class="btn" data-app-dev="${esc(a.id)}">以开发模式安装</button></div></div>` : ''}
     <div class="box"><h3 class="note" style="margin-top:0">代码</h3><div id="appsrc" class="note">读取中……</div></div>
-    ${a.canDelist ? `<div class="manage"><h3 class="note">管理</h3><p class="note">下架后不能再新装，已经装好的照常可用。</p><button class="btn" data-app-delist="${esc(a.id)}">下架</button></div>` : ''}`;
+    ${a.canDelist || a.canRelist || a.canSetMaintainer ? `<div class="manage"><h3 class="note">管理</h3>
+      ${a.canDelist ? `<p class="note">下架后不能再新装，已经装好的照常可用。</p><button class="btn" data-app-delist="${esc(a.id)}">下架</button>` : ''}
+      ${a.canRelist ? `<p class="note">重新上架后又可以新装（版本都审核过，不再审批）。</p><button class="btn" data-app-relist="${esc(a.id)}">重新上架</button>` : ''}
+      ${a.canSetMaintainer ? `<div class="field" style="margin-top:12px"><label>更换维护人</label><span class="examples"><input data-maint-email placeholder="新维护人的邮箱"> <button type="button" class="btn small" data-app-maint="${esc(a.id)}">更换</button><br><span class="note">维护人可以下架、重新上架；原版下线后可以用开发模式安装，接着开发。</span></span></div>` : ''}</div>` : ''}`;
   fetch(`/web/api/store/${encodeURIComponent(a.id)}/source`).then(r => r.json()).then(x => {
     const el = document.getElementById('appsrc');
     if (!el) return;
@@ -690,10 +700,12 @@ document.addEventListener('click', async ev => {
   if (ret) {
     const { c, scope } = ITEMS.get(SEL);
     if (!confirm(`确定下线「${c.name}」？下线后不能再执行，它的定时任务会暂停。`)) return;
+    // An app's original: the app can stay in the Store (no more new versions), or go too.
+    const delist = !!(c.listed && c.listed.status === 'listed') && confirm('它已上架到 Amber Store。要同时下架吗？\n确定 = 同时下架（不能再新装）；取消 = 应用留在 Store，别人照常可以安装，但不会再有新版本。');
     ret.disabled = true;
-    const r = await post(`/web/api/commands/${encodeURIComponent(c.id)}/retire`, { scope, confirm: true });
+    const r = await post(`/web/api/commands/${encodeURIComponent(c.id)}/retire`, { scope, confirm: true, delist });
     if (!r.ok) { alert(r.message || r.error); ret.disabled = false; return; }
-    alert(`「${r.name}」已下线${r.schedules ? `，${r.schedules} 个定时任务已暂停` : ''}。`);
+    alert(`「${r.name}」已下线${r.schedules ? `，${r.schedules} 个定时任务已暂停` : ''}${r.delisted ? '，并已从 Amber Store 下架' : ''}。`);
     history.replaceState(null, '', '#');
     await reload(null);
     welcome();
@@ -711,12 +723,63 @@ document.addEventListener('click', async ev => {
     await reload('c:' + r.scope + ':' + r.commandId);
     return;
   }
+  const dev = ev.target.closest('[data-app-dev]');
+  if (dev) {
+    const target = document.querySelector('[data-dev-target]').value, name = document.querySelector('[data-dev-name]').value.trim();
+    if (!confirm('以开发模式安装？这一份会成为新的原版，你会成为维护人。')) return;
+    dev.disabled = true;
+    const r = await post(`/web/api/store/${encodeURIComponent(dev.dataset.appDev)}/install`, { target, name, dev: true });
+    dev.disabled = false;
+    if (!r.ok) { alert(r.message || r.error); return; }
+    alert(`已安装「${r.name}」，它现在是这个应用的原版。`);
+    await reload('c:' + r.scope + ':' + r.commandId);
+    return;
+  }
+  const rl = ev.target.closest('[data-app-relist]');
+  if (rl) {
+    const r = await post(`/web/api/store/${encodeURIComponent(rl.dataset.appRelist)}/relist`, { confirm: true });
+    if (!r.ok) { alert(r.message || r.error); return; }
+    await reload('a:' + rl.dataset.appRelist);
+    return;
+  }
+  const mt = ev.target.closest('[data-app-maint]');
+  if (mt) {
+    const email = document.querySelector('[data-maint-email]').value.trim();
+    if (!email) { alert('请填写邮箱'); return; }
+    const r = await post(`/web/api/store/${encodeURIComponent(mt.dataset.appMaint)}/maintainer`, { email });
+    if (!r.ok) { alert(r.message || r.error); return; }
+    alert(`维护人已改为 ${r.maintainer || email}。`);
+    await reload('a:' + mt.dataset.appMaint);
+    return;
+  }
   const dl = ev.target.closest('[data-app-delist]');
   if (dl) {
     if (!confirm('下架这个应用？已经装好的照常可用，不能再新装。')) return;
     const r = await post(`/web/api/store/${encodeURIComponent(dl.dataset.appDelist)}/delist`, { confirm: true });
     if (!r.ok) { alert(r.message || r.error); return; }
     await reload('a:' + dl.dataset.appDelist);
+    return;
+  }
+  const ud = ev.target.closest('[data-upgrade-diff]');
+  if (ud) {
+    const { c, scope } = ITEMS.get(SEL);
+    const x = await fetch(`/web/api/commands/${encodeURIComponent(c.id)}/upgrade?scope=${encodeURIComponent(scope)}`).then(r => r.json()).catch(() => ({ ok: false }));
+    const box = document.getElementById('upgrade-box');
+    if (!x.ok) { box.innerHTML = `<p class="note">${esc(x.message || '读取失败')}</p>`; return; }
+    const extra = [x.newConfig.length ? '新增配置项：' + x.newConfig.map(esc).join('、') : '', x.newSecrets.length ? '新增密钥：' + x.newSecrets.map(esc).join('、') : '', x.paramsChanged ? '参数有变化' : '', x.optionsChanged ? '选项有变化' : ''].filter(Boolean);
+    box.innerHTML = `${x.diff === null ? '<p class="note">代码改动太大，无法逐行比较。</p>' : x.diff ? `<p class="note">代码：新增 ${esc(x.stat.added)} 行，删除 ${esc(x.stat.removed)} 行</p><pre class="diff">${esc(x.diff)}</pre>` : '<p class="note">代码没有变化。</p>'}
+      ${extra.length ? `<p class="note">${extra.join('；')}${x.newConfig.length || x.newSecrets.length ? '。升级后要在下面补填，填好之前不能执行。' : ''}</p>` : ''}
+      <button class="btn primary" data-upgrade="1">升级到第 ${esc(x.to)} 版</button>`;
+    return;
+  }
+  const up = ev.target.closest('[data-upgrade]');
+  if (up) {
+    const { c, scope } = ITEMS.get(SEL);
+    up.disabled = true;
+    const r = await post(`/web/api/commands/${encodeURIComponent(c.id)}/upgrade`, { scope, confirm: true });
+    if (!r.ok) { alert(r.message || r.error); up.disabled = false; return; }
+    alert(`已升级到第 ${r.version} 版。`);
+    await reload('c:' + scope + ':' + r.commandId);
     return;
   }
   const pub = ev.target.closest('[data-publish]');

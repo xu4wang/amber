@@ -10,6 +10,7 @@ import { specSummary, codePanels } from './flow.ts';
 import { AmberError, visibleCommands, runParams, configParams } from './engine.ts';
 import { sanitizeMarkdown, person, buttonRow } from './cards.ts';
 import { describeServices } from './runner.ts';
+import { lineDiff } from './diff.ts';
 
 function log(...a: unknown[]): void { console.log(new Date().toISOString(), ...a); }
 
@@ -18,6 +19,9 @@ export interface AppDeps {
   isAdmin(unionId: string): boolean;
   nameOf(unionId: string): Promise<string | undefined>;
   openIdOf(unionId: string): Promise<string | undefined>;
+  /** The website, for links in notifications. */
+  webUrl: string;
+  resolveUser(email: string): Promise<{ unionId: string } | undefined>;
 }
 
 type Who = { unionId: string; openId?: string };
@@ -186,9 +190,10 @@ export class AppStore {
 
   /** Install an app: a new command in the target chat, owned by the installer, live at once (the code was reviewed
    *  when it was listed). `target`: 'p2p' (the installer's private chat with Amber) or 'group:<chat_id>'. */
-  async install(appId: string, who: Who, target: string, name?: string): Promise<CommandRow> {
+  async install(appId: string, who: Who, target: string, name?: string, opts: { dev?: boolean } = {}): Promise<CommandRow> {
     const app = this.store.getApp(appId);
-    if (!app || app.status !== 'listed') throw new AmberError('not_found', '没有这个应用，或它已经下架');
+    if (!app || (app.status !== 'listed' && !opts.dev)) throw new AmberError('not_found', '没有这个应用，或它已经下架');
+    if (opts.dev) this.checkDev(app, who.unionId);
     const { version, cmd: src } = this.latest(app);
     const n = (name ?? app.name).trim();
     if (!n || n.length > INSTALL_NAME_MAX || /\s/.test(n)) throw new AmberError('bad_name', '名称不能为空、不能有空格、最多 40 个字');
@@ -202,18 +207,53 @@ export class AppStore {
       chatId = m[1]; scopeType = 'group';
     }
     // Re-read after the await: an app delisted meanwhile takes no new installations.
-    if (this.store.getApp(app.id)?.status !== 'listed') throw new AmberError('not_found', '没有这个应用，或它已经下架');
+    const nowApp = this.store.getApp(app.id)!;
+    if (opts.dev) this.checkDev(nowApp, who.unionId);
+    else if (nowApp.status !== 'listed') throw new AmberError('not_found', '没有这个应用，或它已经下架');
+    if (opts.dev) {
+      // Development mode: this copy becomes the app's original. It takes the plain name as its line, so a new
+      // version submitted in this group under that name is a new version of it (and of the app).
+      if (scopeType !== 'group') throw new AmberError('bad_target', '开发模式只能装到群里');
+      if (this.store.activeByName(chatId, n) || this.store.nameInProgress(chatId, n)) throw new AmberError('name_taken', `这个群里已经有一条叫「${n}」的指令（或它的新版本在审核中），请换个名字`);
+    }
     // Names must stay unique among what this person sees there (their own commands and global ones).
     const seen = visibleCommands(this.store, { unionId: who.unionId, chatId, chatType: scopeType, channel: 'web' });
     if (seen.some(c => c.name === n)) throw new AmberError('name_taken', `你在这里已经有一条叫「${n}」的指令，请换个名字`);
     const row = this.store.insertCommand({
       scopeType, chatId, ownerUnionId: who.unionId, name: n, description: src.description,
-      params: src.params, script: src.script, options: src.options, status: 'active', line: `${n}#${randomUUID().slice(0, 8)}`,
+      params: src.params, script: src.script, options: src.options, status: 'active', line: opts.dev ? n : `${n}#${randomUUID().slice(0, 8)}`,
     });
     this.store.setMeta(row.id, { ownerOpenId: who.openId ?? null });
-    this.store.setInstall(row.id, app.id, version);
-    this.store.audit(who.unionId, 'app.install', { appId: app.id, version, commandId: row.id, chatId, name: n });
+    if (opts.dev) {
+      this.store.setAppOrigin(app.id, chatId, n, who.unionId);
+      this.store.audit(who.unionId, 'app.dev_install', { appId: app.id, version, commandId: row.id, chatId, name: n, previousOrigin: { chatId: app.originChatId, line: app.originLine }, previousMaintainer: app.maintainerUnionId });
+    } else {
+      this.store.setInstall(row.id, app.id, version);
+      this.store.audit(who.unionId, 'app.install', { appId: app.id, version, commandId: row.id, chatId, name: n });
+    }
     return this.store.getCommand(row.id)!;
+  }
+
+  /** Is the app's original still live? While it is, it is where the app is developed. */
+  originActive(app: AppRow): boolean { return !!this.store.activeByName(app.originChatId, app.originLine); }
+
+  /** Development-mode install (#4 phase 3): once the original is gone, the maintainer (or an admin) installs a
+   *  copy that becomes the new original, and its new versions become the app's. */
+  private checkDev(app: AppRow, who: string): void {
+    if (app.maintainerUnionId !== who && !this.deps.isAdmin(who)) throw new AmberError('forbidden', '只有应用的维护人或管理员可以用开发模式安装');
+    if (this.originActive(app)) throw new AmberError('not_needed', '原版还在使用中：新版本请在原版所在的群里提交');
+  }
+
+  /** An admin hands an app to someone else to maintain (they then install it in development mode). */
+  async setMaintainer(appId: string, email: string, actor: string): Promise<AppRow> {
+    if (!this.deps.isAdmin(actor)) throw new AmberError('forbidden', '只有管理员可以更换维护人');
+    const app = this.store.getApp(appId);
+    if (!app) throw new AmberError('not_found', '没有这个应用');
+    const u = await this.deps.resolveUser(email.trim());
+    if (!u) throw new AmberError('not_found', `找不到 ${email.trim().slice(0, 80)}`);
+    this.store.setAppMaintainer(app.id, u.unionId);
+    this.store.audit(actor, 'app.maintainer', { appId: app.id, from: app.maintainerUnionId, to: u.unionId });
+    return this.store.getApp(app.id)!;
   }
 
   /** No new installations; existing ones keep working. The maintainer or an admin. */
@@ -227,6 +267,89 @@ export class AppStore {
     return this.store.getApp(app.id)!;
   }
 
+  // ---- phase 2: new versions and upgrades
+
+  /** A new version of a command went live (D38). When it is an app's original, it becomes the app's newest
+   *  version, and everyone who installed the app is told (they upgrade when they choose to). */
+  async onVersionLive(prev: CommandRow, next: CommandRow): Promise<void> {
+    const app = this.store.appByOrigin(next.chatId, next.line);
+    if (!app || app.status !== 'listed') return;
+    const version = this.store.addAppVersion(app.id, next.id, next.specHash, this.store.getReview(next.id).docUrl ?? null);
+    this.store.audit(null, 'app.version', { appId: app.id, version, commandId: next.id, specHash: next.specHash, replaces: prev.id });
+    const owners = new Set(this.store.installsOf(app.id).map(c => c.ownerUnionId));
+    for (const u of owners) {
+      const card = shell(`有新版本：${app.name}`, 'blue', [
+        { tag: 'markdown', content: `你从 Amber Store 安装的「${sanitizeMarkdown(app.name, 40)}」出了第 ${version} 版。不会自动升级：在网站上你的这条指令页面里可以看到改了什么，确认后点「升级」。新版本多了配置项或密钥时，升级后要补填。` },
+        { tag: 'button', text: { tag: 'plain_text', content: '打开 Amber 网站' }, type: 'primary', behaviors: [{ type: 'open_url', default_url: this.deps.webUrl }] },
+      ]);
+      try { await this.flow.send({ unionId: u }, card); } catch (e) { log('upgrade notice failed', (e as Error).message); }
+    }
+  }
+
+  /** For an installation: the version it runs and the newest one, when newer. */
+  upgradeOf(c: CommandRow): { appId: string; name: string; from: number; to: number } | undefined {
+    const inst = this.store.installOf(c.id);
+    const app = inst ? this.store.getApp(inst.appId) : undefined;
+    if (!inst || !app || c.status !== 'active') return undefined;
+    const newest = this.store.appVersions(app.id)[0];
+    return newest && newest.version > inst.version ? { appId: app.id, name: app.name, from: inst.version, to: newest.version } : undefined;
+  }
+
+  /** What an upgrade would change: the code diff, and settings it would newly need. */
+  upgradeDiff(c: CommandRow): object {
+    const u = this.upgradeOf(c);
+    if (!u) throw new AmberError('not_needed', '已经是最新版本');
+    const { cmd: to } = this.latest(this.store.getApp(u.appId)!);
+    const d = lineDiff(c.script.code, to.script.code);
+    const had = new Set(configParams(c.params).map(p => p.name)), hadSec = new Set(c.script.secrets ?? []);
+    return {
+      ...u, diff: d === null ? null : d.text, stat: d?.stat ?? null,
+      paramsChanged: JSON.stringify(c.params) !== JSON.stringify(to.params), optionsChanged: JSON.stringify(c.options) !== JSON.stringify(to.options),
+      newConfig: configParams(to.params).filter(p => !had.has(p.name)).map(p => p.label ?? p.name),
+      newSecrets: (to.script.secrets ?? []).filter(n => !hadSec.has(n)),
+      network: !!to.script.network, services: to.script.services ? describeServices(to.script) : '',
+    };
+  }
+
+  /** The owner upgrades their installation to the app's newest version: a new version of their command, live at
+   *  once (that version was reviewed), on the same line, so its settings and schedules carry over. */
+  upgrade(cmdId: string, who: Who): CommandRow {
+    const c = this.store.getCommand(cmdId);
+    if (!c || c.status !== 'active') throw new AmberError('not_found', '没有找到这条指令');
+    if (c.ownerUnionId !== who.unionId) throw new AmberError('forbidden', '只有指令的创建人可以升级');
+    const u = this.upgradeOf(c);
+    if (!u) throw new AmberError('not_needed', '已经是最新版本');
+    const { cmd: src, version } = this.latest(this.store.getApp(u.appId)!);
+    // No await from here on: retire and insert happen together (one live version per line).
+    this.store.setStatus(c.id, 'retired');
+    const next = this.store.insertCommand({
+      scopeType: c.scopeType, chatId: c.chatId, ownerUnionId: c.ownerUnionId, name: c.name, description: src.description,
+      params: src.params, script: src.script, options: src.options, status: 'active', line: c.line,
+    });
+    const meta = this.store.getMeta(c.id);
+    this.store.setMeta(next.id, { replaces: c.id, ownerOpenId: meta.ownerOpenId ?? who.openId ?? null });
+    this.store.setInstall(next.id, u.appId, version);
+    // Its schedules move along when the new version may still be scheduled; otherwise they pause.
+    for (const s of this.store.schedulesOfCommand(c.id)) {
+      if (next.options.schedulable) this.store.rebindSchedule(s.id, next.id, next.specHash);
+      else this.store.updateSchedule(s.id, { status: 'paused', pauseReason: '新版本不允许定时执行' });
+    }
+    this.store.audit(who.unionId, 'app.upgrade', { appId: u.appId, from: u.from, to: version, old: c.id, new: next.id });
+    return this.store.getCommand(next.id)!;
+  }
+
+  /** Back in the Store after a delist (its versions were all reviewed). The maintainer or an admin. */
+  relist(appId: string, actor: string): AppRow {
+    const app = this.store.getApp(appId);
+    if (!app) throw new AmberError('not_found', '没有这个应用');
+    if (app.maintainerUnionId !== actor && !this.deps.isAdmin(actor)) throw new AmberError('forbidden', '只有应用的维护人或管理员可以重新上架');
+    if (app.status === 'listed') throw new AmberError('not_needed', '已经在 Store 里了');
+    this.latest(app);   // must still have an intact version
+    this.store.setAppStatus(app.id, 'listed');
+    this.store.audit(actor, 'app.relist', { appId: app.id });
+    return this.store.getApp(app.id)!;
+  }
+
   /** What the Store page shows about an app. */
   async view(app: AppRow, viewer: string): Promise<object> {
     let latest: ReturnType<AppStore['latest']> | undefined;
@@ -237,6 +360,10 @@ export class AppStore {
       id: app.id, name: app.name, description: app.description, status: app.status,
       maintainer: (await this.deps.nameOf(app.maintainerUnionId)) ?? '', mine: app.maintainerUnionId === viewer,
       canDelist: app.status === 'listed' && (app.maintainerUnionId === viewer || this.deps.isAdmin(viewer)),
+      canRelist: app.status === 'delisted' && (app.maintainerUnionId === viewer || this.deps.isAdmin(viewer)),
+      originActive: this.originActive(app),
+      canDevInstall: !this.originActive(app) && (app.maintainerUnionId === viewer || this.deps.isAdmin(viewer)),
+      canSetMaintainer: this.deps.isAdmin(viewer),
       version: latest?.version ?? null, docUrl: latest?.docUrl ?? null, updatedAt: app.updatedAt,
       params: c ? runParams(c.params).map(p => ({ name: p.name, label: p.label ?? p.name, type: p.type, required: !!p.required })) : [],
       config: c ? configParams(c.params).map(p => ({ name: p.name, label: p.label ?? p.name, required: !!p.required, default: p.default ?? null })) : [],
