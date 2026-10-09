@@ -30,6 +30,8 @@ export const PICKUP_MS = 30_000;
 export const RESULT_GRACE_MS = 30_000;
 const MAX_ENVS = 20;
 const MAX_PENDING = 10;
+/** Jobs waiting for or running on one executor; more fail at once instead of piling up. */
+export const MAX_JOBS_PER_EXECUTOR = 20;
 
 export const envsHash = (name: string, envs: Record<string, ExecutorEnv>) => createHash('sha256').update(JSON.stringify({ name, envs })).digest('hex').slice(0, 16);
 
@@ -49,6 +51,7 @@ export class ExecutorHub {
   pollWaitMs = POLL_WAIT_MS;
   pickupMs = PICKUP_MS;
   onlineMs = ONLINE_MS;
+  maxJobs = MAX_JOBS_PER_EXECUTOR;
 
   constructor(store: Store, signer: Signer) {
     this.store = store;
@@ -215,6 +218,7 @@ export class ExecutorHub {
     if (!e) return { ok: false, content: '', error: `执行端 ${p.executor} 还没有登记或没有被管理员批准` };
     if (!e.envs[p.env]) return { ok: false, content: '', error: `执行端 ${p.executor} 没有环境「${p.env}」` };
     if (!this.online(e)) return { ok: false, content: '', error: `执行端 ${p.executor} 离线（最后在线：${e.lastSeen ? new Date(e.lastSeen).toISOString() : '从未'}），这次没有执行` };
+    if ([...this.jobs.values()].filter(j => j.executorId === e.id).length >= this.maxJobs) return { ok: false, content: '', error: `执行端 ${p.executor} 正在处理的任务太多，这次没有执行，请稍后再试` };
     const jobId = randomUUID();
     const timeoutMs = (script.timeoutMs ?? 30000) + RESULT_GRACE_MS;
     const envelope = this.signer.sealJob(e.id, e.boxPub, jobId, this.pickupMs * 2, { jobId, runId: input.runId, env: p.env, spec, specHash, input });

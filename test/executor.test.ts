@@ -194,8 +194,24 @@ test('executor: offline fails the run at once; a changed environment needs appro
     const steal = await env.submit({ chatId: GROUP, chatType: 'group', name: '偷钥匙', params: [], script: script('print(1)', { env: 'box2/e', sandbox: { readOnly: [dir] } }) });
     await env.click(alice, steal.claimMessageId, { a: 'claim_try', c: steal.id });
     await env.waitFor(() => /执行端：.*受保护的目录/.test(FakeFeishu.text(fake.cardOf(steal.claimMessageId))));
+    // Full executor: a job beyond its 4 parallel slots fails at once instead of waiting for the result timeout.
+    const slow = { name: 'slow', params: [], script: { kind: 'script', lang: 'python', code: 'import time\ntime.sleep(3)\nprint("slow")', timeoutMs: 15000, env: 'box2/e' }, options: { confirm: false, schedulable: false } };
+    const input = { params: {}, caller: { unionId: alice.unionId, chatId: GROUP, channel: 'bot' }, runId: 'r' };
+    const t1 = Date.now();
+    const five = await Promise.all(Array.from({ length: 5 }, () => hub.run(slow.script as any, slow, specHashOf(slow), input).then(r => ({ ...r, at: Date.now() - t1 }))));
+    const busy = five.filter(r => !r.ok);
+    assert.equal(busy.length, 1, JSON.stringify(five));
+    assert.match(busy[0].error!, /繁忙/);
+    assert.ok(busy[0].at < 2500, `refused at once, not after the timeout (${busy[0].at}ms)`);
+    assert.equal(five.filter(r => r.ok && /slow/.test(r.content)).length, 4);
     // Offline: killed, and not seen for longer than onlineMs.
     child!.kill('SIGKILL');
+    // Still counted online for a moment: at most maxJobs wait for it, the next fails at once.
+    hub.maxJobs = 2;
+    const waiting = [hub.run(slow.script as any, slow, specHashOf(slow), input), hub.run(slow.script as any, slow, specHashOf(slow), input)];
+    const over = await hub.run(slow.script as any, slow, specHashOf(slow), input);
+    assert.match(over.error!, /任务太多/);
+    void waiting;
     await new Promise(r => setTimeout(r, 2200));
     const t0 = Date.now();
     await env.say(alice, GROUP, '远程');
@@ -251,6 +267,24 @@ test('executor: its own checks — replay, spec hash, environment — before any
     await ex.handle(cfg, me, amber.publicKey, job('j6', { spec: { ...spec, script: { ...spec.script, code: 'import json,sys\nprint(json.load(sys.stdin)["secrets"]["S"])' } }, specHash: specHashOf({ ...spec, script: { ...spec.script, code: 'import json,sys\nprint(json.load(sys.stdin)["secrets"]["S"])' } }), input: { params: {}, secrets: { S: 'secret-val-1' } } }));
     assert.equal(results.at(-1).ok, true);
     assert.match(results.at(-1).content, /^\*\*\*/);
+    // A failing script's error is masked in the executor's own log too.
+    const logged: string[] = [];
+    const orig = console.log;
+    console.log = (...a: unknown[]) => { logged.push(a.join(' ')); };
+    try {
+      const boom = { ...spec, script: { ...spec.script, code: 'import json,sys\nraise Exception(json.load(sys.stdin)["secrets"]["S"])' } };
+      await ex.handle(cfg, me, amber.publicKey, job('j7', { spec: boom, specHash: specHashOf(boom), input: { params: {}, secrets: { S: 'secret-val-2' } } }));
+    } finally { console.log = orig; }
+    assert.equal(results.at(-1).ok, false);
+    assert.ok(logged.some(l => /job done j7 failed/.test(l)), logged.join('\n'));
+    assert.ok(!logged.join('\n').includes('secret-val-2'), 'log masked');
+    assert.ok(!results.at(-1).error.includes('secret-val-2'), 'result masked');
+    // Busy: answered at once, only for jobs really addressed to this executor.
+    await ex.handleBusy(cfg, me, amber.publicKey, job('j8'));
+    assert.match(results.at(-1).error, /繁忙/);
+    const m = results.length;
+    await ex.handleBusy(cfg, me, generateKeyPairSync('ed25519').publicKey, job('j9'));
+    assert.equal(results.length, m);
     // Not signed by the pinned Amber key: dropped without an answer.
     const n = results.length;
     await ex.handle(cfg, me, generateKeyPairSync('ed25519').publicKey, job('j5'));

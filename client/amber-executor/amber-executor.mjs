@@ -102,13 +102,20 @@ export async function handle(cfg, me, amberPub, envelope) {
     const job = prepare(cfg, payload);
     log('job start', envelope.jobId, payload.spec.name, payload.env, `run ${payload.runId}`);
     const r = await runSandboxed({ code: job.code, python: job.python, profileFor: job.profileFor, input: payload.input, timeoutMs: job.timeoutMs, env: { WORKDIR: job.workdir } });
-    log('job done', envelope.jobId, r.ok ? 'ok' : `failed: ${r.error}`);
+    // The log never sees a secret: the error text can contain one (e.g. an exception message).
+    log('job done', envelope.jobId, r.ok ? 'ok' : `failed: ${redact(r.error ?? '', secrets)}`);
     await call(cfg, me, '/v1/executor/result', { jobId: envelope.jobId, ok: r.ok, content: redact(r.content, secrets), ...(r.error ? { error: redact(r.error, secrets) } : {}) });
   } catch (e) {
-    log('job refused', envelope?.jobId, e.message);
+    log('job refused', envelope?.jobId, redact(e.message, secrets));
     // Only answer jobs that were really for us (signature checked); anything else is dropped.
     if (payload) await call(cfg, me, '/v1/executor/result', { jobId: envelope.jobId, ok: false, error: redact(e.message, secrets) }).catch(() => {});
   }
+}
+
+/** Refuses a job because this executor is full; only for jobs really addressed to it. */
+export async function handleBusy(cfg, me, amberPub, envelope) {
+  try { openJob(amberPub, me.id, me.box, envelope); } catch { return; }
+  await call(cfg, me, '/v1/executor/result', { jobId: envelope.jobId, ok: false, error: `执行端繁忙（同时最多执行 ${MAX_PARALLEL} 个任务），这次没有执行` }).catch(() => {});
 }
 
 async function runLoop() {
@@ -135,7 +142,8 @@ async function runLoop() {
         const r = await call(cfg, me, '/v1/executor/poll', {}, 60_000);
         if (r.status !== 'approved') break;
         for (const job of r.jobs ?? []) {
-          if (running >= MAX_PARALLEL) { log('busy, job left to time out', job.jobId); continue; }
+          // Full: answer at once so the run fails now, not after the result timeout.
+          if (running >= MAX_PARALLEL) { log('busy, job refused', job.jobId); handleBusy(cfg, me, amberPub, job); continue; }
           running++;
           handle(cfg, me, amberPub, job).finally(() => { running--; });
         }
