@@ -501,6 +501,11 @@ export class Store {
     return !!this.db.prepare(`SELECT 1 FROM commands WHERE chat_id = ? AND COALESCE(line, name) = ? AND status IN ('pending','draft')`).get(chatId, line);
   }
 
+  /** A draft or a revision under review with this name here, whatever its line. */
+  nameDraftInProgress(chatId: string, name: string): boolean {
+    return !!this.db.prepare(`SELECT 1 FROM commands WHERE chat_id = ? AND name = ? AND status IN ('pending','draft')`).get(chatId, name);
+  }
+
   /** Active apps in a chat with this name, whatever their line (several people may each have one). */
   activeByChatName(chatId: string, name: string): CommandRow[] {
     return (this.db.prepare(`SELECT * FROM commands WHERE chat_id = ? AND name = ? AND status = 'active' ORDER BY created_at`).all(chatId, name) as Record<string, unknown>[]).map(r => this.toRow(r));

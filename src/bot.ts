@@ -312,13 +312,19 @@ export class AmberBot {
     if (await this.isMember(src.chatId, caller.unionId) !== true) return fail('你已不在这个群里，不能接收。');
     // Re-read after the await, then no more awaits until the copy exists.
     const now = this.store.getCommand(src.id);
-    if (!now || now.status !== 'active' || now.specHash !== req.specHash) return fail('这个应用在发起之后已经更新或下线，请让对方重新发起。');
+    if (!now || now.status !== 'active' || now.specHash !== req.specHash || now.ownerUnionId !== (req.args.from ?? '')) return fail('这个应用在发起之后已经更新、下线或换了负责人，请让对方重新发起。');
     if (visibleCommands(this.store, { ...caller, chatId: src.chatId, chatType: 'group' }).some(c => c.name === name)) throw new AmberError('name_taken', `你在这个群里已经有一个叫「${name}」的应用，请换个名字再点接收`);
     if (!this.store.transitionRequest(req.id, 'awaiting', 'running', { actorUnionId: caller.unionId })) throw new AmberError('closed', '这个请求已经处理过了');
     // A separate app: same reviewed code, its own line and owner. Configuration values come along (not secret);
     // secrets and schedules do not.
-    const copy = this.store.insertCommand({ scopeType: 'group', chatId: src.chatId, ownerUnionId: caller.unionId, name, description: now.description,
-      params: now.params, script: now.script, options: now.options, status: 'active', line: `${name}#${randomUUID().slice(0, 8)}` });
+    let copy;
+    try {
+      copy = this.store.insertCommand({ scopeType: 'group', chatId: src.chatId, ownerUnionId: caller.unionId, name, description: now.description,
+        params: now.params, script: now.script, options: now.options, status: 'active', line: `${name}#${randomUUID().slice(0, 12)}` });
+    } catch (e) {
+      this.store.transitionRequest(req.id, 'running', 'failed', { error: (e as Error).message.slice(0, 200) });
+      throw new AmberError('clone_failed', '复制没有成功，请让对方重新发起');
+    }
     this.store.setMeta(copy.id, { ownerOpenId: caller.openId ?? null });
     const declared = new Set(now.params.filter(p => p.scope === 'config').map(p => p.name));
     for (const r of this.store.configRows(now.chatId, now.line)) if (declared.has(r.name)) this.store.putConfig(copy.chatId, copy.line, r.name, r.value, caller.unionId);

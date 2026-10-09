@@ -290,7 +290,8 @@ export class Flow {
     // A brand-new app takes its name as its line when that is free here; otherwise a line of its own.
     const line = prev ? prev.line : this.store.activeByName(d.chatId, d.name) || this.store.nameInProgress(d.chatId, d.name) ? `${d.name}#${randomUUID().slice(0, 8)}` : d.name;
     if (prev && this.store.nameInProgress(d.chatId, line)) throw new AmberError('name_taken', `「${d.name}」已有一个版本在认领或审核中，请等它结束（或在认领卡上丢弃）后再提交`);
-    if (!prev && !claimerId && this.store.nameInProgress(d.chatId, d.name)) throw new AmberError('name_taken', `「${d.name}」已有一个版本在认领或审核中，请等它结束（或在认领卡上丢弃）后再提交`);
+    // A brand-new app: one in progress per name here at a time.
+    if (!prev && this.store.nameDraftInProgress(d.chatId, d.name)) throw new AmberError('name_taken', `「${d.name}」已有一个版本在认领或审核中，请等它结束（或在认领卡上丢弃）后再提交`);
     if ((d as any).sideEffect !== undefined) throw new AmberError('bad_options', '已不区分读写：请用 options.confirm（执行前确认）/ options.schedulable（允许定时）');
     // D47: read-only data commands are usually wanted on a schedule, so a draft that does not say
     // otherwise is schedulable. It is still shown on the claim card and reviewed like any option.

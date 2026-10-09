@@ -83,8 +83,7 @@ test('clone: the creator offers a copy to a member; the copy is theirs, with the
     const forAlice = (await env.api('POST', '/v1/drafts', { ...ctx, name: '报表', claimer: alice.email })).body;
     assert.equal(env.amber.store.getMeta(forAlice.id).replaces ?? null, null);
     assert.notEqual(env.amber.store.getCommand(forAlice.id)!.line, '报表');
-    await env.click(alice, forAlice.claimMessageId, { a: 'claim_try', c: forAlice.id }, { repo: 'x' });
-    await env.waitFor(() => button(fake.cardOf(forAlice.claimMessageId), 'claim_submit') || undefined).catch(() => {});
+    assert.match((await env.api('POST', '/v1/drafts', { ...ctx, name: '报表', claimer: alice.email })).body.message, /已有一个版本在认领或审核中/, 'one new app of a name in progress at a time');
   } finally { await env.close(); }
 });
 
