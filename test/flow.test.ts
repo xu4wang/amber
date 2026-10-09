@@ -104,7 +104,7 @@ test('a new version shows the diff, only the owner may claim it, and it replaces
     const value = button(rebind.card, 'sch_rebind')!;
     assert.equal(value.c, r.id);
     // Carol is neither the schedule's creator nor an admin.
-    assert.match(JSON.stringify(await env.click(env.carol, rebind.id, value)), /创建人或管理员/);
+    assert.match(JSON.stringify(await env.click(env.carol, rebind.id, value)), /只有定时任务的创建人/);
     await env.click(env.alice, rebind.id, value);
     const s = env.amber.store.getSchedule(sch.id)!;
     assert.equal(s.status, 'active');

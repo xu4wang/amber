@@ -43,6 +43,11 @@ test('visibility: only the creator sees and runs a command; an admin looks and r
     assert.match(bobList, /立即运行/);
     const listMsg = fake.sent.at(-1)!.id;
     assert.match(JSON.stringify(await env.click(alice, listMsg, { a: 'sch_run', s: mine.id })), /只有定时任务的创建人可以立即运行/);
+    // Rebinding decides what runs under the creator's name: the creator only, and only to a newer version of the same command.
+    const other = await activate(env, { chatId: GROUP, chatType: 'group', name: '别的', params: [], script: script('print(2)'), options: { schedulable: true } }, bob);
+    assert.match(JSON.stringify(await env.click(alice, listMsg, { a: 'sch_rebind', s: mine.id, c: id })), /只有定时任务的创建人可以换绑/);
+    assert.match(JSON.stringify(await env.click(bob, listMsg, { a: 'sch_rebind', s: mine.id, c: other })), /同一条指令的新版本/);
+    assert.equal(env.amber.store.getSchedule(mine.id)!.commandId, id);
     const adminCard = JSON.stringify(scheduleListCard([{ ...env.amber.bot.scheduler.view(mine, alice.unionId) }], '本群'));
     assert.match(adminCard, /sch_pause/);
     assert.doesNotMatch(adminCard, /sch_run/, 'no run button for an admin');
@@ -78,7 +83,7 @@ test('visibility: only the creator sees and runs a command; an admin looks and r
     // Agents: what the named person owns, nothing else.
     const ctx = (u: any) => ({ chatId: GROUP, chatType: 'group', label: 'TestBot', user: u.email });
     assert.deepEqual((await env.api('POST', '/v1/commands/list', ctx(carol))).body.commands.map((c: any) => c.name), []);
-    assert.deepEqual((await env.api('POST', '/v1/commands/list', ctx(bob))).body.commands.map((c: any) => c.name), ['报表']);
+    assert.deepEqual((await env.api('POST', '/v1/commands/list', ctx(bob))).body.commands.map((c: any) => c.name).sort(), ['别的', '报表']);
     assert.match((await env.api('POST', '/v1/runs', { ...ctx(carol), command: '报表' })).body.message, /没有找到指令/);
     assert.match((await env.api('POST', '/v1/schedules', { ...ctx(alice), command: '报表', at: '每天 09:00' })).body.message, /没有找到指令/);
 

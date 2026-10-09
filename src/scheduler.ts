@@ -191,9 +191,13 @@ export class Scheduler {
 
   /** Creator confirmed: run the schedule on the new version from now on. Same args, same time rule. */
   rebind(s: ScheduleRow, newId: string, actor: Caller): object {
-    if (!this.canManage(s, actor.unionId)) throw new AmberError('forbidden', '只有定时任务的创建人或管理员可以操作');
+    // It decides what runs under the creator's name from now on: the creator only, not an admin (#4).
+    if (s.creatorUnionId !== actor.unionId) throw new AmberError('forbidden', '只有定时任务的创建人可以换绑');
     const next = this.store.getCommand(newId);
     if (!next || next.status !== 'active') throw new AmberError('changed', '新版本已不可用');
+    // Only to a newer version of the same command (same chat and name), never to another command.
+    const prev = this.store.getCommand(s.commandId);
+    if (!prev || prev.chatId !== next.chatId || prev.name !== next.name) throw new AmberError('forbidden', '只能换绑到同一条指令的新版本');
     if (!next.options.schedulable) throw new AmberError('not_schedulable', '新版本不允许定时执行');
     // The creator must still be allowed to use it where the schedule lives.
     findVisible(this.store, { unionId: s.creatorUnionId, chatId: s.chatId, chatType: s.chatType, channel: 'schedule' }, next.id);
