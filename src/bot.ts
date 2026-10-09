@@ -542,10 +542,10 @@ export class AmberBot {
   }
 
   private scheduleList(caller: Caller): object {
-    // Group: this group's schedules. Private chat with Amber: the person's own private-chat schedules.
+    // Your own schedules (#4): in a group, those in this group; in the private chat, your private-chat ones.
     const rows = caller.chatType === 'p2p'
       ? this.store.schedulesByCreator(caller.unionId).filter(s => s.chatType === 'p2p')
-      : this.store.schedulesInChat(caller.chatId);
+      : this.store.schedulesInChat(caller.chatId).filter(s => s.creatorUnionId === caller.unionId);
     return this.scheduler.listCard(rows, caller.unionId, caller.chatType === 'p2p' ? '你的私聊' : '本群');
   }
 
@@ -680,6 +680,8 @@ export class AmberBot {
         else if (value.a === 'sch_resume') this.scheduler.resume(s, caller.unionId);
         else if (value.a === 'sch_del') this.scheduler.remove(s, caller.unionId);
         else if (value.a === 'sch_run') {
+          // Running it now runs the creator's command: the creator only, not an admin (#4).
+          if (s.creatorUnionId !== caller.unionId) throw new AmberError('forbidden', '只有定时任务的创建人可以立即运行');
           void this.scheduler.runOnce(s, true).catch(e => log('manual schedule run failed', (e as Error).message));
           return { toast: { type: 'info', content: '已开始运行，结果会发到原来的位置' } };
         }

@@ -5,6 +5,7 @@ import assert from 'node:assert/strict';
 import { makeEnv, activate, button, script, urlButton, GROUP } from './env.ts';
 import { FakeFeishu } from './fake-feishu.ts';
 import { secretVault } from '../src/engine.ts';
+import { scheduleListCard } from '../src/cards.ts';
 
 async function login(env: any, u: any): Promise<string> {
   await env.dm(u, '登录');
@@ -30,6 +31,25 @@ test('visibility: only the creator sees and runs a command; an admin looks and r
     await env.amber.bot.scheduler.tick(Date.now());
     await env.waitFor(() => env.amber.store.getSchedule(old.id)!.status === 'paused' || undefined);
     assert.equal(env.amber.store.getSchedule(old.id)!.lastRunId, null);
+    // Schedules: each person lists only their own; only the creator can run one now (an admin manages, does not run).
+    const mine = await env.amber.bot.scheduler.create({ cmd: env.amber.store.getCommand(id)!, chatId: GROUP, chatType: 'group', replyTo: null, inThread: false,
+      creator: { unionId: bob.unionId, openId: bob.openId, chatId: GROUP, chatType: 'group', channel: 'web' }, args: {}, rule: { kind: 'daily', time: '09:00', tz: 'Asia/Shanghai' }, requestedBy: 'test', via: {} });
+    await env.say(carol, GROUP, '定时任务');
+    const carolList = FakeFeishu.text(fake.sent.at(-1)!.card);
+    assert.ok(carolList.includes(old.id) && !carolList.includes(mine.id), 'carol sees her own schedule only');
+    await env.say(bob, GROUP, '定时任务');
+    const bobList = FakeFeishu.text(fake.sent.at(-1)!.card);
+    assert.ok(bobList.includes(mine.id) && !bobList.includes(old.id));
+    assert.match(bobList, /立即运行/);
+    const listMsg = fake.sent.at(-1)!.id;
+    assert.match(JSON.stringify(await env.click(alice, listMsg, { a: 'sch_run', s: mine.id })), /只有定时任务的创建人可以立即运行/);
+    const adminCard = JSON.stringify(scheduleListCard([{ ...env.amber.bot.scheduler.view(mine, alice.unionId) }], '本群'));
+    assert.match(adminCard, /sch_pause/);
+    assert.doesNotMatch(adminCard, /sch_run/, 'no run button for an admin');
+    const sched = async (u: any) => (await env.api('POST', '/v1/schedules/list', { chatId: GROUP, chatType: 'group', label: 'TestBot', user: u.email })).body.schedules.map((x: any) => x.id);
+    assert.deepEqual(await sched(carol), [old.id]);
+    assert.deepEqual(await sched(bob), [mine.id]);
+    assert.deepEqual((await env.api('POST', '/v1/schedules/list', { chatId: GROUP, chatType: 'group', label: 'TestBot' })).body.schedules, []);
     // A command with no owner on record is nobody's: not visible to a caller without identity.
     const noOwner = await activate(env, { chatId: GROUP, chatType: 'group', name: '无主', params: [], script: script('print(1)') }, bob);
     (env.amber.store as any).db.prepare("UPDATE commands SET owner_union_id = '' WHERE id = ?").run(noOwner);
@@ -67,6 +87,11 @@ test('visibility: only the creator sees and runs a command; an admin looks and r
     assert.deepEqual([view.canRun, view.canManage], [false, true]);
     assert.equal((await post(aliceCookie, '/web/api/run', { scope, commandId: id, args: {} })).status, 404);
     assert.equal((await post(aliceCookie, '/web/api/schedules', { scope, commandId: id, at: '每天 09:00', args: {} })).status, 404);
+    assert.equal((await post(aliceCookie, `/web/api/schedules/${mine.id}/run`, {})).status, 403);
+    assert.equal((await post(aliceCookie, `/web/api/schedules/${mine.id}/pause`, {})).body.ok, true, 'an admin may pause it');
+    const carolScheds = carolOv.groups.flatMap((g: any) => g.schedules).map((x: any) => x.id);
+    assert.deepEqual(carolScheds, [old.id]);
+    assert.ok(ov.groups.flatMap((g: any) => g.schedules).some((x: any) => x.id === mine.id), 'an admin sees everyone\'s schedules');
     const src = await (await fetch(`${base}/web/api/commands/${id}/source?scope=${scope}`, { headers: { cookie: aliceCookie } })).json();
     assert.match(src.script.code, /bob的报表/);
     // The admin manages it (here: sets its secret), even from outside the group.

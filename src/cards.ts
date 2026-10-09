@@ -336,6 +336,8 @@ export function closedCard(title: string, template: string, md: string): object 
 export interface ScheduleView {
   id: string; name: string; ruleText: string; nextText: string; status: string; pauseReason: string | null;
   creatorOpenId: string | null; lastText: string; canManage: boolean;
+  /** The viewer created it: only they may run it now (#4); an admin manages, does not run. */
+  mine: boolean;
 }
 
 export function scheduleListCard(items: ScheduleView[], scopeLabel: string): object {
@@ -346,7 +348,7 @@ export function scheduleListCard(items: ScheduleView[], scopeLabel: string): obj
     const buttons: unknown[] = [];
     if (s.canManage) {
       buttons.push(s.status === 'active' ? btn('暂停', { a: 'sch_pause', s: s.id }) : btn('恢复', { a: 'sch_resume', s: s.id }, 'primary'));
-      buttons.push(btn('立即运行', { a: 'sch_run', s: s.id }));
+      if (s.mine) buttons.push(btn('立即运行', { a: 'sch_run', s: s.id }));
       buttons.push(btn('删除', { a: 'sch_del', s: s.id }, 'danger'));
     }
     els.push({ tag: 'hr' });

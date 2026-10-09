@@ -149,7 +149,8 @@ export class AgentGate {
     const rows = ctx.chatType === 'p2p' && ctx.user
       ? [...this.store.schedulesInChat(ctx.chatId), ...this.store.schedulesByCreator(ctx.user.unionId).filter(s => s.chatType === 'p2p' && s.chatId !== ctx.chatId)]
       : this.store.schedulesInChat(ctx.chatId);
-    return rows.map(s => {
+    // Only the named person's own schedules (#4).
+    return rows.filter(s => !!ctx.user && s.creatorUnionId === ctx.user.unionId).map(s => {
       const v = this.scheduler.view(s);
       return { id: v.id, command: v.command, rule: v.ruleText, status: v.status, pauseReason: v.pauseReason, nextRun: v.status === 'active' ? v.nextText : null, last: v.lastText, args: v.args };
     });

@@ -289,6 +289,8 @@ export function startWeb(port: number, store: Store, deps: WebDeps): import('nod
           else if (m[2] === 'resume') deps.scheduler.resume(sch, who.unionId);
           else if (m[2] === 'delete') deps.scheduler.remove(sch, who.unionId);
           else {
+            // Running it now runs the creator's command: the creator only, not an admin (#4).
+            if (sch.creatorUnionId !== who.unionId) return json(res, 403, { ok: false, error: 'forbidden', message: '只有定时任务的创建人可以立即运行' });
             await deps.scheduler.runOnce(sch, true);
             const after = store.getSchedule(sch.id);
             return json(res, 200, { ok: true, runId: after?.lastRunId, lastStatus: after?.lastStatus });
@@ -351,7 +353,7 @@ async function overview(store: Store, deps: WebDeps, unionId: string) {
       if (!m) continue;
     }
     const commands = store.listActiveByChat(chatId).filter(c => c.scopeType === 'group' && (admin || c.ownerUnionId === unionId));
-    const schedules = store.schedulesInChat(chatId);
+    const schedules = store.schedulesInChat(chatId).filter(s => admin || s.creatorUnionId === unionId);
     if (!commands.length && !schedules.length) continue;
     groups.push({
       chatId, name: (await deps.chatName(chatId)) ?? chatId,

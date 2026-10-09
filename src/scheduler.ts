@@ -231,7 +231,7 @@ export class Scheduler {
     const last = s.lastRunAt ? `上次 ${formatAt(s.lastRunAt, s.rule.tz)} ${({ ok: '成功', ok_silent: '成功（无输出）', failed: '失败', missed: '错过（Amber 未运行）', skipped_overlap: '跳过（上次未结束）', delivery_failed: '结果发送失败' } as Record<string, string>)[s.lastStatus ?? ''] ?? ''}` : '还没运行过';
     return {
       id: s.id, name: cmd?.name ?? s.commandId, command: cmd?.name ?? s.commandId, ruleText: describeRule(s.rule), nextText: formatAt(s.nextRunAt, s.rule.tz),
-      status: s.status, pauseReason: s.pauseReason, creatorOpenId: s.creatorOpenId, lastText: last, canManage: viewer ? this.canManage(s, viewer) : false,
+      status: s.status, pauseReason: s.pauseReason, creatorOpenId: s.creatorOpenId, lastText: last, canManage: viewer ? this.canManage(s, viewer) : false, mine: !!viewer && viewer === s.creatorUnionId,
       args: s.args, rule: s.rule, nextRunAt: s.nextRunAt, lastStatus: s.lastStatus, lastRunId: s.lastRunId,
     };
   }
