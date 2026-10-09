@@ -42,7 +42,7 @@ const RELAY_MAX_RESPONSE = 4 * 1024 * 1024;
 const RELAY_TIMEOUT_MS = 60_000;
 
 /** What changed in one followed environment (D53), for the admin notice. `removedEnv`: the whole environment went away. */
-export interface FollowChange { env: string; added: Record<string, string[]>; removed: Record<string, string[]>; vars: string[]; python?: [string | null, string | null]; removedEnv?: boolean }
+export interface FollowChange { env: string; added: Record<string, string[]>; removed: Record<string, string[]>; vars: [string, string | null, string | null][]; python?: [string | null, string | null]; removedEnv?: boolean }
 
 /** Changes allowed without a new approval (D53), or null when a new approval is needed:
  *  - a followed environment whose file changed only its paths, variables or Python (same file, source, WORKDIR, HOME mode);
@@ -73,7 +73,8 @@ export function followDiff(prev: Record<string, ExecutorEnv>, next: Record<strin
       if (minus.length) removed[key] = minus;
     }
     const ov = o.vars ?? {}, nv = n.vars ?? {};
-    const vars = [...new Set([...Object.keys(ov), ...Object.keys(nv)])].filter(v => ov[v] !== nv[v]).sort();
+    // Values are shown to admins: environment variables are configuration (credentials go through command secrets).
+    const vars = [...new Set([...Object.keys(ov), ...Object.keys(nv)])].filter(v => ov[v] !== nv[v]).sort().map(v => [v, ov[v] ?? null, nv[v] ?? null] as [string, string | null, string | null]);
     out.push({ env: k, added, removed, vars, ...((o.interpreter ?? null) !== (n.interpreter ?? null) ? { python: [o.interpreter ?? null, n.interpreter ?? null] as [string | null, string | null] } : {}) });
   }
   return changed ? out : null;

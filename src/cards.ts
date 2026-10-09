@@ -459,11 +459,11 @@ export function executorFollowCard(e: ExecutorRow, changes: FollowChange[]): obj
       for (const p of c.added[k] ?? []) lines.push(`- 新增${KIND[k]}：\`${sanitizeMarkdown(p, 300)}\`${cred.has(p) ? ' <font color="red">⚠️ 凭证</font>' : ''}`);
       for (const p of c.removed[k] ?? []) lines.push(`- 去掉${KIND[k]}：\`${sanitizeMarkdown(p, 300)}\``);
     }
-    if (c.vars.length) lines.push(`- 环境变量有变化：${c.vars.map(n => `\`${sanitizeMarkdown(n, 64)}\``).join('、')}`);
+    for (const [n, o, nv] of c.vars) lines.push(`- 环境变量 \`${sanitizeMarkdown(n, 64)}\`：${o === null ? '（新增）' : `\`${sanitizeMarkdown(o, 200)}\``} → ${nv === null ? '（去掉）' : `\`${sanitizeMarkdown(nv, 200)}\``}`);
     if (c.python) lines.push(`- Python：\`${sanitizeMarkdown(c.python[0] ?? '默认', 200)}\` → \`${sanitizeMarkdown(c.python[1] ?? '默认', 200)}\``);
   }
   return shell(`Amber · 执行端环境已自动更新：${e.name}`, 'blue', [
-    { tag: 'markdown', content: `执行端 **${e.name}**（${sanitizeMarkdown(e.machine, 60)}）环境文件夹里的定义文件变了，已按新内容生效（这类变化不需要再批准）：\n\n${lines.join('\n')}\n\n有问题可以直接撤销这个执行端，撤销后立即停止派任务。` },
+    { tag: 'markdown', content: `执行端 **${e.name}**（${sanitizeMarkdown(e.machine, 60)}）环境文件夹里的定义文件变了，已按新内容生效（这类变化不需要再批准）：\n\n${lines.join('\n')}\n\n有问题可以直接撤销这个执行端，撤销后立即停止派任务。已经启动的脚本仍按原来的权限跑到结束或超时（不超过 120 秒）。` },
     buttonRow([btn('撤销执行端', { a: 'exe_rv', e: e.id }, 'danger')]),
   ]);
 }

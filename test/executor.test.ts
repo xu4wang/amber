@@ -685,9 +685,10 @@ test('followed environments (D53): changes within the approved follow apply at o
     await env.click(alice, reg.id, button(reg.card, 'exe_ok')!);
     const id = env.amber.store.approvedExecutor('followbox')!.id;
     // The followed file gains a path: applied without approval, admins told what changed.
-    writeFileSync(defFile, JSON.stringify({ ...def, access: { readWrite: [data], readOnly: [extra] } }));
+    writeFileSync(defFile, JSON.stringify({ ...def, access: { readWrite: [data], readOnly: [extra] }, vars: { API_HOST: 'https://new.example' } }));
     const notice = await env.waitFor(() => cards(/已自动更新/)[0]);
     assert.ok(FakeFeishu.text(notice.card).includes(extra));
+    assert.match(FakeFeishu.text(notice.card), /API_HOST.*（新增）.*https:\/\/new\.example/, 'variable values shown to admins');
     assert.match(FakeFeishu.text(notice.card), /新增只读/);
     const row = env.amber.store.getExecutor(id)!;
     assert.equal(row.status, 'approved');
@@ -702,7 +703,7 @@ test('followed environments (D53): changes within the approved follow apply at o
     assert.match(execOut, /env file not valid, keeping the last good version bot\.json/);
     assert.doesNotMatch(execOut, /environments changed: none/);
     assert.equal(env.amber.store.getExecutor(id)!.status, 'approved');
-    writeFileSync(defFile, JSON.stringify({ ...def, access: { readWrite: [data], readOnly: [extra] } }));
+    writeFileSync(defFile, JSON.stringify({ ...def, access: { readWrite: [data], readOnly: [extra] }, vars: { API_HOST: 'https://new.example' } }));
     // A second file: a new environment needs approval; removing it again only shrinks access and applies at once.
     writeFileSync(join(dir, 'envs', 'more.json'), JSON.stringify({ workdir: extra }));
     await env.waitFor(() => env.amber.store.getExecutor(id)!.status === 'pending');
