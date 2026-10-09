@@ -9,7 +9,15 @@ import { FakeFeishu, fakeWs, type User } from './fake-feishu.ts';
 
 export const GROUP = 'oc_testgroup1';
 
-let portBase = 21000 + Math.floor(Math.random() * 20000);
+/** A port the OS reports free right now. Test files run in parallel; fixed or random ranges collided (EADDRINUSE). */
+async function freePort(): Promise<number> {
+  const { createServer } = await import('node:net');
+  return new Promise((resolve, reject) => {
+    const srv = createServer();
+    srv.once('error', reject);
+    srv.listen(0, '127.0.0.1', () => { const p = (srv.address() as { port: number }).port; srv.close(() => resolve(p)); });
+  });
+}
 
 export interface Env {
   amber: Amber; fake: FakeFeishu; cfg: AmberConfig;
@@ -50,7 +58,7 @@ export async function makeEnv(over: Partial<AmberConfig> = {}): Promise<Env> {
   fake.users.push(alice, bob, carol);
   fake.chats.set(GROUP, { mode: 'group', name: '测试群', members: new Set(['BOT', alice.unionId, bob.unionId]) });
   for (const u of [alice, bob, carol]) fake.chats.set(`oc_dm_${u.unionId}`, { mode: 'p2p', name: '', members: new Set(['BOT', u.unionId]) });
-  const apiPort = portBase++, webPort = portBase++;
+  const apiPort = await freePort(), webPort = await freePort();
   const cfg: AmberConfig = {
     appId: 'cli_test', appSecret: 'secret', dataDir: join(dir, 'data'), configDir: dir,
     reviewers: [alice.email], admins: [alice.email], services: {},
