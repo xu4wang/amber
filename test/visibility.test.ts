@@ -50,6 +50,11 @@ test('visibility: only the creator sees and runs a command; an admin looks and r
     assert.deepEqual(await sched(carol), [old.id]);
     assert.deepEqual(await sched(bob), [mine.id]);
     assert.deepEqual((await env.api('POST', '/v1/schedules/list', { chatId: GROUP, chatType: 'group', label: 'TestBot' })).body.schedules, []);
+    // An agent pauses only the named person's own schedule (or any, for an admin).
+    const pause = (u: any) => env.api('POST', `/v1/schedules/${mine.id}/pause`, { chatId: GROUP, chatType: 'group', label: 'TestBot', ...(u ? { user: u.email } : {}) });
+    assert.equal((await pause(carol)).status, 404);
+    assert.equal((await pause(null)).status, 404);
+    assert.equal(env.amber.store.getSchedule(mine.id)!.status, 'active');
     // A command with no owner on record is nobody's: not visible to a caller without identity.
     const noOwner = await activate(env, { chatId: GROUP, chatType: 'group', name: '无主', params: [], script: script('print(1)') }, bob);
     (env.amber.store as any).db.prepare("UPDATE commands SET owner_union_id = '' WHERE id = ?").run(noOwner);
@@ -91,7 +96,8 @@ test('visibility: only the creator sees and runs a command; an admin looks and r
     assert.equal((await post(aliceCookie, `/web/api/schedules/${mine.id}/pause`, {})).body.ok, true, 'an admin may pause it');
     const carolScheds = carolOv.groups.flatMap((g: any) => g.schedules).map((x: any) => x.id);
     assert.deepEqual(carolScheds, [old.id]);
-    assert.ok(ov.groups.flatMap((g: any) => g.schedules).some((x: any) => x.id === mine.id), 'an admin sees everyone\'s schedules');
+    const adminSch = ov.groups.flatMap((g: any) => g.schedules).find((x: any) => x.id === mine.id);
+    assert.deepEqual([adminSch.mine, adminSch.canManage], [false, true], 'an admin sees and manages everyone\'s schedules');
     const src = await (await fetch(`${base}/web/api/commands/${id}/source?scope=${scope}`, { headers: { cookie: aliceCookie } })).json();
     assert.match(src.script.code, /bob的报表/);
     // The admin manages it (here: sets its secret), even from outside the group.

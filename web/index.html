@@ -444,10 +444,10 @@ function schPane({ s, scope }) {
       ${s.status === 'active' ? `<div class="field"><label>下次运行</label><span>${esc(s.next)}</span></div>` : ''}
       <div class="field"><label>上次运行</label><span>${esc(s.last || '还没运行过')}</span></div>
       <div class="field"><label>参数</label><span>${args ? `<code>${args}</code>` : '（默认）'}</span></div>
-      ${s.mine ? `<div class="actions">
+      ${s.canManage ? `<div class="actions">
         ${s.status === 'active' ? `<button class="btn" data-sch="${esc(s.id)}:pause">暂停</button>` : `<button class="btn primary" data-sch="${esc(s.id)}:resume">恢复</button>`}
-        <button class="btn" data-sch="${esc(s.id)}:run">立即运行一次</button>
-        <button class="btn" data-sch="${esc(s.id)}:delete">删除</button></div>` : '<p class="note">只有创建人可以管理这个定时任务。</p>'}
+        ${s.mine ? `<button class="btn" data-sch="${esc(s.id)}:run">立即运行一次</button>` : ''}
+        <button class="btn" data-sch="${esc(s.id)}:delete">删除</button></div>${s.mine ? '' : '<p class="note">这是别人的定时任务：管理员可以暂停、恢复、删除，不能立即运行。</p>'}` : '<p class="note">只有创建人可以管理这个定时任务。</p>'}
     </div>
     <div class="output wait" id="out" style="display:none"></div>`;
 }

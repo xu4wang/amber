@@ -330,9 +330,10 @@ function cmdView(c: CommandRow, viewer?: string, isAdmin?: (u: string) => boolea
 
 const LAST: Record<string, string> = { ok: '成功', ok_silent: '成功（无输出）', failed: '失败', missed: '错过', skipped_overlap: '跳过', delivery_failed: '结果发送失败' };
 
-function schView(store: Store, s: ScheduleRow, viewer?: string) {
+function schView(store: Store, s: ScheduleRow, viewer?: string, isAdmin?: (u: string) => boolean) {
   return {
     mine: viewer ? s.creatorUnionId === viewer : false,
+    canManage: !!viewer && (s.creatorUnionId === viewer || !!isAdmin?.(viewer)),
     commandId: s.commandId,
     id: s.id, command: store.getCommand(s.commandId)?.name ?? s.commandId, rule: describeRule(s.rule), status: s.status, pauseReason: s.pauseReason,
     next: s.status === 'active' ? formatAt(s.nextRunAt, s.rule.tz) : null, last: s.lastRunAt ? `${formatAt(s.lastRunAt, s.rule.tz)} ${LAST[s.lastStatus ?? ''] ?? ''}` : null,
@@ -358,7 +359,7 @@ async function overview(store: Store, deps: WebDeps, unionId: string) {
     groups.push({
       chatId, name: (await deps.chatName(chatId)) ?? chatId,
       commands: commands.map(c => cmdView(c, unionId, deps.isAdmin, store)),
-      schedules: schedules.map(s => schView(store, s, unionId)),
+      schedules: schedules.map(s => schView(store, s, unionId, deps.isAdmin)),
     });
   }
   return {

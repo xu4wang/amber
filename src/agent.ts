@@ -159,10 +159,12 @@ export class AgentGate {
   private scheduleInCtx(ctx: Ctx, id: string) {
     const s = this.store.getSchedule(id);
     if (!s || !(s.chatId === ctx.chatId || (ctx.chatType === 'p2p' && s.chatType === 'p2p' && ctx.user?.unionId === s.creatorUnionId))) throw new AmberError('not_found', `这里没有定时任务 ${id}`);
+    // Only the named person's own schedules, or any for an admin (#4).
+    if (!ctx.user || (ctx.user.unionId !== s.creatorUnionId && !this.deps.isAdmin(ctx.user.unionId))) throw new AmberError('not_found', `这里没有定时任务 ${id}`);
     return s;
   }
 
-  /** Pausing only ever stops something, so the agent may do it directly. */
+  /** Pausing only ever stops something, so the agent may do it directly (for the creator or an admin). */
   schedulePause(ctx: Ctx, id: string): object {
     const s = this.scheduleInCtx(ctx, id);
     this.scheduler.pauseBy(s, `agent:${ctx.machine}`, `由 ${ctx.requestedBy} 暂停`);
