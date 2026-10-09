@@ -1,8 +1,8 @@
 import * as lark from '@larksuiteoapi/node-sdk';
-import type { Store, CommandRow } from './db.ts';
-import type { Caller } from './engine.ts';
+import type { Store, CommandRow, ScopeType } from './db.ts';
+import type { Caller, Block } from './engine.ts';
 import { visibleCommands, findVisible, runCommand, AmberError, secretVault, dropOrphanSecrets } from './engine.ts';
-import { listCard, formCard, runningCard, resultCard, errorCard, infoCard, retireConfirmCard, closedCard, secretFormCard, secretPickCard, executorApprovalCard, executorDecidedCard, executorListCard, executorFollowCard } from './cards.ts';
+import { Mentions, listCard, formCard, runningCard, resultCard, errorCard, infoCard, retireConfirmCard, closedCard, secretFormCard, secretPickCard, executorApprovalCard, executorDecidedCard, executorListCard, executorFollowCard } from './cards.ts';
 import { ExecutorHub } from './executors.ts';
 import type { AmberConfig } from './config.ts';
 import { Flow } from './flow.ts';
@@ -72,6 +72,7 @@ export class AmberBot {
       signer: this.signer,
       retire: (id, actor, by) => this.retire(id, actor, by),
       nameOf: u => this.nameOf(u),
+      mentionsFor: (chatId, chatType, blocks) => this.mentionsFor(chatId, chatType, blocks),
     };
     this.agent = new AgentGate(store, deps);
     this.scheduler = new Scheduler(store, deps);
@@ -210,6 +211,38 @@ export class AmberBot {
     }
     this.memberCache.set(chatId, { ids, at: Date.now() });
     return ids.has(unionId);
+  }
+
+  private mentionCache = new Map<string, { members: Map<string, string>; at: number }>();
+
+  /** Who a real run's result may @ in this group (#1): every member, person or bot, by display name. Amber itself
+   *  and names two members share are left out. Fetched only when the output has an `@`; kept for a minute. */
+  async mentionsFor(chatId: string, chatType: ScopeType, blocks: Block[]): Promise<Mentions | undefined> {
+    if (chatType !== 'group' || !blocks.some(b => b.text.includes('@'))) return undefined;
+    const hit = this.mentionCache.get(chatId);
+    if (hit && Date.now() - hit.at < 60_000) return new Mentions(hit.members);
+    const seen = new Map<string, string | null>();   // name -> open_id, or null when the name is taken twice
+    const add = (name: unknown, id: unknown) => {
+      if (typeof name !== 'string' || typeof id !== 'string' || !name || id === this.botOpenId) return;
+      seen.set(name, seen.has(name) && seen.get(name) !== id ? null : id);
+    };
+    try {
+      let pageToken: string | undefined;
+      for (let i = 0; i < 50; i++) {
+        const r = await this.client.request({ method: 'GET', url: `/open-apis/im/v1/chats/${chatId}/members`, params: { member_id_type: 'open_id', page_size: 100, ...(pageToken ? { page_token: pageToken } : {}) } }) as any;
+        for (const m of r?.data?.items ?? []) add(m.name, m.member_id);
+        if (!r?.data?.has_more) break;
+        pageToken = r.data.page_token;
+      }
+      const b = await this.client.request({ method: 'GET', url: `/open-apis/im/v1/chats/${chatId}/members/bots` }) as any;
+      for (const m of b?.data?.items ?? []) add(m.bot_name, m.bot_id);
+    } catch (e: any) {
+      log('mention lookup unavailable', chatId, e?.response?.data?.code ?? e?.message);
+      return undefined;
+    }
+    const members = new Map([...seen].filter((x): x is [string, string] => x[1] !== null));
+    this.mentionCache.set(chatId, { members, at: Date.now() });
+    return new Mentions(members);
   }
 
   async start(): Promise<void> {
@@ -516,7 +549,7 @@ export class AmberBot {
     try {
       const r = await runCommand(this.store, cmd, raw, caller, { city: () => this.cityOf(caller.unionId), signer: this.signer }, { viaForm });
       if (!r.ok) return errorCard(cmd.name, `执行失败：${r.error}`, cmd.id);
-      return resultCard(cmd.name, caller.openId, r.blocks, r.runId, r.elapsedMs, cmd.id, cmd.scopeType !== 'p2p' && !!cmd.script.secrets?.length);
+      return resultCard(cmd.name, caller.openId, r.blocks, r.runId, r.elapsedMs, cmd.id, cmd.scopeType !== 'p2p' && !!cmd.script.secrets?.length, await this.mentionsFor(caller.chatId, caller.chatType, r.blocks));
     } catch (e) {
       return errorCard(cmd.name, e instanceof AmberError ? e.message : `出错了：${(e as Error).message}`, cmd.id);
     }

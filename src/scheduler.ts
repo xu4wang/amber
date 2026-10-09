@@ -129,7 +129,7 @@ export class Scheduler {
       this.store.updateSchedule(s.id, { lastRunId: r.runId, lastRunAt: Date.now(), lastStatus: r.markdown.trim() ? 'ok' : 'ok_silent', failCount: 0 });
       // No output = nothing to say (monitoring scripts print only when something is wrong).
       if (!r.markdown.trim()) return;
-      const card = scheduleResultCard(name, s.creatorOpenId ?? undefined, r.blocks, r.runId, r.elapsedMs, s.id, ruleText);
+      const card = scheduleResultCard(name, s.creatorOpenId ?? undefined, r.blocks, r.runId, r.elapsedMs, s.id, ruleText, await this.deps.mentionsFor(s.chatId, s.chatType, r.blocks));
       try {
         await this.deps.send(s.chatType === 'p2p' ? { unionId: s.creatorUnionId } : s.replyTo ? { replyTo: s.replyTo, inThread: s.inThread } : { chatId: s.chatId }, card);
       } catch (e: any) {

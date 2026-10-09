@@ -12,6 +12,7 @@ export class FakeFeishu {
   approvals = new Map<string, { approvalCode: string; status: string; tasks: { open_id: string; status: string }[]; title?: string; form?: string }>();
   docs = new Map<string, string[]>();          // doc id -> markdown chunks
   membersApiAllowed = true;
+  chatBots = new Map<string, { name: string; openId: string }[]>();   // other bots in a group, besides Amber
   private n = 0;
   readonly botOpenId = 'ou_amberbot';
   approvalCode = 'APPROVAL-CODE';
@@ -88,7 +89,17 @@ export class FakeFeishu {
       if (!this.membersApiAllowed) this.fail(99991672, 'Access denied');
       const c = this.chats.get(m[1]);
       if (!c) this.fail(232011, 'Operator can NOT be out of the chat.');
-      return { data: { items: [...c.members].filter(x => x !== 'BOT').map(u => ({ member_id: u })), has_more: false } };
+      const people = [...c.members].filter(x => x !== 'BOT');
+      if (params?.member_id_type === 'open_id') {
+        return { data: { items: people.map(u => { const x = this.userByUnion(u); return { member_id: x?.openId ?? u, name: x?.name ?? '' }; }), has_more: false } };
+      }
+      return { data: { items: people.map(u => ({ member_id: u })), has_more: false } };
+    }
+    if ((m = /^\/open-apis\/im\/v1\/chats\/([^/]+)\/members\/bots$/.exec(url))) {
+      if (!this.membersApiAllowed) this.fail(99991672, 'Access denied');
+      const c = this.chats.get(m[1]);
+      if (!c) this.fail(232011, 'Operator can NOT be out of the chat.');
+      return { data: { items: [{ bot_id: this.botOpenId, bot_name: 'amber' }, ...(this.chatBots.get(m[1]) ?? []).map(b => ({ bot_id: b.openId, bot_name: b.name }))] } };
     }
     if (method === 'POST' && /^\/open-apis\/wiki\/v2\/spaces\/[^/]+\/nodes$/.test(url)) {
       const doc = this.id('doc'); this.docs.set(doc, [`TITLE:${data.title}`]);

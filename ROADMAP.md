@@ -23,8 +23,8 @@ Amber 接下来的计划和进展。每完成一项会在这里和对应的 issu
 | 顺序 | 内容 | Issue | 状态 |
 |---|---|---|---|
 | 1 | **在数据所在的机器上执行（Amber 执行端 + 运行环境）**：运行环境定义能访问的数据（可从 botmux 机器人导出），管理员批准；指令只选环境，能访问机器人在本机建立的数据（如台账）。见下文「执行环境」 | [#6](https://github.com/xu4wang/amber/issues/6) | 基本完成：执行端已装满机队；运行环境（可从 botmux 机器人导出）已用于第一个机器人；执行端上的指令可经 Amber 转发调用 data-mcp；`amber envs` 让机器人自己找环境。待业务人员和机器人写出第一批真实指令 |
-| 2 | **bot 类型参数和唤起机器人**：指令结果可以交给本群的另一个机器人继续处理 | [#1](https://github.com/xu4wang/amber/issues/1) | 设计已定 |
-| 3 | **验收：GitLab 仓库检查**（群内应用）：没更新在群里报告，有更新唤起机器人拉代码 | [#2](https://github.com/xu4wang/amber/issues/2) | 依赖 1、2 |
+| 2 | **在结果里 @ 人或机器人**：脚本输出 `@名字`，正式运行时换成真正的 @，把结果交给本群的另一个机器人或某个人继续处理 | [#1](https://github.com/xu4wang/amber/issues/1) | 已完成 |
+| 3 | **验收：GitLab 仓库检查**（群内应用）：没更新在群里报告，有更新唤起机器人拉代码 | [#2](https://github.com/xu4wang/amber/issues/2) | 可以开始（需要仓库和令牌） |
 | 4 | **配置项**：安装时填写、以后自动带上的参数 | [#3](https://github.com/xu4wang/amber/issues/3) | 设计已定 |
 | 5 | **Amber Store**：上架、安装（不审批）、升级、卸载、原版与开发模式安装 | [#4](https://github.com/xu4wang/amber/issues/4) | 设计已定，依赖 4 |
 

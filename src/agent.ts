@@ -6,10 +6,10 @@
 //   3. anything else (needs a person's identity, confirm, schedules) — Amber posts a confirmation
 //      card in the chat; whoever clicks it is the identity, taken from the Feishu event.
 import type { Store, CommandRow, RequestRow, RequestKind, ScopeType } from './db.ts';
-import type { Caller } from './engine.ts';
+import type { Caller, Block } from './engine.ts';
 import { visibleCommands, findVisible, runCommand, validateArgs, AmberError, missingSecrets } from './engine.ts';
 import type { Signer } from './identity.ts';
-import { requestCard, runningCard, resultCard, errorCard, closedCard, person, sanitizeMarkdown } from './cards.ts';
+import { requestCard, runningCard, resultCard, errorCard, closedCard, person, sanitizeMarkdown, type Mentions } from './cards.ts';
 import { parseRule, validateRule, nextRun, describeRule, formatAt, defaultTz } from './schedule-rule.ts';
 import type { Scheduler } from './scheduler.ts';
 import { MAX_PER_CHAT } from './scheduler.ts';
@@ -28,6 +28,8 @@ export interface Deps {
   /** Take a command offline (checks creator/admin, pauses its schedules). */
   retire(cmdId: string, actor: { unionId: string }, byLabel: string): Promise<{ name: string; schedules: number }>;
   nameOf(unionId: string): Promise<string | undefined>;
+  /** Group members a real run's result may @ (#1); undefined in private chats, without `@` in the output, or when unknown. */
+  mentionsFor(chatId: string, chatType: ScopeType, blocks: Block[]): Promise<Mentions | undefined>;
 }
 
 /** What the agent says about where it is. Nothing here is trusted as identity. */
@@ -367,7 +369,7 @@ export class AgentGate {
       try {
         const r = await runCommand(this.store, cmd, req.args, caller, { city: () => this.deps.cityOf(clicker.unionId), signer: this.deps.signer }, { viaForm: true });
         this.store.transitionRequest(req.id, 'running', r.ok ? 'done' : 'failed', { runId: r.runId, error: r.error });
-        card = r.ok ? resultCard(cmd.name, clicker.openId, r.blocks, r.runId, r.elapsedMs, cmd.id, cmd.scopeType !== 'p2p' && !!cmd.script.secrets?.length) : errorCard(cmd.name, `执行失败：${r.error}`);
+        card = r.ok ? resultCard(cmd.name, clicker.openId, r.blocks, r.runId, r.elapsedMs, cmd.id, cmd.scopeType !== 'p2p' && !!cmd.script.secrets?.length, await this.deps.mentionsFor(caller.chatId, caller.chatType, r.blocks)) : errorCard(cmd.name, `执行失败：${r.error}`);
       } catch (e) {
         this.store.transitionRequest(req.id, 'running', 'failed', { error: (e as Error).message });
         card = errorCard(cmd.name, e instanceof AmberError ? e.message : `出错了：${(e as Error).message}`);

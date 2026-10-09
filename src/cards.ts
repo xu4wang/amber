@@ -13,6 +13,35 @@ export function sanitizeMarkdown(md: string, maxChars = 6000): string {
   return s;
 }
 
+/** At most this many people or bots a run's result can @ (#1). */
+export const MAX_MENTIONS = 5;
+
+/** Real @s in a run's result (#1): `@名字` in the script's markdown becomes an @ when the name is exactly one group
+ *  member's (a person or a bot). Only built for real runs in a group, so trial runs and private chats never @. */
+export class Mentions {
+  readonly used = new Set<string>();
+  private re: RegExp | null;
+  private members: Map<string, string>;
+  /** `members`: display name -> open_id. Names held by more than one member must be left out by the caller. */
+  constructor(members: Map<string, string>) {
+    this.members = members;
+    const names = [...members.keys()].filter(n => n && !/[<>@＠\[\]()（）\s]/.test(n) && n !== '所有人' && n.toLowerCase() !== 'all' && /^ou_[A-Za-z0-9_-]+$/.test(members.get(n)!));
+    // Longest first, so @马小马 is not read as @马 followed by 小马. Not followed by a letter or digit: @alice2 is not @alice.
+    names.sort((a, b) => b.length - a.length);
+    this.re = names.length ? new RegExp(`＠(${names.map(n => n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')})(?![A-Za-z0-9_])`, 'g') : null;
+  }
+  /** Works on sanitized text, where every @ is already ＠. */
+  apply(sanitized: string): string {
+    if (!this.re) return sanitized;
+    return sanitized.replace(this.re, (all, name: string) => {
+      const id = this.members.get(name)!;
+      if (!this.used.has(id) && this.used.size >= MAX_MENTIONS) return all;
+      this.used.add(id);
+      return `<at id=${id}></at>`;
+    });
+  }
+}
+
 function shell(title: string, template: string, elements: unknown[]): object {
   return {
     schema: '2.0',
@@ -95,12 +124,12 @@ export function person(openId: string | undefined): string {
 }
 
 /** Splits ```vega-lite fences out of markdown and turns simple bar/line specs into card charts. */
-export function markdownWithCharts(md: string): unknown[] {
+export function markdownWithCharts(md: string, mentions?: Mentions): unknown[] {
   const els: unknown[] = [];
   const re = /```(vega-lite|table)\s*\n([\s\S]*?)```/g;
   let last = 0;
   let m: RegExpExecArray | null;
-  const pushText = (t: string) => { const x = t.trim(); if (x) els.push({ tag: 'markdown', content: sanitizeMarkdown(x) }); };
+  const pushText = (t: string) => { const x = t.trim(); if (x) els.push({ tag: 'markdown', content: mentions ? mentions.apply(sanitizeMarkdown(x)) : sanitizeMarkdown(x) }); };
   while ((m = re.exec(md))) {
     pushText(md.slice(last, m.index));
     last = m.index + m[0].length;
@@ -190,9 +219,9 @@ function vegaLiteToChart(src: string): unknown[] | null {
   return out;
 }
 
-export function renderBlocks(blocks: Block[]): unknown[] {
+export function renderBlocks(blocks: Block[], mentions?: Mentions): unknown[] {
   const els: unknown[] = [];
-  for (const b of blocks) if (b.text) els.push(...markdownWithCharts(b.text));
+  for (const b of blocks) if (b.text) els.push(...markdownWithCharts(b.text, mentions));
   return els.length ? els : [{ tag: 'markdown', content: '（没有输出）' }];
 }
 
@@ -200,9 +229,9 @@ export function runningCard(name: string, whoOpenId?: string): object {
   return shell(`Amber · ${name}`, 'wathet', [{ tag: 'markdown', content: `⏳ 正在以 ${person(whoOpenId)} 的身份执行……` }]);
 }
 
-export function resultCard(name: string, whoOpenId: string | undefined, blocks: Block[], runId: string, elapsedMs: number, cmdId: string, sharedSecrets = false): object {
+export function resultCard(name: string, whoOpenId: string | undefined, blocks: Block[], runId: string, elapsedMs: number, cmdId: string, sharedSecrets = false, mentions?: Mentions): object {
   return shell(`Amber · ${name}`, 'green', [
-    ...renderBlocks(blocks),
+    ...renderBlocks(blocks, mentions),
     { tag: 'markdown', content: `由 ${person(whoOpenId)} 执行 · ${(elapsedMs / 1000).toFixed(1)} 秒 · run ${runId}${sharedSecrets ? ' · 使用本群共用的密钥' : ''}`, text_size: 'notation' },
     btn('再执行一次', { a: 'pick', c: cmdId }),
   ]);
@@ -333,9 +362,9 @@ export function scheduleListCard(items: ScheduleView[], scopeLabel: string): obj
   return shell('Amber · 定时任务', 'blue', els);
 }
 
-export function scheduleResultCard(name: string, creatorOpenId: string | undefined, blocks: Block[], runId: string, elapsedMs: number, scheduleId: string, ruleText: string): object {
+export function scheduleResultCard(name: string, creatorOpenId: string | undefined, blocks: Block[], runId: string, elapsedMs: number, scheduleId: string, ruleText: string, mentions?: Mentions): object {
   return shell(`⏰ 定时：${name}`, 'green', [
-    ...renderBlocks(blocks),
+    ...renderBlocks(blocks, mentions),
     { tag: 'markdown', content: `${sanitizeMarkdown(ruleText, 60)} · 以 ${person(creatorOpenId)} 的身份执行 · ${(elapsedMs / 1000).toFixed(1)} 秒 · run ${runId} · 任务 ${scheduleId}`, text_size: 'notation' },
   ]);
 }
