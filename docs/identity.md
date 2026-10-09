@@ -149,3 +149,66 @@ def verify_amber(token, audience):
 ### 3.5 密钥
 
 私钥在 `~/.config/amber/signing-key.pem`（0600），首次启动时自动生成。轮换时让 `/v1/keys` 同时发布新旧两把公钥，用 `kid` 区分；等旧凭证全部过期后再撤掉旧的。目前只有一把固定密钥，轮换功能还没实现。
+
+### 3.6 已接入的服务：data-mcp
+
+data-mcp（只读查数服务）已经按上面的规则接入。它的 Amber 入口是一个单独的进程，只监听 `127.0.0.1`，默认端口 8766，部署时以 `config.json` 里 `services.data-mcp` 登记的端口为准，脚本一律读输入里的 `tcpPort`。
+
+**请求**：只有一个接口，一次请求里先校验 SQL、再执行，所以每次查询只消耗一张凭证，指令声明 `"services": {"data-mcp": {"calls": 1}}` 即可；要查几次就声明几次。
+
+```
+POST /amber/query
+Authorization: Amber <token>
+Content-Type: application/json
+
+{"sql": "SELECT …", "datasource": "tchouse-c"}
+```
+
+- 请求体只接受 `sql` 和 `datasource` 两个字段（`datasource` 默认 `tchouse-c`），多带任何字段返回 422。执行人身份只取自凭证的 `sub`，请求体里没有、也不接受身份字段。
+- 每张凭证只能用一次。
+
+**响应**：
+
+| HTTP 状态 | 含义 |
+|---|---|
+| 200 | 请求被处理。是否成功看 body 里的 `status` |
+| 401 | 凭证缺失、验签失败或已过期，`detail` 是错误码，例如 `missing_amber_authorization` |
+| 409 | 凭证已经用过 |
+| 422 | 请求体字段不对 |
+| 429 | 定时执行（`channel` 为 `schedule`）超过限流，默认每分钟 10 次 |
+
+200 的 body 是 data-mcp 平常的查询结果，另加一个 `amber_audit_id`：
+
+| 字段 | 说明 |
+|---|---|
+| `status` | `success` / `validation_error` / `not_found` / `error`，只有 `success` 才算成功 |
+| `columns` | `[{"name", "type", …}]` |
+| `rows` | 对象数组，以列名为键 |
+| `row_count`、`truncated` | 行数，以及是否被截断 |
+| `quality_warnings` | 数据质量提示 |
+| `error_code`、`error_name`、`retryable` | 失败时的原因；校验没过时原因也可能在 `issues[].code` |
+| `query_id` | 本次查询的 id，排查时用 |
+
+**服务方策略**：试运行（`channel` 以 `.trial` 结尾）最多返回 20 行；定时执行单独限流。
+
+最小的 Python 脚本：
+
+```python
+import json, sys, urllib.request, urllib.error
+
+inp = json.load(sys.stdin)
+svc = inp["services"]["data-mcp"]
+req = urllib.request.Request(
+    f"http://127.0.0.1:{svc['tcpPort']}/amber/query",
+    data=json.dumps({"sql": "SELECT 1 AS x"}).encode(),
+    headers={"Authorization": "Amber " + svc["tokens"][0], "Content-Type": "application/json"},
+)
+opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))   # 不走代理
+try:
+    r = json.load(opener.open(req, timeout=80))
+except urllib.error.HTTPError as e:
+    sys.exit("服务拒绝：" + e.read().decode("utf-8", "replace")[:300])
+if r.get("status") != "success":
+    sys.exit("查询失败：" + str(r.get("error_code") or r.get("issues") or r.get("status"))[:300])
+print(r["rows"])
+```

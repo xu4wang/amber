@@ -82,6 +82,12 @@ amber global 天气 --user user@example.com          # 设为全局 / amber loca
    "secrets": {"API_TOKEN": "…"}}
   ```
   `services` 只有声明了服务时才有。草稿里写 `"services": {"data-mcp": {"calls": 2}}`（每次执行最多调用几次，1–20），运行时就拿到 2 张凭证，**每次请求用一张、不能重复用**。参数一律从这里取，不要从命令行或环境变量读。`secrets` 只有声明了密钥时才有，见下面「需要 token、密码时」。
+- **调用 data-mcp 查数**：一次查询只要一张凭证（服务端在一次请求里先校验再执行），声明 `{"calls": 1}` 即可。
+  `POST http://127.0.0.1:<tcpPort>/amber/query`，头 `Authorization: Amber <token>`、`Content-Type: application/json`，
+  请求体只能是 `{"sql": "…", "datasource": "tchouse-c"}`（`datasource` 可省略，多带任何字段返回 422）。端口取输入里的 `tcpPort`，不要写死；请求不要走代理。
+  返回 200 时看 `status`：`success` 才算成功，数据在 `rows`（以列名为键的对象数组）、`columns`、`row_count`、`truncated`；
+  `validation_error` 等失败也是 200，原因在 `error_code` 或 `issues[].code`。401 = 凭证无效，409 = 凭证已用过，429 = 定时执行限流。
+  试运行最多返回 20 行，`truncated` 为 true 时要在输出里说明。完整说明见文档「可信身份」的「已接入的服务：data-mcp」一节。
 - **输出**：往标准输出打印 Markdown。可以用普通 Markdown 和表格，以及：
   - ` ```vega-lite `：图表（柱状图、折线图、饼图（mark: arc，theta=数值、color=类别）会转成飞书原生图表；其他图只在网站上显示）
   - ` ```table `：数据表，`{"columns":[{"name","label","type":"text|number"}],"rows":[…],"total":N}`
