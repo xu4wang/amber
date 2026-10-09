@@ -13,7 +13,7 @@
 // running, the executor checks the signature, the addressee, the expiry, that it has not seen the job
 // before, and recomputes the spec hash; then runs the code under the job's own reviewed sandbox
 // policy (same rules as Amber, lib/ is generated from Amber's sources) with {WORKDIR} set here.
-import { readFileSync, writeFileSync, existsSync, mkdirSync, chmodSync, renameSync, unlinkSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync, mkdirSync, chmodSync, renameSync, unlinkSync, realpathSync } from 'node:fs';
 import { createPublicKey } from 'node:crypto';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
@@ -211,15 +211,22 @@ function launchd(install) {
   const plist = join(homedir(), 'Library', 'LaunchAgents', `${LABEL}.plist`);
   const domain = `gui/${process.getuid()}`;
   try { execFileSync('launchctl', ['bootout', `${domain}/${LABEL}`], { stdio: 'ignore' }); } catch { /* not loaded */ }
+  // bootout returns before the job is gone; bootstrapping too early fails with "5: Input/output error".
+  for (let i = 0; i < 50; i++) {
+    try { execFileSync('launchctl', ['print', `${domain}/${LABEL}`], { stdio: 'ignore' }); } catch { break; }
+    execFileSync('sleep', ['0.2']);
+  }
   if (!install) { if (existsSync(plist)) unlinkSync(plist); return console.log('已停止并移除'); }
   loadConfig();
   const esc = s => s.replace(/&/g, '&amp;').replace(/</g, '&lt;');
   const self = fileURLToPath(import.meta.url);
+  // A stable path for node: process.execPath is the versioned Cellar path, which disappears when Homebrew upgrades node.
+  const node = ['/opt/homebrew/bin/node', '/usr/local/bin/node'].find(p => { try { return realpathSync(p) === realpathSync(process.execPath); } catch { return false; } }) ?? process.execPath;
   writeFileSync(plist, `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
   <key>Label</key><string>${LABEL}</string>
-  <key>ProgramArguments</key><array><string>${esc(process.execPath)}</string><string>${esc(self)}</string><string>run</string></array>
+  <key>ProgramArguments</key><array><string>${esc(node)}</string><string>${esc(self)}</string><string>run</string></array>
   <key>EnvironmentVariables</key><dict><key>AMBER_EXECUTOR_DIR</key><string>${esc(DIR)}</string></dict>
   <key>RunAtLoad</key><true/><key>KeepAlive</key><true/>
   <key>StandardOutPath</key><string>${esc(join(DIR, 'executor.log'))}</string>
