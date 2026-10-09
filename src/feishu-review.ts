@@ -24,7 +24,7 @@ function docMarkdown(c: CommandRow, opts: { creator: string; submittedBy?: strin
        ...c.params.map(p => `| ${p.name} | ${p.label ?? ''} | ${p.type === 'integer' ? '整数' : '文本'} | ${p.defaultFrom === 'caller.city' ? '执行人办公城市' + (p.default ? `（兜底 ${p.default}）` : '') : (p.default ?? '')} | ${p.required ? '是' : '否'} |`)].join('\n')
     : '无参数。';
   const s = c.script;
-  const how = s.kind === 'privileged' ? '**特权脚本（已停用，不能执行）**' : '沙盒脚本';
+  const how = '沙盒脚本';
   const net = s.network ? '，可访问外网' : s.services && Object.keys(s.services).length ? `，以执行人身份调用：${describeServices(s)}（不能访问外网）` : '，不联网';
   const sbx = s.sandbox ? `\n\n**沙箱（额外可访问的文件）**：${describeSandbox(s.sandbox)}。审核时请确认这些路径确实是脚本需要的，读写权限没有给多。` : '';
   const interp = (s.interpreter ? `\n\n**解释器**：${s.interpreter}` : '') + (s.env ? `\n\n**执行位置**：${executorHub()?.describe(s.env) ?? s.env}。脚本在那台机器上、按上面的沙箱策略执行；{WORKDIR} 指那个环境的目录。` : '');
@@ -104,7 +104,7 @@ export class FeishuReview {
     const text = [
       `指令：${c.name}${prev ? `（新版本，替换 ${prev.specHash.slice(0, 12)}）` : ''}`,
       `范围：${c.scopeType === 'p2p' ? '私聊' : '群'}　选项：${c.options.confirm ? '执行前需要确认' : '直接执行'}，${c.options.schedulable ? '允许定时执行' : '不允许定时执行'}`,
-      `运行方式：${c.script.kind === 'privileged' ? '特权脚本' : '沙盒脚本'}`,
+      '运行方式：沙盒脚本',
       c.script.secrets?.length ? `使用的密钥：${describeSecrets(c)}` : '',
       c.script.sandbox ? `沙箱：${describeSandbox(c.script.sandbox)}` : '',
       c.script.interpreter ? `解释器：${c.script.interpreter}` : '',
@@ -112,7 +112,6 @@ export class FeishuReview {
       `创建人：${creatorLabel}`,
       `版本：${c.specHash.slice(0, 12)}`,
       `完整代码与试运行结果：${docUrl}`,
-      c.script.kind === 'privileged' ? '⚠️ 特权脚本已停用：即使同意也不能执行。' : '',
     ].filter(Boolean).join('\n');
     const r = await this.req('POST', '/open-apis/approval/v4/instances', {
       approval_code: a.code,

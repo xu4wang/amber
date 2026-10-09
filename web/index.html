@@ -481,7 +481,7 @@ async function loadSource() {
   if (!x.ok) { el.textContent = x.message || '读取失败'; return; }
   el.dataset.loaded = '1';
   const sc = x.script;
-  const how = sc.kind === 'privileged' ? '特权脚本（已停用，不能执行）' : '沙盒脚本';
+  const how = '沙盒脚本';
   const net = sc.network ? '可访问外网' : Object.keys(sc.services).length ? `以执行人身份调用：${Object.entries(sc.services).map(([n, u]) => `${n}（每次执行最多 ${u.calls} 次调用）`).join('、')}（不能访问外网）` : '不联网';
   const code = sc.code.replace(/\n$/, '');
   // highlight.js escapes the source itself; fall back to plain escaped text if it is missing.

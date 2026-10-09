@@ -48,11 +48,12 @@ test('script output cannot inject mentions, links or tags into cards', () => {
   assert.match(json, /"tag":"chart"/);
 });
 
-test('scripts: privileged is disabled; services declare 1–20 calls (D40/D41)', async () => {
+test('scripts: only sandboxed scripts (privileged removed); services declare 1–20 calls (D40/D41)', async () => {
   const { validateScript, setServices } = await import('../src/runner.ts');
   setServices({ demo: { audience: 'demo', tcpPort: 9 } });
   const base = { kind: 'script', lang: 'python', code: 'print(1)' };
-  assert.throws(() => validateScript({ ...base, kind: 'privileged' }), /已停用/);
+  assert.throws(() => validateScript({ ...base, kind: 'privileged' }), /已移除/);
+  assert.throws(() => validateScript({ ...base, kind: 'shell' }), /只能是 script/);
   for (const calls of [1, 20]) assert.deepEqual(validateScript({ ...base, services: { demo: { calls } } }).services, { demo: { calls } });
   for (const calls of [0, 21, 1.5, '2', undefined, null]) assert.throws(() => validateScript({ ...base, services: { demo: { calls } } }), /calls/, String(calls));
   assert.throws(() => validateScript({ ...base, services: ['demo'] }), /services 要写成/);

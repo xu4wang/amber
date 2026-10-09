@@ -115,7 +115,7 @@ amber global 天气 --user user@example.com          # 设为全局 / amber loca
 - 参数类型：`string`（可加 `maxLength`、`pattern`）或 `integer`（可加 `min`、`max`）；`"defaultFrom": "caller.city"` 表示不填时用执行人的办公城市。
 - `options.confirm`：执行前必须确认（会改数据、有风险时打开）。
 - `options.schedulable`：允许定时执行。**不写时默认为 true**；不适合定时的（比如有副作用、或结果每次都需要人看着执行的）请显式写 `false`。
-- `script.kind` 只能用 `script`。`privileged` 已停用，提交会被拒绝。
+- `script.kind` 只能用 `script`（所有指令都在沙箱里运行；`privileged` 已移除，提交会被拒绝）。要读写文件就声明 `sandbox`，见上面「要访问本机文件时」。
 - **需要 token、密码时**：在 `script` 里写 `"secrets": ["API_TOKEN"]`（只写名字：大写字母、数字、下划线，最多 10 个），脚本从输入的 `secrets` 里取值。**不要向用户要密钥的值，也不要把值写进代码或草稿**；告诉用户：认领卡上点「设置密钥」（或私聊 Amber 发「设置密钥 指令名」），在私聊卡片上填写，然后再试运行。不要打印密钥（打印出来也会被遮成 `***`）。群指令的密钥由所有执行人共用；只给一个人用的凭证，指令要提交到私聊（`p2p`）。需要密钥的指令总是要人点确认卡才能执行，`amber show` 会列出还没设置的密钥。
 
 ### 修改已有指令

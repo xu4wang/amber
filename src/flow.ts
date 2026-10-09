@@ -45,8 +45,8 @@ function btn(text: string, value: Record<string, string>, type: 'primary' | 'def
   return { tag: 'button', text: { tag: 'plain_text', content: text }, type, behaviors: [{ type: 'callback', value }], ...extra };
 }
 
-function scriptLabel(k: string): string {
-  return k === 'privileged' ? '<font color="red">特权脚本（已停用，不能执行）</font>' : '脚本（沙盒运行）';
+function scriptLabel(_k: string): string {
+  return '脚本（沙盒运行）';
 }
 
 function specSummary(c: CommandRow): string {
@@ -156,7 +156,6 @@ export function reviewCard(c: CommandRow, creatorOpenIdForReviewer: string | und
     { tag: 'markdown', content: `请审核这条指令。需要 **全部 ${state.total} 位**审核人通过才生效，目前已通过 ${state.approved} 位。` },
     { tag: 'markdown', content: specSummary(c) },
     ...codePanels(c),
-    ...(c.script.kind === 'privileged' ? [{ tag: 'markdown', content: '<font color="red">⚠️ 特权脚本已停用：这条指令即使通过也不能执行。</font>' }] : []),
     { tag: 'markdown', content: `**创建人**：${person(creatorOpenIdForReviewer)}　**spec**：\`${c.specHash.slice(0, 12)}\`` },
   ];
   if (state.mine === 'approve') els.push({ tag: 'markdown', content: '✅ 你已通过' });
@@ -180,12 +179,10 @@ export class Flow {
   private store: Store;
   private reviewerEmails: string[];
   reviewers: string[] = [];
-  /** Only admins may approve commands containing privileged scripts. */
   isAdmin: (unionId: string) => boolean = () => false;
   signer?: import('./identity.ts').Signer;
   review?: FeishuReview;
   reviewerOpenIds: string[] = [];
-  adminOpenIds: string[] = [];
   nameOf: (unionId: string) => Promise<string | undefined> = async () => undefined;
 
   constructor(client: lark.Client, store: Store, reviewerEmails: string[]) {
@@ -328,10 +325,9 @@ export class Flow {
     if (inst.status === 'APPROVED') {
       const approved = new Set(inst.tasks.filter(t => t.status === 'APPROVED').map(t => t.openId));
       const allReviewers = this.reviewerOpenIds.length > 0 && this.reviewerOpenIds.every(o => approved.has(o));
-      const privilegedOk = c.script.kind !== 'privileged' || this.adminOpenIds.some(o => approved.has(o));
-      if (!allReviewers || !privilegedOk || computeSpecHash(c) !== c.specHash) {
-        log('approval APPROVED but checks failed', c.id, { allReviewers, privilegedOk });
-        this.store.audit(null, 'review.feishu_check_failed', { id: c.id, instanceCode, allReviewers, privilegedOk });
+      if (!allReviewers || computeSpecHash(c) !== c.specHash) {
+        log('approval APPROVED but checks failed', c.id, { allReviewers });
+        this.store.audit(null, 'review.feishu_check_failed', { id: c.id, instanceCode, allReviewers });
         return;
       }
       for (const o of approved) this.store.recordReview(c.id, c.specHash, o, 'approve', null);
@@ -464,7 +460,6 @@ export class Flow {
       return shell(`审核：${c.name}`, 'grey', [{ tag: 'markdown', content: '这张审核卡已失效（指令已生效、被驳回，或审核期间被修改）。' }]);
     }
     if (action === 'review_no' && !reason.trim()) throw new AmberError('reason_required', '驳回请填写原因');
-    if (action === 'review_ok' && c.script.kind === 'privileged' && !this.isAdmin(caller.unionId)) throw new AmberError('admin_only', '含特权脚本的指令只能由管理员通过');
     const decision = action === 'review_ok' ? 'approve' : 'reject';
     this.store.recordReview(c.id, c.specHash, caller.unionId, decision, decision === 'reject' ? reason.trim() : null);
     this.store.audit(caller.unionId, `review.${decision}`, { id: c.id, specHash: c.specHash, reason: decision === 'reject' ? reason.trim() : undefined });

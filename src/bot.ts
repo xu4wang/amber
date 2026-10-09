@@ -259,11 +259,6 @@ export class AmberBot {
       }
     }
     this.adminUnionIds = ids;
-    try {
-      const emails = this.cfg.admins.filter(a => !a.startsWith('on_'));
-      const r = emails.length ? await this.client.contact.v3.user.batchGetId({ params: { user_id_type: 'open_id' }, data: { emails } }) as any : null;
-      this.flow.adminOpenIds = (r?.data?.user_list ?? []).map((u: any) => u.user_id).filter(Boolean);
-    } catch { this.flow.adminOpenIds = []; }
     log('admins resolved', ids.size, 'of', this.cfg.admins.length, 'entries');
   }
 

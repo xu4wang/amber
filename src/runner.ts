@@ -1,21 +1,20 @@
 // Runs a command's script. A command is parameters + one script (D23/D26/D28): no executor
-// registry, no SQL step, no multi-step. Two kinds of script:
+// registry, no SQL step, no multi-step. One kind of script:
 //   script      — Python code, run inside a macOS sandbox built from sandbox-policy.ts (D49): system
 //                 dirs and language toolchains readable, credentials and Amber's keys never, anything
 //                 else only as the command declares in script.sandbox; it writes only to its per-run
 //                 temp dir (also cwd, HOME and TMPDIR). Network is one of: none (default), internet, or a list of
 //                 registered local services. A script that talks to services gets a signed execution
 //                 identity token per service (D27) but no internet, so query results cannot leave.
-//   privileged  — Python code run without the sandbox. DISABLED (D40): it would run as the same OS
-//                 user as Amber and could read the signing key, so it is rejected at submit time
-//                 and refused at run time until it can run under a separate OS user.
+// There is no way to run without the sandbox: the old "privileged" kind (disabled in D40, it ran as
+// Amber's own OS user and could read the signing key) has been removed.
 // The script's output is content: Markdown, optionally with ```vega-lite and ```table blocks (D24/D25).
 import { SECRET_NAME, MAX_SECRETS } from './secrets.ts';
 import { buildPolicy, compileToSeatbelt, validateAppSandbox, normalizePath, mandatoryDenyRoots, type AppSandbox } from './sandbox-policy.ts';
 import { runSandboxed } from './sandbox-run.ts';
 import { EXECUTOR_NAME, ENV_NAME } from './exec-proto.ts';
 
-export type ScriptKind = 'script' | 'privileged';
+export type ScriptKind = 'script';
 /** Per-service declaration: how many calls one run may make (D41). One token is issued per call. */
 export interface ServiceUse { calls: number }
 export interface Script {
@@ -80,7 +79,7 @@ export interface ScriptResult { ok: boolean; content: string; error?: string }
 
 export function validateScript(s: unknown): Script {
   const x = s as Record<string, unknown>;
-  if (x?.kind === 'privileged') throw new Error('特权脚本（privileged）已停用：它与 Amber 同一系统用户运行，能读到签名私钥');
+  if (x?.kind === 'privileged') throw new Error('特权脚本（privileged）已移除：所有指令都在沙箱里运行，需要访问的文件在 sandbox 里声明');
   if (x?.kind === 'script') {
     if (x.lang !== 'python') throw new Error('脚本目前只支持 python');
     if (typeof x.code !== 'string' || !x.code.trim()) throw new Error('脚本缺少代码');
@@ -124,12 +123,12 @@ export function validateScript(s: unknown): Script {
     }
     return { kind: 'script', lang: 'python', code: x.code, network: !!x.network, ...(declared ? { services } : {}), ...(timeoutMs ? { timeoutMs } : {}), ...(secrets.length ? { secrets } : {}), ...(sandbox ? { sandbox } : {}), ...(interpreter ? { interpreter } : {}), ...(env ? { env } : {}) };
   }
-  throw new Error('未知的脚本类型（只支持 script / privileged）');
+  throw new Error('脚本类型只能是 script');
 }
 
 export async function runScript(script: Script, input: ScriptInput): Promise<ScriptResult> {
-  // Privileged scripts are disabled (D40); anything that is not a plain script never runs.
-  if (script.kind !== 'script') return { ok: false, content: '', error: '特权脚本已停用' };
+  // Only sandboxed scripts exist; anything else never runs.
+  if (script.kind !== 'script') return { ok: false, content: '', error: '脚本类型只能是 script' };
   // Remote commands are dispatched by the engine; never run one here without its environment.
   if (script.env) return { ok: false, content: '', error: '这条指令要在执行端上运行' };
   return runSandboxed({ code: script.code, python: script.interpreter ? normalizePath(script.interpreter) : PYTHON, profileFor: dir => profile(script, dir), input, timeoutMs: script.timeoutMs });
