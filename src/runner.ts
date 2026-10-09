@@ -6,8 +6,6 @@
 //                 temp dir (also cwd, HOME and TMPDIR). Network is one of: none (default), internet, or a list of
 //                 registered local services. A script that talks to services gets a signed execution
 //                 identity token per service (D27) but no internet, so query results cannot leave.
-// There is no way to run without the sandbox: the old "privileged" kind (disabled in D40, it ran as
-// Amber's own OS user and could read the signing key) has been removed.
 // The script's output is content: Markdown, optionally with ```vega-lite and ```table blocks (D24/D25).
 import { SECRET_NAME, MAX_SECRETS } from './secrets.ts';
 import { buildPolicy, compileToSeatbelt, validateAppSandbox, normalizePath, mandatoryDenyRoots, type AppSandbox } from './sandbox-policy.ts';
@@ -79,7 +77,6 @@ export interface ScriptResult { ok: boolean; content: string; error?: string }
 
 export function validateScript(s: unknown): Script {
   const x = s as Record<string, unknown>;
-  if (x?.kind === 'privileged') throw new Error('特权脚本（privileged）已移除：所有指令都在沙箱里运行，需要访问的文件在 sandbox 里声明');
   if (x?.kind === 'script') {
     if (x.lang !== 'python') throw new Error('脚本目前只支持 python');
     if (typeof x.code !== 'string' || !x.code.trim()) throw new Error('脚本缺少代码');

@@ -111,7 +111,7 @@ export async function runCommand(store: Store, cmd: CommandRow, rawArgs: Record<
   if (cmd.status !== 'active' && !(opts.trial && cmd.status === 'draft')) throw new AmberError('not_active', '指令未生效');
   if (computeSpecHash(cmd) !== cmd.specHash) throw new AmberError('spec_mismatch', '指令定义与审核通过的版本不一致，已拒绝执行');
   // The stored definition is re-validated with the same rules as a new draft, and only the validated
-  // copy runs: unknown kinds (the removed "privileged", D40), the old services list (D41), calls outside 1–20, services
+  // copy runs: unknown kinds, the old services list (D41), calls outside 1–20, services
   // together with internet, unknown services … are all refused before any run record or token exists.
   let script;
   try { script = validateScript(cmd.script); } catch (e) { throw new AmberError('invalid_script', `指令定义不合规，已拒绝执行：${(e as Error).message}`); }

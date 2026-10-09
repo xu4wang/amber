@@ -20,7 +20,7 @@ export async function startAmber(cfg: AmberConfig, opts: { apiPort: number; webP
   setTimezones(cfg.timezones);
   const store = new Store(cfg.dataDir);
   setSecretVault(new SecretVault(store, cfg.configDir));
-  // Fail closed and say so: these commands stay in the database but every run is refused (D40/D41).
+  // Fail closed and say so: these commands stay in the database but every run is refused (D41).
   const interrupted = store.failInterruptedRuns();
   if (interrupted.length) { console.warn(new Date().toISOString(), 'interrupted runs marked failed', interrupted); store.audit(null, 'startup.interrupted_runs', { runs: interrupted }); }
   for (const u of store.listInvalidScripts(validateScript)) {

@@ -48,11 +48,10 @@ test('script output cannot inject mentions, links or tags into cards', () => {
   assert.match(json, /"tag":"chart"/);
 });
 
-test('scripts: only sandboxed scripts (privileged removed); services declare 1–20 calls (D40/D41)', async () => {
+test('scripts: only the sandboxed kind; services declare 1–20 calls (D41)', async () => {
   const { validateScript, setServices } = await import('../src/runner.ts');
   setServices({ demo: { audience: 'demo', tcpPort: 9 } });
   const base = { kind: 'script', lang: 'python', code: 'print(1)' };
-  assert.throws(() => validateScript({ ...base, kind: 'privileged' }), /已移除/);
   assert.throws(() => validateScript({ ...base, kind: 'shell' }), /只能是 script/);
   for (const calls of [1, 20]) assert.deepEqual(validateScript({ ...base, services: { demo: { calls } } }).services, { demo: { calls } });
   for (const calls of [0, 21, 1.5, '2', undefined, null]) assert.throws(() => validateScript({ ...base, services: { demo: { calls } } }), /calls/, String(calls));
@@ -65,7 +64,7 @@ test('scripts: only sandboxed scripts (privileged removed); services declare 1�
   setServices({});
 });
 
-test('run: stored definitions are re-validated before any run or token; startup lists them (D40/D41)', async () => {
+test('run: stored definitions are re-validated before any run or token; startup lists them (D41)', async () => {
   const { runCommand } = await import('../src/engine.ts');
   const { computeSpecHash, Store } = await import('../src/db.ts');
   const { setServices, validateScript } = await import('../src/runner.ts');
@@ -75,7 +74,7 @@ test('run: stored definitions are re-validated before any run or token; startup 
   const signer = { issue() { throw new Error('must not issue a token'); } } as any;
   const base = { kind: 'script', lang: 'python', code: 'print(1)' };
   const bad: Record<string, unknown>[] = [
-    { ...base, kind: 'privileged' },
+    { ...base, kind: 'shell' },
     { ...base, services: ['demo'] },
     { ...base, services: { demo: { calls: 21 } } },
     { ...base, services: { demo: { calls: 0 } } },
@@ -105,7 +104,7 @@ test('run: stored definitions are re-validated before any run or token; startup 
     ins('ok', { ...base, services: { demo: { calls: 3 } } });
     ins('too-many', { ...base, services: { demo: { calls: 21 } } });
     ins('net', { ...base, services: { demo: { calls: 1 } }, network: true }, 'draft');
-    ins('old-but-retired', { ...base, kind: 'privileged' }, 'retired');
+    ins('old-but-retired', { ...base, kind: 'shell' }, 'retired');
     const found = real.listInvalidScripts(validateScript).map(x => [x.name, x.reason]).sort();
     assert.deepEqual(found, [['net', 'invalid_script'], ['too-many', 'invalid_script']]);
   } finally { rmSync(dir, { recursive: true, force: true }); setServices({}); }
