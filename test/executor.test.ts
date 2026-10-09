@@ -194,14 +194,16 @@ test('executor: offline fails the run at once; a changed environment needs appro
     await cli(dir, 'init', '--name', 'box2', '--amber', `http://127.0.0.1:${env.apiPort}`);
     // env set is only a shorthand for a definition in the one JSON format; --print shows it, export gives it back.
     const printed = JSON.parse(await cli(dir, 'env', 'set', 'e', data, '--readonly', '--print'));
-    assert.deepEqual(printed, { name: 'e', workdir: data, access: { readOnly: ['{WORKDIR}'] } });
+    assert.deepEqual(printed, { format: 'amber-env/1', name: 'e', workdir: data, access: { readOnly: ['{WORKDIR}'] } });
     await cli(dir, 'env', 'set', 'e', data, '--readonly');
     const exported = JSON.parse(await cli(dir, 'env', 'export', 'e'));
-    assert.deepEqual(exported, { name: 'e', workdir: data, access: { readOnly: [data] } });
+    assert.deepEqual(exported, { format: 'amber-env/1', name: 'e', workdir: data, access: { readOnly: [data] } });
     writeFileSync(join(base, 'e.json'), JSON.stringify(exported));
     const before = readFileSync(join(dir, 'config.json'), 'utf8');
     await cli(dir, 'env', 'import', join(base, 'e.json'));
     assert.equal(readFileSync(join(dir, 'config.json'), 'utf8'), before, 'export → import is a no-op');
+    writeFileSync(join(base, 'e2.json'), JSON.stringify({ ...exported, format: 'amber-env/2' }));
+    await assert.rejects(cli(dir, 'env', 'import', join(base, 'e2.json')), /不认识的格式版本/);
     const start = () => { child = spawn(process.execPath, [EXE, 'run'], { env: { ...process.env, AMBER_EXECUTOR_DIR: dir } }); };
     start();
     const cards = () => fake.sent.filter(s => s.to.unionId === alice.unionId && /执行端申请登记/.test(FakeFeishu.text(s.card)));
@@ -403,6 +405,7 @@ test('export-botmux-env: a bot\'s access as an environment definition, mirroring
     const exp = async (...a: string[]) => JSON.parse((await promisify(execFile)(process.execPath, [join(ROOT, 'client', 'amber-executor', 'export-botmux-env.mjs'), ...a], { env: { ...process.env, HOME: home }, encoding: 'utf8' })).stdout);
     const d = await exp('--bot', 'cli_x', '--name', '结算助手');
     assert.equal(d.name, '结算助手');
+    assert.equal(d.format, 'amber-env/1');
     assert.equal(d.workdir, work);
     assert.deepEqual(d.access.readWrite.sort(), [work, extra, join(home, '.botmux/bots/cli_x'), join(home, 'botmux-roles/cli_x'), join(home, '.lark-cli-bots/cli_x')].sort());
     assert.ok(d.access.readOnly.includes('/opt/shared'));

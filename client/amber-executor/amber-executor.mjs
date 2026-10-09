@@ -202,6 +202,7 @@ async function init(args) {
 
 /** The one way an environment gets into the config: a definition in the JSON format (D51), whatever made it. */
 function importDef(cfg, def, nameOverride) {
+  if (def.format !== undefined && def.format !== 'amber-env/1') die(`不认识的格式版本：${def.format}（只支持 amber-env/1）`);
   const envName = nameOverride ?? def.name;
   if (!envName || !ENV_NAME.test(envName)) die('环境名不对：用 --name 指定，或写在定义里的 name');
   if (!def.workdir) die('定义缺少 workdir');
@@ -217,7 +218,7 @@ function importDef(cfg, def, nameOverride) {
 
 /** A stored environment as a definition (the same JSON format; re-importable). */
 function toDef(name, v) {
-  return { name, workdir: v.workdir, ...(v.interpreter ? { python: v.interpreter } : {}), access: v.access ?? { readWrite: [v.workdir] },
+  return { format: 'amber-env/1', name, workdir: v.workdir, ...(v.interpreter ? { python: v.interpreter } : {}), access: v.access ?? { readWrite: [v.workdir] },
     ...(v.vars ? { vars: v.vars } : {}), ...(v.realHome ? { realHome: true } : {}), ...(v.source ? { source: v.source } : {}) };
 }
 
@@ -228,7 +229,7 @@ function envCmd(args) {
     // Shorthand for the simplest definition: one directory, read-write (or read-only).
     if (!name || !ENV_NAME.test(name) || !dir) die('用法：amber-executor env set <环境名> <目录> [--python <解释器>] [--readonly] [--print]');
     const python = flag(args, '--python');
-    const def = { name, workdir: normalizePath(dir), ...(python ? { python: normalizePath(python) } : {}),
+    const def = { format: 'amber-env/1', name, workdir: normalizePath(dir), ...(python ? { python: normalizePath(python) } : {}),
       access: args.includes('--readonly') ? { readOnly: ['{WORKDIR}'] } : { readWrite: ['{WORKDIR}'] } };
     if (args.includes('--print')) return void console.log(JSON.stringify(def, null, 2));
     importDef(cfg, def);

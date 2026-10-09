@@ -61,6 +61,7 @@ const deny = [...list(sp.deny), join(botHome, 'send-cred.json')];
 
 const uniq = a => [...new Set(a)];
 const def = {
+  format: 'amber-env/1',
   name: flag('--name') ?? appId,
   workdir,
   ...(flag('--python') ? { python: flag('--python') } : {}),

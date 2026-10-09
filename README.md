@@ -49,6 +49,7 @@ Amber 是**琥珀**。琥珀把一瞬间的东西封存起来，过很多年取�
 | [安装与部署](docs/install.md) | 环境要求、配置文件、launchd 常驻、nginx、运维 |
 | [飞书应用配置](docs/feishu-setup.md) | 权限清单、长连接事件、审批定义、知识库、发布检查 |
 | [amber 命令行与 skill](docs/cli-and-skill.md) | 安装、命令、三档行为、定时任务、接口 |
+| [运行环境定义格式](docs/environment-format.md) | 运行环境的 JSON 格式规范（amber-env/1）：字段、路径与规则优先级、强制拒绝、校验清单、映射到 Seatbelt / bwrap。独立于 Amber，其他 agent 平台和沙箱可以照着移植 |
 | [执行端](docs/executor.md) | 数据在别的机器上时（比如机器人建的台账）：在那台机器装执行端、登记运行环境（可从 botmux 机器人导出），管理员批准后，指令就在那个环境里执行 |
 | [可信身份：完整示例](docs/identity-example.md) | 用 Python 写一个信任 Amber 凭证的服务，并让固化指令以执行人身份调用它 |
 | [可信身份](docs/identity.md) | 身份从哪来、网站登录、执行身份凭证与服务方验证（含 Node / Python 示例） |

@@ -100,28 +100,7 @@ node ~/amber/client/amber-executor/amber-executor.mjs status
 
 ## 环境定义文件
 
-运行环境可以用一个 JSON 文件定义，`env import` 导入。执行端只认这个格式，不依赖 botmux；`export-botmux-env.mjs` 只是把 botmux 机器人的配置转换成这个格式。
-
-```json
-{
-  "name": "结算助手",
-  "workdir": "/Users/me/clearing-settlement",
-  "python": "/opt/homebrew/bin/python3",
-  "access": {
-    "readWrite": ["/Users/me/clearing-settlement", "~/botmux-roles/cli_xxxx", "~/.botmux/bots/cli_xxxx", "~/.lark-cli-bots/cli_xxxx"],
-    "readOnly": ["~/Library/Application Support/lark-cli/master.key.file", "~/Library/Application Support/lark-cli/appsecret_cli_xxxx.enc"],
-    "deny": ["~/.botmux/bots/cli_xxxx/send-cred.json"]
-  },
-  "vars": {"LARKSUITE_CLI_CONFIG_DIR": "/Users/me/.lark-cli-bots/cli_xxxx"},
-  "realHome": true,
-  "source": "botmux:cli_xxxx"
-}
-```
-
-- 路径可以写绝对路径、`~/…` 或 `{WORKDIR}/…`，导入时换成绝对路径；不能含 `..`，不能是根目录，不能碰 Amber 和执行端的配置目录、`~/.ssh`、钥匙串。
-- 不写 `access` 就是 `{WORKDIR}` 可读写。
-- `vars` 是给脚本的环境变量；`PATH`、`HOME`、`TMPDIR`、`WORKDIR`、`PYTHON*`、`DYLD_*` 等不能设置。
-- `realHome: true`：脚本里的 `HOME` 是用户主目录（和机器人会话里一样，lark-cli 要靠它找到自己的密钥存储），能访问的仍然只有 `access` 里的路径。默认 `HOME` 是本次运行的临时目录。
+运行环境用一份 JSON 定义，`env import` 导入；`env set` 和 `export-botmux-env.mjs` 只是生成它的两种快捷方式，`env export` 可以把已登记的环境导出来改。格式的完整说明（字段、路径解析、规则优先级、强制拒绝、校验清单、怎么映射到沙箱）见 **[运行环境定义格式](environment-format.md)**。这是一份独立于 Amber 的格式，其他 agent 平台、沙箱都可以照着生成或使用。
 
 ## 写指令（给 agent）
 
