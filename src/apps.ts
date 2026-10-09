@@ -215,6 +215,8 @@ export class AppStore {
       // version submitted in this group under that name is a new version of it (and of the app).
       if (scopeType !== 'group') throw new AmberError('bad_target', '开发模式只能装到群里');
       if (this.store.activeByName(chatId, n) || this.store.nameInProgress(chatId, n)) throw new AmberError('name_taken', `这个群里已经有一条叫「${n}」的指令（或它的新版本在审核中），请换个名字`);
+      const other = this.store.appByOrigin(chatId, n);
+      if (other && other.id !== app.id) throw new AmberError('name_taken', `这个群里的「${n}」是另一个应用的原版位置，请换个名字`);
     }
     // Names must stay unique among what this person sees there (their own commands and global ones).
     const seen = visibleCommands(this.store, { unionId: who.unionId, chatId, chatType: scopeType, channel: 'web' });
@@ -242,6 +244,7 @@ export class AppStore {
   private checkDev(app: AppRow, who: string): void {
     if (app.maintainerUnionId !== who && !this.deps.isAdmin(who)) throw new AmberError('forbidden', '只有应用的维护人或管理员可以用开发模式安装');
     if (this.originActive(app)) throw new AmberError('not_needed', '原版还在使用中：新版本请在原版所在的群里提交');
+    if (this.store.nameInProgress(app.originChatId, app.originLine)) throw new AmberError('in_progress', '原版还有一个新版本在认领或审核中，请等它结束（或丢弃）后再用开发模式安装');
   }
 
   /** An admin hands an app to someone else to maintain (they then install it in development mode). */

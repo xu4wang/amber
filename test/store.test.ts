@@ -275,6 +275,13 @@ test('store originals: retiring keeps or delists; a development-mode install bec
     assert.equal(env.amber.store.getApp(app.id)!.status, 'listed');
     const view = (await get(bobC, '/web/api/store')).body.apps[0];
     assert.deepEqual([view.originActive, view.canDevInstall], [false, true]);
+    // Not while a new version of the old original is still in progress.
+    const pend = await env.submit({ chatId: GROUP, chatType: 'group', name: '检查', params: [], script: script('print("pending")'), options: { schedulable: true } });
+    assert.match((await post(bobC, `/web/api/store/${app.id}/install`, { target: 'group:' + GROUP2, dev: true })).body.message, /新版本在认领或审核中/);
+    await env.click(bob, pend.claimMessageId, { a: 'claim_drop', c: pend.id });
+    // Not onto another app's original place.
+    env.amber.store.insertApp({ id: 'other001', name: '别的', description: '', maintainerUnionId: carol.unionId, originChatId: GROUP2, originLine: '占位', status: 'delisted' });
+    assert.match((await post(bobC, `/web/api/store/${app.id}/install`, { target: 'group:' + GROUP2, dev: true, name: '占位' })).body.message, /另一个应用的原版位置/);
     // Only the maintainer (or an admin) installs in development mode.
     assert.equal((await post(carolC, `/web/api/store/${app.id}/install`, { target: 'group:' + GROUP2, dev: true })).status, 403);
     assert.match((await post(bobC, `/web/api/store/${app.id}/install`, { target: 'p2p', dev: true })).body.message, /只能装到群里/);
