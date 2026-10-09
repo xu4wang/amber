@@ -107,8 +107,8 @@ if (typeof hljs === 'object') doc.querySelectorAll('pre code').forEach(c => {
 
 const cur = DATA.nav.find(n => n.current);
 document.getElementById('nav').innerHTML =
-  '<div class="group">使用</div>' + DATA.nav.slice(0, 1).map(n => link(n)).join('') +
-  '<div class="group">进阶</div>' + DATA.nav.slice(1).map(n => link(n)).join('');
+  '<div class="group">使用</div>' + DATA.nav.slice(0, 2).map(n => link(n)).join('') +
+  '<div class="group">进阶</div>' + DATA.nav.slice(2).map(n => link(n)).join('');
 function link(n) {
   const a = `<a href="/docs/${esc(n.name)}" class="${n.current ? 'cur' : ''}">${esc(n.title)}</a>`;
   return n.current && toc.length ? a + '<div class="toc">' + toc.map(h => `<a href="#${esc(h.id)}">${esc(h.textContent)}</a>`).join('') + '</div>' : a;

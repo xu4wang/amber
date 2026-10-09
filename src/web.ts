@@ -123,7 +123,7 @@ export function startWeb(port: number, store: Store, deps: WebDeps): import('nod
   const page = readFileSync(join(import.meta.dirname, '..', 'web', 'index.html'), 'utf8').replace('__FEISHU_CHAT_LINK__', deps.feishuChatLink);
   const logo = readFileSync(join(import.meta.dirname, '..', 'web', 'logo.svg'));
   // Documentation (docs/*.md), readable without logging in. Rendered in the browser.
-  const DOCS: [string, string][] = [['usage', '使用指南'], ['cli-and-skill', 'amber 命令行与 skill'], ['executor', '执行端'], ['environment-format', '运行环境定义格式'], ['identity', '可信身份'], ['identity-example', '可信身份：完整示例'], ['install', '安装与部署'], ['feishu-setup', '飞书应用配置']];
+  const DOCS: [string, string][] = [['usage', '使用指南'], ['sharing', '应用的分享'], ['cli-and-skill', 'amber 命令行与 skill'], ['executor', '执行端'], ['environment-format', '运行环境定义格式'], ['identity', '可信身份'], ['identity-example', '可信身份：完整示例'], ['install', '安装与部署'], ['feishu-setup', '飞书应用配置']];
   const docTemplate = readFileSync(join(import.meta.dirname, '..', 'web', 'docs.html'), 'utf8');
   const docPages = new Map<string, string>();
   for (const [name, title] of DOCS) {
