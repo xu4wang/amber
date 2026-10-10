@@ -82,6 +82,17 @@ export interface ExecutorEnv {
    *  Python take effect without a new approval (admins are notified and can revoke). */
   follow?: string;
 }
+/** An app a page may call, fixed when the owner confirms: a global app by name, or the owner's own by chat + line. */
+export interface PageApp { name: string; commandId: string; chatId: string; line: string; global: boolean }
+export type PageAccess = 'owner' | 'group' | 'members';
+export interface PageRow {
+  id: string; name: string; chatId: string; chatType: ScopeType; ownerUnionId: string; ownerOpenId: string | null;
+  access: PageAccess; members: string[]; apps: PageApp[]; version: number; status: 'pending' | 'active' | 'deleted';
+  /** An upload waiting for the owner's confirmation (new page, or the apps it calls changed). */
+  pending: { version: number; apps: string[]; requestedBy: string; machine: string; messageId?: string | null; at: number } | null;
+  createdAt: number; updatedAt: number;
+}
+
 export interface ExecutorRow {
   id: string; name: string; fingerprint: string; signPub: string; boxPub: string; envs: Record<string, ExecutorEnv>;
   machine: string; version: string; status: ExecutorStatus; createdAt: number; decidedBy: string | null; decidedAt: number | null; lastSeen: number | null;
@@ -343,6 +354,24 @@ export class Store {
       decided_at INTEGER,
       last_seen INTEGER
     )`);
+    // Page apps: a directory of static files an agent publishes; it calls the apps bound to it (apps_json).
+    this.db.exec(`CREATE TABLE IF NOT EXISTS pages (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      chat_id TEXT NOT NULL,
+      chat_type TEXT NOT NULL,
+      owner_union_id TEXT NOT NULL,
+      owner_open_id TEXT,
+      access TEXT NOT NULL DEFAULT 'owner',
+      members_json TEXT NOT NULL DEFAULT '[]',
+      apps_json TEXT NOT NULL DEFAULT '[]',
+      version INTEGER NOT NULL DEFAULT 0,
+      status TEXT NOT NULL,
+      pending_json TEXT,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    )`);
+    this.db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS pages_chat_name ON pages(chat_id, name) WHERE status != 'deleted'`);
     const runCols = (this.db.prepare(`PRAGMA table_info(runs)`).all() as { name: string }[]).map(c => c.name);
     if (!runCols.includes('schedule_id')) this.db.exec('ALTER TABLE runs ADD COLUMN schedule_id TEXT');
   }
@@ -905,6 +934,37 @@ export class Store {
   getSetting(k: string): string | undefined {
     const r = this.db.prepare('SELECT v FROM settings WHERE k = ?').get(k) as { v: string } | undefined;
     return r?.v;
+  }
+
+  // ---------- pages
+  private pageRow(r: Record<string, unknown> | undefined): PageRow | undefined {
+    if (!r) return undefined;
+    return {
+      id: String(r.id), name: String(r.name), chatId: String(r.chat_id), chatType: r.chat_type as ScopeType, ownerUnionId: String(r.owner_union_id), ownerOpenId: (r.owner_open_id as string) ?? null,
+      access: r.access as PageAccess, members: JSON.parse(String(r.members_json)), apps: JSON.parse(String(r.apps_json)), version: Number(r.version), status: r.status as PageRow['status'],
+      pending: r.pending_json ? JSON.parse(String(r.pending_json)) : null, createdAt: Number(r.created_at), updatedAt: Number(r.updated_at),
+    };
+  }
+  getPage(id: string): PageRow | undefined { return this.pageRow(this.db.prepare('SELECT * FROM pages WHERE id = ?').get(id) as Record<string, unknown> | undefined); }
+  pageByName(chatId: string, name: string): PageRow | undefined { return this.pageRow(this.db.prepare(`SELECT * FROM pages WHERE chat_id = ? AND name = ? AND status != 'deleted'`).get(chatId, name) as Record<string, unknown> | undefined); }
+  listPages(): PageRow[] { return (this.db.prepare(`SELECT * FROM pages WHERE status != 'deleted' ORDER BY updated_at DESC`).all() as Record<string, unknown>[]).map(r => this.pageRow(r)!); }
+  insertPage(p: Pick<PageRow, 'id' | 'name' | 'chatId' | 'chatType' | 'ownerUnionId' | 'ownerOpenId' | 'pending'>): void {
+    const now = Date.now();
+    this.db.prepare(`INSERT INTO pages (id, name, chat_id, chat_type, owner_union_id, owner_open_id, status, pending_json, created_at, updated_at) VALUES (?,?,?,?,?,?,'pending',?,?,?)`)
+      .run(p.id, p.name, p.chatId, p.chatType, p.ownerUnionId, p.ownerOpenId, p.pending ? JSON.stringify(p.pending) : null, now, now);
+  }
+  updatePage(id: string, f: Partial<Pick<PageRow, 'access' | 'members' | 'apps' | 'version' | 'status' | 'pending' | 'ownerOpenId'>>): void {
+    const cols: string[] = [], args: (string | number | null)[] = [];
+    const set = (c: string, v: string | number | null) => { cols.push(`${c} = ?`); args.push(v); };
+    if (f.access !== undefined) set('access', f.access);
+    if (f.members !== undefined) set('members_json', JSON.stringify(f.members));
+    if (f.apps !== undefined) set('apps_json', JSON.stringify(f.apps));
+    if (f.version !== undefined) set('version', f.version);
+    if (f.status !== undefined) set('status', f.status);
+    if (f.pending !== undefined) set('pending_json', f.pending ? JSON.stringify(f.pending) : null);
+    if (f.ownerOpenId !== undefined) set('owner_open_id', f.ownerOpenId);
+    set('updated_at', Date.now());
+    this.db.prepare(`UPDATE pages SET ${cols.join(', ')} WHERE id = ?`).run(...args, id);
   }
 
   /** Writes only when the key is not there yet (atomic); true when it wrote. */

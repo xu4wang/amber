@@ -156,13 +156,14 @@ export function person(openId: string | undefined): string {
 /** Splits ```vega-lite fences out of markdown and turns simple bar/line specs into card charts. */
 export function markdownWithCharts(md: string, mentions?: Mentions): unknown[] {
   const els: unknown[] = [];
-  const re = /```(vega-lite|table)\s*\n([\s\S]*?)```/g;
+  const re = /```(vega-lite|table|json)\s*\n([\s\S]*?)```/g;
   let last = 0;
   let m: RegExpExecArray | null;
   const pushText = (t: string) => { const x = t.trim(); if (x) els.push({ tag: 'markdown', content: mentions ? mentions.apply(sanitizeMarkdown(x)) : sanitizeMarkdown(x) }); };
   while ((m = re.exec(md))) {
     pushText(md.slice(last, m.index));
     last = m.index + m[0].length;
+    if (m[1] === 'json') continue;   // data for page apps, not shown on cards
     let converted = m[1] === 'table' ? tableToCard(m[2]) : vegaLiteToChart(m[2]);
     // The script often prints the chart's title right above it; don't show the same title twice.
     const prev: any = els[els.length - 1];

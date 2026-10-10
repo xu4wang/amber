@@ -23,6 +23,8 @@ export interface AmberConfig {
   timezones: { tz: string; label: string }[];
   /** Public address of the website (D34), used in login links. */
   webBaseUrl: string;
+  /** Separate origin page apps are served from (their files), e.g. http://pages.amber.example.com. Unset = no page apps. */
+  pagesBaseUrl?: string;
 }
 
 function parseEnvFile(path: string): Record<string, string> {
@@ -60,5 +62,6 @@ export function loadConfig(): AmberConfig {
     wiki: fileCfg.wiki,
     timezones: Array.isArray(fileCfg.timezones) ? fileCfg.timezones : [],
     webBaseUrl: String(fileCfg.webBaseUrl ?? `http://localhost:${process.env.AMBER_WEB_PORT ?? 7342}`).replace(/\/$/, ''),
+    ...(fileCfg.pagesBaseUrl ? { pagesBaseUrl: String(fileCfg.pagesBaseUrl).replace(/\/$/, '') } : {}),
   };
 }

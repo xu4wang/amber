@@ -19,6 +19,8 @@ usage:
   amber retire <command>                       take a command offline; its creator or an admin confirms on a card
   amber global <command> | local <command>     make a command usable everywhere / only where it was made;
                                                an admin confirms on a card
+  amber page publish <dir> [--name NAME]       publish a page app (a directory with index.html) for --user;
+                                               a new page, or new apps in its amber.json, needs their confirmation
   amber envs [--mine]                          approved run environments to name in script.env ("executor/env");
                                                --mine: only those exported from this bot ($BOTMUX_LARK_APP_ID)
   amber info                                   the Amber service this machine uses, and its website
@@ -37,7 +39,7 @@ exit codes: 0 done, 1 error, 2 usage, 3 still waiting for a person
 service address: $AMBER_URL, else ~/.config/amber-client.json {"url": "..."} (written by
 `amber config set-url`). Each installation sets its own; nothing is built in.
 """
-import json, os, sys, time, urllib.request, urllib.error
+import base64, json, os, sys, time, urllib.request, urllib.error
 
 CONFIG = os.path.expanduser("~/.config/amber-client.json")
 
@@ -84,7 +86,7 @@ def call(method, path, body=None, timeout=150):
 
 def parse(argv):
     opts, pos, args = {}, [], {}
-    flags = {"--chat", "--chat-type", "--user", "--reply-to", "--label", "--at", "--tz", "--timeout"}
+    flags = {"--chat", "--chat-type", "--user", "--reply-to", "--label", "--at", "--tz", "--timeout", "--name"}
     i = 0
     while i < len(argv):
         a = argv[i]
@@ -225,6 +227,29 @@ def main(argv):
         print(json.dumps(r, ensure_ascii=False, indent=2) if opts.get("json") else msg)
         return 1
     ctx = context(opts)
+    if cmd == "page":
+        if len(pos) < 3 or pos[1] != "publish":
+            raise Usage()
+        root = pos[2]
+        if not os.path.isdir(root):
+            raise SystemExit("不是目录：%s" % root)
+        name = opts.get("name") or os.path.basename(os.path.abspath(root)).lower()
+        files, total = [], 0
+        for d, dirs, names in os.walk(root):
+            dirs[:] = sorted(x for x in dirs if not x.startswith(".") and x != "node_modules")
+            for n in sorted(names):
+                if n.startswith("."):
+                    continue
+                full = os.path.join(d, n)
+                data = open(full, "rb").read()
+                total += len(data)
+                files.append({"path": os.path.relpath(full, root).replace(os.sep, "/"), "data": base64.b64encode(data).decode()})
+        if total > 10 * 1024 * 1024:
+            raise SystemExit("页面目录超过 10MB")
+        r = call("POST", "/v1/pages", dict(ctx, name=name, files=files), timeout=120)
+        if not r.get("ok"):
+            return out(r, opts)
+        return out(r, opts, r.get("message") or r.get("status"))
     if cmd == "list":
         r = call("POST", "/v1/commands/list", ctx)
         lines = ["%s%s  %s%s" % (c["name"], "（需确认卡片）" if c["run"] == "confirm_card" else "", c.get("description") or "",

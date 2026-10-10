@@ -1,4 +1,5 @@
 import * as lark from '@larksuiteoapi/node-sdk';
+import { PageService } from './pages.ts';
 import { randomUUID } from 'node:crypto';
 import type { Store, CommandRow, ScopeType } from './db.ts';
 import type { Caller, Block } from './engine.ts';
@@ -52,6 +53,7 @@ export class AmberBot {
   scheduler: Scheduler;
   hub: ExecutorHub;
   apps: AppStore;
+  pages: PageService;
 
   private timers: boolean;
 
@@ -81,6 +83,7 @@ export class AmberBot {
       mentionsFor: (chatId, chatType, blocks) => this.mentionsFor(chatId, chatType, blocks),
     };
     this.agent = new AgentGate(store, deps);
+    this.pages = new PageService(store, cfg.dataDir, { send: deps.send, isMember: deps.isMember, cityOf: deps.cityOf, facts: { signer: this.signer }, webUrl: () => cfg.webBaseUrl });
     this.scheduler = new Scheduler(store, deps);
     this.agent.scheduler = this.scheduler;
     this.flow.isListed = c => !!this.apps.appOfOriginal(c);
@@ -895,6 +898,7 @@ export class AmberBot {
         return raw(await this.agent.onClick(value.a === 'req_ok', String(value.r), caller, chatId, messageId));
       }
       if (value.a === 'rs_ok' || value.a === 'rs_no') return raw(await this.onReassignClick(value, caller));
+      if (value.a === 'pg_ok' || value.a === 'pg_no') return raw(await this.pages.onClick(value.a === 'pg_ok', String(value.p), Number(value.v), caller, chatId));
       if (value.a === 'cl_ok' || value.a === 'cl_no') return raw(await this.onCloneClick(value, d.action?.form_value ?? {}, caller));
       if (value.a === 'sch_rebind' || value.a === 'sch_drop') {
         const s = this.store.getSchedule(String(value.s));

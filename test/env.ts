@@ -65,7 +65,7 @@ export async function makeEnv(over: Partial<AmberConfig> = {}): Promise<Env> {
     machines: { '127.0.0.1': 'local', '10.0.0.2': 'fleet-b' },
     approval: { code: fake.approvalCode, reviewNodeId: 'node-review', formFieldId: 'widget-text' },
     wiki: { spaceId: 'space', parentNodeToken: 'parent', baseUrl: 'https://wiki.example/wiki/' },
-    webBaseUrl: `http://127.0.0.1:${webPort}`, timezones: [{ tz: 'Asia/Shanghai', label: '北京时间' }],
+    webBaseUrl: `http://127.0.0.1:${webPort}`, pagesBaseUrl: `http://localhost:${webPort}`, timezones: [{ tz: 'Asia/Shanghai', label: '北京时间' }],
     ...over,
   };
   const { mkdirSync } = await import('node:fs');
