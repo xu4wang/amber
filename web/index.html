@@ -61,7 +61,8 @@ code { font-family: ui-monospace, Menlo, monospace; font-size: 13px; }
 .login { text-align: center; padding: 48px 16px; }
 .login img { width: 96px; height: 96px; border-radius: 22px; }
 .login h1 { margin: 16px 0 4px; font-size: 28px; }
-.login .slogan { color: var(--muted); margin: 0 0 28px; }
+.login .slogan { color: var(--ink); font-size: 18px; margin: 0 0 6px; }
+.login .slogan-sub { color: var(--muted); margin: 0 0 28px; }
 .steps { text-align: left; max-width: 420px; margin: 0 auto 28px; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 16px 20px; }
 .steps ol { margin: 0; padding-left: 20px; }
 
@@ -269,7 +270,8 @@ function loginView() {
     <div class="login">
       <img src="/logo.svg" alt="Amber">
       <h1>Amber</h1>
-      <p class="slogan">跑通一次，随时再用。</p>
+      <p class="slogan">AI 跑通的，Amber 封存。</p>
+      <p class="slogan-sub">跑通一次，随时再用。</p>
       <div class="steps"><ol>
         <li>在飞书里打开与 <b>Amber</b> 的私聊</li>
         <li>发送「<b>登录</b>」</li>

@@ -1,6 +1,8 @@
 # Amber
 
-**跑通一次，随时再用。**（Run it once. Keep it forever.）
+**AI 跑通的，Amber 封存。**（Freeze what works.）
+
+跑通一次，随时再用。
 
 ![Amber：每次都让大模型重跑，慢、费 token、可能出错 → 跑通一次存进 Amber、审核后固化 → 以后从飞书、网站、AI 助手或定时任务一键执行，结果每次都一样](docs/assets/amber-hero.gif)
 
