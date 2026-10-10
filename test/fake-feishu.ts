@@ -9,6 +9,7 @@ export class FakeFeishu {
   chats = new Map<string, { mode: 'group' | 'p2p'; name: string; members: Set<string> }>();   // members: union_ids
   sent: Sent[] = [];
   patches: { id: string; card: any }[] = [];
+  images = new Map<string, Buffer>();
   approvals = new Map<string, { approvalCode: string; status: string; tasks: { open_id: string; status: string }[]; title?: string; form?: string }>();
   docs = new Map<string, string[]>();          // doc id -> markdown chunks
   membersApiAllowed = true;
@@ -54,6 +55,9 @@ export class FakeFeishu {
         reply: async ({ path, data }: any) => this.record({ replyTo: path.message_id }, data.content, data.reply_in_thread),
         create: async ({ params, data }: any) => this.record(params.receive_id_type === 'union_id' ? { unionId: data.receive_id } : { chatId: data.receive_id }, data.content),
         patch: async ({ path, data }: any) => { this.patches.push({ id: path.message_id, card: JSON.parse(data.content) }); return {}; },
+      },
+      image: {
+        create: async ({ data }: any) => { const key = this.id('img'); this.images.set(key, data.image); return { image_key: key }; },
       },
       chat: {
         get: async ({ path }: any) => {

@@ -12,6 +12,7 @@ import { SecretVault } from './secrets.ts';
 import { setSecretVault, setExecutorHub, setWebUrl } from './engine.ts';
 import { ExecutorHub } from './executors.ts';
 import { seedAllowHosts, FEISHU_HOSTS } from './limits.ts';
+import { makePageShooter } from './page-shot.ts';
 
 export interface Amber { bot: AmberBot; store: Store; api: Server; web: Server; hub: ExecutorHub; close(): Promise<void> }
 
@@ -57,6 +58,7 @@ export async function startAmber(cfg: AmberConfig, opts: { apiPort: number; webP
     pages: bot.pages,
     pagesBaseUrl: cfg.pagesBaseUrl,
   });
+  if (cfg.pagesBaseUrl && cfg.pageScreenshotChrome) bot.pages.shoot = makePageShooter(cfg.pageScreenshotChrome, cfg.pagesBaseUrl, opts.webPort);
   const closeServer = (s: Server) => new Promise<void>(r => { s.close(() => r()); s.closeAllConnections(); });
   return { bot, store, api, web, hub, close: async () => { hub.close(); await Promise.all([closeServer(api), closeServer(web)]); } };
 }

@@ -31,6 +31,9 @@ export const PAGE_TYPES: Record<string, string> = {
 };
 /** How long a content link from the shell stays valid. Reloading the page gets a new one. */
 const TOKEN_TTL_MS = 6 * 3600_000;
+/** The viewer named in a link made for the confirmation card's screenshot (never a union_id: those start with on_). */
+const PREVIEW = '#preview';
+const PREVIEW_TTL_MS = 2 * 60_000;
 const PUBLISH_PER_CHAT_10MIN = 20;
 
 export interface PageFile { path: string; data: string /* base64 */ }
@@ -43,6 +46,8 @@ export interface PageDeps {
   facts: Pick<CallerFacts, 'signer'>;
   /** Where the shell is (Amber's website), e.g. http://amber.example.com. */
   webUrl: () => string;
+  /** Uploads a PNG for cards; returns its image key. */
+  uploadImage?(png: Buffer): Promise<string | undefined>;
 }
 
 /** One file list, checked: safe relative paths, known types, size and count limits, index.html present. */
@@ -101,6 +106,8 @@ export class PageService {
   private root: string;
   private key: Buffer;
   private asked = new Map<string, number[]>();
+  /** Takes a screenshot of a content path (/c/<link>/) on the page origin; set when a browser is configured. */
+  shoot?: (path: string) => Promise<Buffer | undefined>;
 
   constructor(store: Store, dataDir: string, deps: PageDeps) {
     this.store = store;
@@ -165,7 +172,8 @@ export class PageService {
     const pending = { version, apps, requestedBy: ctx.requestedBy, machine: ctx.machine, at: Date.now() };
     if (existing) this.store.updatePage(id, { pending });
     else this.store.insertPage({ id, name, chatId: ctx.chatId, chatType: ctx.chatType, ownerUnionId: ctx.user.unionId, ownerOpenId: ctx.user.openId ?? null, pending });
-    const card = publishCard({ id, version, name, apps, requestedBy: ctx.requestedBy, ownerOpenId: ctx.user.openId, files: files.length, bytes, update: !!existing });
+    const imageKey = await this.preview(id, version);
+    const card = publishCard({ id, version, imageKey, name, apps, requestedBy: ctx.requestedBy, ownerOpenId: ctx.user.openId, files: files.length, bytes, update: !!existing });
     const to = ctx.chatType === 'p2p' ? { unionId: ctx.user.unionId } : ctx.replyTo ? { replyTo: ctx.replyTo, inThread: ctx.inThread } : { chatId: ctx.chatId };
     let messageId: string | undefined;
     try { messageId = await this.deps.send(to, card); } catch (e: any) {
@@ -175,6 +183,18 @@ export class PageService {
     this.store.updatePage(id, { pending: { ...pending, messageId: messageId ?? null } });
     this.store.audit(null, 'page.publish_request', { id, name, version, apps, files: files.length, bytes, chatId: ctx.chatId, requestedBy: ctx.requestedBy, machine: ctx.machine, target: ctx.user.unionId });
     return { status: 'awaiting', pageId: id, message: `已在飞书发出确认卡片，等 ${ctx.user.email} 点「确认发布」。${apps.length ? `页面会调用：${apps.join('、')}。` : ''}` };
+  }
+
+  /** A screenshot of an upload waiting for confirmation, for its card. Best effort: no browser, no picture. */
+  private async preview(id: string, version: number): Promise<string | undefined> {
+    if (!this.shoot || !this.deps.uploadImage) return undefined;
+    try {
+      const png = await this.shoot(`/c/${this.token({ id, version }, PREVIEW, PREVIEW_TTL_MS)}/`);
+      return png ? await this.deps.uploadImage(png) : undefined;
+    } catch (e: any) {
+      console.log(new Date().toISOString(), 'page preview failed', e?.message ?? e);
+      return undefined;
+    }
   }
 
   /** The owner clicked 确认发布 / 取消 on the card. */
@@ -214,7 +234,11 @@ export class PageService {
       header: { title: { tag: 'plain_text', content: `Amber · 页面已发布：${p.name}` }, template: 'green' },
       body: { elements: [
         { tag: 'markdown', content: `由 ${person(clicker.openId)} 确认发布（第 ${pending.version} 版）。${bound.length ? `页面会调用：${bound.map(a => `「${sanitizeMarkdown(a.name, 40)}」`).join('、')}。` : ''}${first ? '\n\n现在只有你能打开。要让群里的人用，在网站上打开这个页面的设置，修改「谁能访问」。' : ''}` },
-        { tag: 'button', text: { tag: 'plain_text', content: '打开页面' }, type: 'primary', behaviors: [{ type: 'open_url', default_url: url }] },
+        { tag: 'column_set', flex_mode: 'flow', columns: [
+          { tag: 'column', width: 'auto', elements: [{ tag: 'button', text: { tag: 'plain_text', content: '打开页面' }, type: 'primary', behaviors: [{ type: 'open_url', default_url: url }] }] },
+          // Not logged in on the website: a one-time link in your private chat logs you in and opens the page.
+          { tag: 'column', width: 'auto', elements: [{ tag: 'button', text: { tag: 'plain_text', content: '私聊我免登录链接' }, type: 'default', behaviors: [{ type: 'callback', value: { a: 'pg_open', p: id } }] }] },
+        ] },
       ] },
     };
   }
@@ -275,8 +299,8 @@ export class PageService {
 
   // ---------- content links: the shell (Amber's origin) frames the page from the page origin
 
-  token(p: PageRow, viewer: string): string {
-    const body = `${p.id}.${p.version}.${Date.now() + TOKEN_TTL_MS}`;
+  token(p: Pick<PageRow, 'id' | 'version'>, viewer: string, ttlMs = TOKEN_TTL_MS): string {
+    const body = `${p.id}.${p.version}.${Date.now() + ttlMs}`;
     const sig = createHmac('sha256', this.key).update(`${body}.${viewer}`).digest('base64url').slice(0, 32);
     return `${body}.${Buffer.from(viewer).toString('base64url')}.${sig}`;
   }
@@ -289,8 +313,11 @@ export class PageService {
     const want = createHmac('sha256', this.key).update(`${m[1]}.${m[2]}.${m[3]}.${viewer}`).digest('base64url').slice(0, 32);
     if (!timingSafeEqual(Buffer.from(want), Buffer.from(m[5]))) return undefined;
     const p = this.store.getPage(m[1]);
-    // The link was issued to one viewer: they must still be allowed (access changed, left the group).
-    if (!p || !(await this.canView(p, viewer))) return undefined;
+    if (!p) return undefined;
+    if (viewer === PREVIEW) {
+      // The card's screenshot: only the upload waiting for confirmation.
+      if (p.status === 'deleted' || p.pending?.version !== Number(m[2])) return undefined;
+    } else if (!(await this.canView(p, viewer))) return undefined;   // the link's viewer must still be allowed
     const rel = path === '' ? 'index.html' : path;
     if (!PATH.test(rel) || !PAGE_TYPES[extname(rel).toLowerCase()]) return undefined;
     const f = join(this.dir(p.id, Number(m[2])), rel);
@@ -301,7 +328,7 @@ export class PageService {
 
 const sameApps = (a: string[], b: string[]) => a.length === b.length && [...a].sort().join('\u0000') === [...b].sort().join('\u0000');
 
-function publishCard(o: { id: string; version: number; name: string; apps: string[]; requestedBy: string; ownerOpenId?: string; files: number; bytes: number; update: boolean }): object {
+function publishCard(o: { id: string; version: number; imageKey?: string; name: string; apps: string[]; requestedBy: string; ownerOpenId?: string; files: number; bytes: number; update: boolean }): object {
   const size = o.bytes > 1024 * 1024 ? `${(o.bytes / 1024 / 1024).toFixed(1)}MB` : `${Math.max(1, Math.round(o.bytes / 1024))}KB`;
   return {
     schema: '2.0', config: { update_multi: true },
@@ -310,6 +337,7 @@ function publishCard(o: { id: string; version: number; name: string; apps: strin
       { tag: 'markdown', content: `${sanitizeMarkdown(o.requestedBy, 40)} 要以 ${person(o.ownerOpenId)} 的名义${o.update ? '更新' : '发布'}页面「${sanitizeMarkdown(o.name, 40)}」（${o.files} 个文件，${size}）。\n\n`
         + (o.apps.length ? `页面会调用这些应用：${o.apps.map(a => `「${sanitizeMarkdown(a, 40)}」`).join('、')}。每次调用都以打开页面的人自己的身份执行。` : '页面不调用任何应用。')
         + (o.update ? '' : '\n\n确认后只有你能打开，之后可以在网站上设置群里谁能访问。') },
+      ...(o.imageKey ? [{ tag: 'img', img_key: o.imageKey, alt: { tag: 'plain_text', content: '页面预览' }, preview: true, scale_type: 'fit_horizontal' }] : []),
       { tag: 'column_set', flex_mode: 'flow', columns: [
         { tag: 'column', width: 'auto', elements: [{ tag: 'button', text: { tag: 'plain_text', content: '确认发布' }, type: 'primary', behaviors: [{ type: 'callback', value: { a: 'pg_ok', p: o.id, v: String(o.version) } }] }] },
         { tag: 'column', width: 'auto', elements: [{ tag: 'button', text: { tag: 'plain_text', content: '取消' }, type: 'default', behaviors: [{ type: 'callback', value: { a: 'pg_no', p: o.id, v: String(o.version) } }] }] },
