@@ -31,6 +31,10 @@ test('params: forms show the default as a hint, never in the box', () => {
     assert.equal(months.default_value, undefined, 'not prefilled');
     assert.match(months.placeholder.content, /默认：6/);
   }
+  // Feishu must let a required parameter with a default be left blank (Amber fills in the default).
+  const req = { ...cmd, params: [{ name: 'n', type: 'integer', required: true, default: '6' }, { name: 'm', type: 'string', required: true }, { name: 'c', type: 'string', required: true, defaultFrom: 'caller.city' }] };
+  const r = Object.fromEntries(inputs(formCard(req)).map(i => [i.name, i.required]));
+  assert.deepEqual(r, { n: false, m: true, c: false });
   // A value the person already typed (e.g. from a one-line shortcut) is still kept.
   assert.equal(inputs(formCard(cmd, { months: '3' })).find(i => i.name === 'months').default_value, '3');
 });
