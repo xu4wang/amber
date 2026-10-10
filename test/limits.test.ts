@@ -130,3 +130,9 @@ test('limits: an admin sets one executor\'s own cap; others cannot', async () =>
     assert.deepEqual(getLimits(env.amber.store).executors, {}, 'back to the default');
   } finally { await env.close(); }
 });
+
+test('limits: the executor backstop never undercuts the most an admin can set', async () => {
+  const { MAX_JOBS_PER_EXECUTOR } = await import('../src/executors.ts');
+  const { CONCURRENCY_BOUNDS } = await import('../src/limits.ts');
+  assert.ok(MAX_JOBS_PER_EXECUTOR >= CONCURRENCY_BOUNDS.max);
+});

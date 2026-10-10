@@ -15,6 +15,7 @@
 //   result    the executor posts the output (already masked), Amber masks again, records and shows it.
 // An offline executor fails the run immediately; a job that is not picked up or answered in time
 // fails too. Nothing is queued for later.
+import { CONCURRENCY_BOUNDS } from './limits.ts';
 import { createHash, randomUUID } from 'node:crypto';
 import type { Store, ExecutorRow, ExecutorEnv } from './db.ts';
 import type { Signer } from './identity.ts';
@@ -35,8 +36,9 @@ const MAX_ENVS = 20;
 const MAX_ACCESS_PATHS = 100;
 const MAX_PENDING = 10;
 const MAX_NONCES = 50_000;
-/** Jobs waiting for or running on one executor; more fail at once instead of piling up. */
-export const MAX_JOBS_PER_EXECUTOR = 20;
+/** Jobs waiting for or running on one executor; more fail at once instead of piling up. A backstop only: the run
+ *  limits (limits.ts, set by an admin, at most CONCURRENCY_BOUNDS.max per executor) decide how many runs an executor gets; this must never be lower, or the configured limit would not be reachable. */
+export const MAX_JOBS_PER_EXECUTOR = CONCURRENCY_BOUNDS.max;
 const RELAY_MAX_REQUEST = 512 * 1024;
 const RELAY_MAX_RESPONSE = 4 * 1024 * 1024;
 const RELAY_TIMEOUT_MS = 60_000;
