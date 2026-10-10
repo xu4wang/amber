@@ -186,6 +186,8 @@ export function startWeb(port: number, store: Store, deps: WebDeps): import('nod
   // access to Amber's cookies or API; the shell on Amber's origin frames it and relays its calls.
   const pagesOrigin = deps.pagesBaseUrl ? new URL(deps.pagesBaseUrl).origin : '';
   const pagesHost = deps.pagesBaseUrl ? new URL(deps.pagesBaseUrl).host : '';
+  // On Amber's own origin the framed page could reach into the shell and lift its sandbox: refuse to start.
+  if (pagesOrigin && (pagesOrigin === deps.origin || pagesHost === new URL(deps.origin).host)) throw new Error('pagesBaseUrl must be a different host from Amber\'s website (see docs/install.md)');
   const sdk = readFileSync(join(import.meta.dirname, '..', 'web', 'page-sdk.js'), 'utf8').replace('__AMBER_ORIGIN__', JSON.stringify(deps.origin));
   const shellTpl = readFileSync(join(import.meta.dirname, '..', 'web', 'page-shell.html'), 'utf8');
   const PAGE_CSP = `default-src 'self' data: blob:; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; `

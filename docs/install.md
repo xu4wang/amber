@@ -93,7 +93,7 @@ AMBER_LARK_APP_SECRET=xxxxxxxxxxxxxxxx
 | `approval` | 飞书审批配置，取值方法见 [feishu-setup.md](feishu-setup.md#4-审批定义)。不配就退回到用卡片按钮审核 |
 | `wiki` | 放审核文档的知识库位置。要和 `approval` 一起配置 |
 | `services` | 脚本可以调用的本机服务，Amber 会为它们签发执行身份凭证，见 [identity.md](identity.md)。例子里的 `data-mcp` 是企业内部的数仓应用，Amber 把它作为可信服务访问。`"executor": true` 表示允许在执行端上运行的应用调用它：请求由执行端转给 Amber，Amber 核对后转给这个服务（见 [执行端](executor.md#调用-amber-上登记的服务)）；默认不允许 |
-| `pagesBaseUrl` | 可选。[页面应用](pages.md)的文件从这个地址提供，必须是和 `webBaseUrl` 不同的域名（页面拿不到 Amber 网站的登录，也调用不了网站的接口）。指向同一个 Amber 网站端口即可，Amber 按域名区分。不配就不能发布页面 |
+| `pagesBaseUrl` | 可选。[页面应用](pages.md)的文件从这个地址提供，必须是和 `webBaseUrl` 不同的域名（页面拿不到 Amber 网站的登录，也调用不了网站的接口）。指向同一个 Amber 网站端口即可，Amber 按域名区分。配成同一个域名时 Amber 拒绝启动。不配就不能发布页面 |
 | `webBaseUrl` | **必填**。网站的外部地址，用来生成登录链接、做跨站请求检查，并通过 `/v1/info` 告诉 agent（不填只会是 localhost，登录链接在别的电脑上打不开） |
 | `timezones` | 可选。定时任务可选的时区（IANA 名称加显示名），**第一个是默认时区**；网站下拉框、卡片上的时间说明都用它。不配就只用 Amber 服务器所在的时区，显示为「服务器时间」 |
 | `dataDir` | 可选，数据目录，默认是 `~/.config/amber/data` |

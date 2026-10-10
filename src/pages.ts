@@ -158,6 +158,7 @@ export class PageService {
     if (recent.length >= PUBLISH_PER_CHAT_10MIN) throw new AmberError('rate_limited', '这个会话 10 分钟内发布页面的次数太多了，请稍后再试');
     this.asked.set(ctx.chatId, [...recent, Date.now()]);
     // New page, or the apps it calls changed: the owner confirms on a card (identity from the click).
+    // From reading the version to recording it as pending there is no await: concurrent uploads get distinct versions.
     const id = existing?.id ?? randomBytes(4).toString('hex');
     const version = Math.max(existing?.version ?? 0, existing?.pending?.version ?? 0) + 1;
     this.writeVersion(id, version, files);

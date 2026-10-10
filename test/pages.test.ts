@@ -176,3 +176,7 @@ test('pages: publish with confirmation, access, calls as the viewer, signed file
     assert.ok(env.amber.store.listAudit({ prefixes: ['page.'], limit: 50 }).some(a => a.action === 'page.call'));
   } finally { await env.close(); }
 });
+
+test('pages: refuse to serve pages from Amber\'s own host', async () => {
+  await assert.rejects(makeEnv({ webBaseUrl: 'http://amber.test', pagesBaseUrl: 'http://amber.test/' }), /different host/);
+});
