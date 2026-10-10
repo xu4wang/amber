@@ -124,8 +124,10 @@ export function formCard(c: CommandRow, prefill: Record<string, string> = {}): o
     label: { tag: 'plain_text', content: p.label ?? p.name },
     label_position: 'left',
     placeholder: { tag: 'plain_text', content: p.defaultFrom === 'caller.city' ? `不填则用你的办公城市${p.default ? `（查不到时用 ${p.default}）` : ''}` : p.default !== undefined ? `默认：${p.default}` : (p.required ? '必填' : '可不填') },
-    ...(prefill[p.name] !== undefined ? { default_value: prefill[p.name] } : p.default !== undefined && !p.defaultFrom ? { default_value: p.default } : {}),
-    required: !!p.required,
+    // The default is only shown as a hint, never put in the box: typing into a prefilled box gives "66" for 6.
+    ...(prefill[p.name] !== undefined ? { default_value: prefill[p.name] } : {}),
+    // Required only when Amber has nothing to fill in: a blank with a default (or the caller's city) is fine.
+    required: !!p.required && p.default === undefined && !p.defaultFrom,
   }));
   return shell(`Amber · ${c.name}`, isWrite ? 'red' : 'orange', [
     ...(c.description ? [{ tag: 'markdown', content: `<font color="grey">${sanitizeMarkdown(c.description, 200)}</font>` }] : []),

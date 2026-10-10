@@ -142,14 +142,16 @@ export async function validateArgs(params: ParamDef[], raw: Record<string, strin
       if (p.required) throw new AmberError('invalid_args', `缺少参数「${p.label ?? p.name}」`);
       continue;
     }
+    // Say what was received: a value that looks fine to the person (e.g. "66" from typing 6 after a default) shows up at once.
+    const got = `（收到的是「${v.length > 40 ? v.slice(0, 40) + '…' : v}」）`;
     if (p.type === 'integer') {
-      if (!/^-?\d+$/.test(v)) throw new AmberError('invalid_args', `参数「${p.label ?? p.name}」必须是整数`);
+      if (!/^-?\d+$/.test(v)) throw new AmberError('invalid_args', `参数「${p.label ?? p.name}」必须是整数${got}`);
       const n = Number(v);
-      if (p.min !== undefined && n < p.min) throw new AmberError('invalid_args', `参数「${p.label ?? p.name}」不能小于 ${p.min}`);
-      if (p.max !== undefined && n > p.max) throw new AmberError('invalid_args', `参数「${p.label ?? p.name}」不能大于 ${p.max}`);
+      if (p.min !== undefined && n < p.min) throw new AmberError('invalid_args', `参数「${p.label ?? p.name}」不能小于 ${p.min}${got}`);
+      if (p.max !== undefined && n > p.max) throw new AmberError('invalid_args', `参数「${p.label ?? p.name}」不能大于 ${p.max}${got}`);
     } else {
-      if (p.maxLength !== undefined && v.length > p.maxLength) throw new AmberError('invalid_args', `参数「${p.label ?? p.name}」太长`);
-      if (p.pattern && !new RegExp(p.pattern, 'u').test(v)) throw new AmberError('invalid_args', `参数「${p.label ?? p.name}」格式不对`);
+      if (p.maxLength !== undefined && v.length > p.maxLength) throw new AmberError('invalid_args', `参数「${p.label ?? p.name}」太长（最多 ${p.maxLength} 个字，收到 ${v.length} 个）`);
+      if (p.pattern && !new RegExp(p.pattern, 'u').test(v)) throw new AmberError('invalid_args', `参数「${p.label ?? p.name}」格式不对${got}`);
     }
     out[p.name] = v;
   }
