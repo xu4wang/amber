@@ -140,8 +140,10 @@ export function prepare(cfg, payload) {
   const vars = checkVars(env.vars);
   // Amber sends the limit for this run (the admin's run limits applied); older Amber did not, so fall back to the app's own.
   const timeoutMs = Math.min(Math.max(Number(payload.timeoutMs ?? s.timeoutMs) || 30000, 1000), 1_800_000);
-  // The environment's network allow list (reached through a local proxy); scripts with full internet access don't need it.
-  const egress = !s.network && env.allowHosts?.length ? validateHosts(env.allowHosts) : undefined;
+  // The network allow list (reached through a local proxy); scripts with full internet access don't need it.
+  // Amber's global list (every environment; Feishu by default) plus this environment's own.
+  const hosts = [...new Set([...validateHosts(payload.allowHosts ?? []), ...validateHosts(env.allowHosts ?? [])])];
+  const egress = !s.network && hosts.length ? hosts : undefined;
   return { code: s.code, python, timeoutMs, workdir, vars, egress, realHome: env.realHome === true, profileFor: (dir, tcpPorts = []) => compileToSeatbelt(buildPolicy({ runDir: dir, access }), { all: !!s.network, tcpPorts }) };
 }
 

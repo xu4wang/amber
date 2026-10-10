@@ -353,7 +353,8 @@ export class ExecutorHub {
   }
 
   /** Runs a remote command: never on Amber's machine. */
-  async run(script: Script, spec: { name: string; params: unknown; script: unknown; options: unknown }, specHash: string, input: ScriptInput): Promise<ScriptResult> {
+  /** `allowHosts`: the global network allow list (every environment); the executor adds the environment's own. */
+  async run(script: Script, spec: { name: string; params: unknown; script: unknown; options: unknown }, specHash: string, input: ScriptInput, opts: { allowHosts?: string[] } = {}): Promise<ScriptResult> {
     const p = parseEnv(script.env ?? '');
     if (!p) return { ok: false, content: '', error: '执行位置（env）写得不对' };
     const e = this.store.approvedExecutor(p.executor);
@@ -366,7 +367,7 @@ export class ExecutorHub {
     const timeoutMs = (script.timeoutMs ?? 60000) + RESULT_GRACE_MS;
     // Services: only the tokens travel; the executor gives the script a local port and relays the calls here.
     const remoteInput = input.services ? { ...input, services: Object.fromEntries(Object.entries(input.services).map(([n, s]) => [n, { tokens: s.tokens }])) } : input;
-    const envelope = this.signer.sealJob(e.id, e.boxPub, jobId, this.pickupMs * 2, { jobId, runId: input.runId, env: p.env, spec, specHash, input: remoteInput, timeoutMs: script.timeoutMs });
+    const envelope = this.signer.sealJob(e.id, e.boxPub, jobId, this.pickupMs * 2, { jobId, runId: input.runId, env: p.env, spec, specHash, input: remoteInput, timeoutMs: script.timeoutMs, allowHosts: opts.allowHosts ?? [] });
     this.store.audit(input.caller.unionId, 'executor.dispatch', { runId: input.runId, executor: e.id, name: e.name, env: p.env, jobId });
     return await new Promise<ScriptResult>(resolve => {
       const calls = Object.fromEntries(Object.entries(script.services ?? {}).map(([n, u]) => [n, u.calls]));

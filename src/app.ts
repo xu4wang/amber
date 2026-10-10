@@ -11,6 +11,7 @@ import { setTimezones } from './schedule-rule.ts';
 import { SecretVault } from './secrets.ts';
 import { setSecretVault, setExecutorHub, setWebUrl } from './engine.ts';
 import { ExecutorHub } from './executors.ts';
+import { seedAllowHosts, FEISHU_HOSTS } from './limits.ts';
 
 export interface Amber { bot: AmberBot; store: Store; api: Server; web: Server; hub: ExecutorHub; close(): Promise<void> }
 
@@ -21,6 +22,7 @@ export async function startAmber(cfg: AmberConfig, opts: { apiPort: number; webP
   const store = new Store(cfg.dataDir);
   setSecretVault(new SecretVault(store, cfg.configDir));
   setWebUrl(cfg.webBaseUrl);
+  if (seedAllowHosts(store)) store.audit(null, 'startup.seed', { setting: 'global_allow_hosts', value: FEISHU_HOSTS });
   // Fail closed and say so: these commands stay in the database but every run is refused (D41).
   const interrupted = store.failInterruptedRuns();
   if (interrupted.length) { console.warn(new Date().toISOString(), 'interrupted runs marked failed', interrupted); store.audit(null, 'startup.interrupted_runs', { runs: interrupted }); }

@@ -113,18 +113,32 @@ export class RunSlots {
   snapshot(): Record<string, number> { return Object.fromEntries(this.byPlace); }
 }
 
-/** Amber's own network allow list (admin, on the website): hosts that scripts run here (no env) may reach
- *  through the local proxy without full internet access. Empty by default. */
+/** Network allow lists (admin, on the website). The global one applies to every environment — executors' and
+ *  Amber's own; an executor environment's allowHosts and Amber's local list add to it. Scripts reach these hosts
+ *  only through the local proxy. What is in force is always what is stored: the first start seeds the global list
+ *  with Feishu's hosts (so lark-cli works everywhere); there is no default in code. */
+export const FEISHU_HOSTS = ['*.feishu.cn', '*.feishucdn.com', '*.larksuite.com'];
+export const GLOBAL_ALLOW_HOSTS_KEY = 'global_allow_hosts';
 export const LOCAL_ALLOW_HOSTS_KEY = 'local_allow_hosts';
-export function getLocalAllowHosts(store: Settings): string[] {
-  try { const v = JSON.parse(store.getSetting(LOCAL_ALLOW_HOSTS_KEY) ?? '[]'); return Array.isArray(v) ? v.map(String) : []; } catch { return []; }
+const readList = (store: Settings, k: string): string[] => {
+  try { const v = JSON.parse(store.getSetting(k) ?? '[]'); return Array.isArray(v) ? v.map(String) : []; } catch { return []; }
+};
+export const getGlobalAllowHosts = (store: Settings): string[] => readList(store, GLOBAL_ALLOW_HOSTS_KEY);
+/** First start only: write the seed. Returns true when it did (an admin's later change, even to empty, is kept). */
+export function seedAllowHosts(store: { setSettingIfAbsent(k: string, v: string): boolean }): boolean {
+  return store.setSettingIfAbsent(GLOBAL_ALLOW_HOSTS_KEY, JSON.stringify(FEISHU_HOSTS));
 }
-export function saveLocalAllowHosts(store: Settings, x: unknown): string[] {
-  let list: string[];
-  try { list = validateHosts(x, '白名单'); } catch (e) { throw new AmberError('bad_request', (e as Error).message); }
-  store.setSetting(LOCAL_ALLOW_HOSTS_KEY, JSON.stringify(list));
+export const getLocalAllowHosts = (store: Settings): string[] => readList(store, LOCAL_ALLOW_HOSTS_KEY);
+export function checkAllowHosts(which: 'global' | 'local', x: unknown): string[] {
+  try { return validateHosts(x, which === 'global' ? '所有环境的白名单' : '本机白名单'); } catch (e) { throw new AmberError('bad_request', (e as Error).message); }
+}
+export function saveAllowHosts(store: Settings, which: 'global' | 'local', x: unknown): string[] {
+  const list = checkAllowHosts(which, x);
+  store.setSetting(which === 'global' ? GLOBAL_ALLOW_HOSTS_KEY : LOCAL_ALLOW_HOSTS_KEY, JSON.stringify(list));
   return list;
 }
+/** Amber's own machine: the global list plus the local one. */
+export const localEgress = (store: Settings): string[] => [...new Set([...getGlobalAllowHosts(store), ...getLocalAllowHosts(store)])];
 
 /** Runs going on now in this Amber, counted per machine and per person. (Here, not in engine.ts: limits.ts and
  *  engine.ts import each other, and only this order lets either be loaded first.) */

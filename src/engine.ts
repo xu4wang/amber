@@ -4,7 +4,7 @@ import { runScript, serviceDef, validateScript } from './runner.ts';
 import type { Signer } from './identity.ts';
 import { redact, type SecretVault } from './secrets.ts';
 import type { ExecutorHub } from './executors.ts';
-import { getLimits, effectiveTimeoutMs, SLOTS, getLocalAllowHosts } from './limits.ts';
+import { getLimits, effectiveTimeoutMs, SLOTS, localEgress, getGlobalAllowHosts } from './limits.ts';
 
 let HUB: ExecutorHub | undefined;
 /** Where commands with script.env are sent (D50); set once at startup. */
@@ -212,8 +212,8 @@ export async function runCommand(store: Store, cmd: CommandRow, rawArgs: Record<
     const input = { params: { ...args, ...config }, caller: { unionId: caller.unionId, chatId: caller.chatId, channel: caller.channel, city }, runId, ...(Object.keys(services).length ? { services } : {}), ...(secrets ? { secrets } : {}) };
     // script.env (D50): on the executor that holds the data, never here.
     const raw = script.env
-      ? (HUB ? await HUB.run(script, { name: cmd.name, params: cmd.params, script: cmd.script, options: cmd.options }, cmd.specHash, input) : { ok: false, content: '', error: '执行端服务不可用' })
-      : await runScript(script, input, { egress: getLocalAllowHosts(store) });
+      ? (HUB ? await HUB.run(script, { name: cmd.name, params: cmd.params, script: cmd.script, options: cmd.options }, cmd.specHash, input, { allowHosts: getGlobalAllowHosts(store) }) : { ok: false, content: '', error: '执行端服务不可用' })
+      : await runScript(script, input, { egress: localEgress(store) });
     // A secret that ends up in the output or the error message is masked before it is stored or shown.
     const r = secrets ? { ...raw, content: redact(raw.content, secrets), ...(raw.error ? { error: redact(raw.error, secrets) } : {}) } : raw;
     if (secrets) store.audit(caller.unionId, 'secret.use', { runId, commandId: cmd.id, names: Object.keys(secrets) });

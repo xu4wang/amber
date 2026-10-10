@@ -906,6 +906,11 @@ export class Store {
     return r?.v;
   }
 
+  /** Writes only when the key is not there yet (atomic); true when it wrote. */
+  setSettingIfAbsent(k: string, v: string): boolean {
+    return Number(this.db.prepare('INSERT OR IGNORE INTO settings (k, v) VALUES (?, ?)').run(k, v).changes) > 0;
+  }
+
   setSetting(k: string, v: string | null): void {
     if (v === null) this.db.prepare('DELETE FROM settings WHERE k = ?').run(k);
     else this.db.prepare('INSERT INTO settings (k, v) VALUES (?, ?) ON CONFLICT (k) DO UPDATE SET v = excluded.v').run(k, v);
