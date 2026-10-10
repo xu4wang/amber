@@ -126,9 +126,11 @@ export function startWeb(port: number, store: Store, deps: WebDeps): import('nod
   // Documentation (docs/*.md), readable without logging in. Rendered in the browser.
   // [file, title, nav group "section/subgroup"]; an empty group keeps the page out of the nav (old links still work).
   const DOCS: [string, string, string][] = [['quickstart', '快速上手', '使用手册/业务开发人员'], ['chat', 'Amber 机器人对话', '使用手册/业务开发人员'], ['with-agent', '和自己的 agent 协作', '使用手册/业务开发人员'], ['web', '网站操作', '使用手册/业务开发人员'], ['scenarios', '主要场景的实现方式', '使用手册/业务开发人员'], ['sharing', '应用的分享', '使用手册/业务开发人员'], ['faq', '常见问题', '使用手册/业务开发人员'], ['review', '审核指南', '使用手册/审核人员'], ['admin', '管理员手册', '使用手册/系统管理员'], ['install', '安装与部署', '安装运维'], ['feishu-setup', '飞书应用配置', '安装运维'], ['executor', '执行端与运行环境', '安装运维'], ['concepts', '概念模型', '概念模型与开发参考'], ['script', '脚本约定', '概念模型与开发参考'], ['cli-and-skill', 'agent 接入：命令行、skill 与接口', '概念模型与开发参考'], ['identity', '可信身份', '概念模型与开发参考'], ['identity-example', '可信身份：完整示例', '概念模型与开发参考'], ['environment-format', '运行环境定义格式', '概念模型与开发参考'], ['usage', '使用指南（已拆分）', '']];
-  // Diagrams referenced from the docs as assets/<name>.svg.
-  const docAssets = new Map<string, Buffer>();
-  for (const f of readdirSync(join(import.meta.dirname, '..', 'docs', 'assets'))) if (/^[a-z0-9-]+\.svg$/.test(f)) docAssets.set(`/docs/assets/${f}`, readFileSync(join(import.meta.dirname, '..', 'docs', 'assets', f)));
+  // Diagrams referenced from the docs as assets/<name>.svg, and the login-page animation (amber-why.gif).
+  const docAssets = new Map<string, { type: string; body: Buffer }>();
+  for (const f of readdirSync(join(import.meta.dirname, '..', 'docs', 'assets'))) {
+    if (/^[a-z0-9-]+\.svg$/.test(f) || f === 'amber-why.gif') docAssets.set(`/docs/assets/${f}`, { type: f.endsWith('.svg') ? 'image/svg+xml' : 'image/gif', body: readFileSync(join(import.meta.dirname, '..', 'docs', 'assets', f)) });
+  }
   const docTemplate = readFileSync(join(import.meta.dirname, '..', 'web', 'docs.html'), 'utf8');
   const docPages = new Map<string, string>();
   for (const [name, title] of DOCS) {
@@ -159,7 +161,7 @@ export function startWeb(port: number, store: Store, deps: WebDeps): import('nod
       if (req.method === 'GET' && (url.pathname === '/docs' || url.pathname === '/docs/')) return send(res, 200, 'text/html; charset=utf-8', docPages.get(DOCS[0][0])!);
       const dm = /^\/docs\/([a-z-]+)$/.exec(url.pathname);
       if (req.method === 'GET' && dm && docPages.has(dm[1])) return send(res, 200, 'text/html; charset=utf-8', docPages.get(dm[1])!);
-      if (req.method === 'GET' && docAssets.has(url.pathname)) return send(res, 200, 'image/svg+xml', docAssets.get(url.pathname)!, { 'cache-control': 'max-age=3600' });
+      if (req.method === 'GET' && docAssets.has(url.pathname)) { const a = docAssets.get(url.pathname)!; return send(res, 200, a.type, a.body, { 'cache-control': 'max-age=3600' }); }
       if (req.method === 'GET' && vendor.has(url.pathname)) return send(res, 200, 'text/javascript; charset=utf-8', vendor.get(url.pathname)!, { 'cache-control': 'max-age=86400' });
       if (req.method === 'GET' && url.pathname === '/logo.svg') return send(res, 200, 'image/svg+xml', logo, { 'cache-control': 'max-age=86400' });
 
