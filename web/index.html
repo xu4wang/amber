@@ -543,8 +543,8 @@ function welcome() {
 
 function paramInputs(c) {
   return c.params.map(p => `<div class="field"><label>${esc(p.label)}${p.required ? ' *' : ''}</label>
-    <input name="${esc(p.name)}" ${p.type === 'integer' ? 'inputmode="numeric"' : ''} value="${p.default && !p.fromCity ? esc(p.default) : ''}"
-      placeholder="${p.fromCity ? '不填则用你的办公城市' : p.required ? '必填' : '可不填'}"></div>`).join('');
+    <input name="${esc(p.name)}" ${p.type === 'integer' ? 'inputmode="numeric"' : ''} value=""
+      placeholder="${p.fromCity ? '不填则用你的办公城市' : p.default ? '默认：' + esc(p.default) + '（不填就用它）' : p.required ? '必填' : '可不填'}"></div>`).join('');
 }
 
 function cmdPane(key, { c, scope }) {

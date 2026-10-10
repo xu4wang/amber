@@ -146,7 +146,6 @@ export function claimCard(c: CommandRow, trial?: { by?: string; blocks?: Block[]
         ...c.params.map(p => ({
           tag: 'input', name: p.name, label: { tag: 'plain_text', content: p.scope === 'config' ? `${p.label ?? p.name}（配置项）` : p.label ?? p.name }, label_position: 'left',
           placeholder: { tag: 'plain_text', content: p.defaultFrom === 'caller.city' ? '不填则用你的办公城市' : p.default !== undefined ? `默认：${p.default}` : (p.required ? '必填' : '可不填') },
-          ...(p.default !== undefined && !p.defaultFrom ? { default_value: p.default } : {}),
         })),
         buttonRow([
           btn('试运行', { a: 'claim_try', c: c.id }, trial?.blocks ? 'default' : 'primary', { form_action_type: 'submit', name: 'try' }),
