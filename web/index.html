@@ -282,7 +282,7 @@ const app = document.getElementById('app');
 const whoEl = document.getElementById('who');
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const fmtTime = t => { const d = new Date(t); return `${d.getMonth() + 1}-${d.getDate()} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`; };
-const CH = { bot: '飞书', web: '网站', agent: 'agent', schedule: '定时', 'bot.trial': '试运行', 'agent.trial': '试运行' };
+const CH = { bot: '飞书', web: '网站', agent: 'agent', schedule: '定时', page: '页面', 'bot.trial': '试运行', 'agent.trial': '试运行' };
 
 function loginView() {
   whoEl.innerHTML = '';
@@ -362,10 +362,11 @@ function withValueLabels(spec) {
 function renderOutput(el, md) {
   const charts = [];
   let html = '', last = 0, m;
-  const re = /```(vega-lite|table)\s*\n([\s\S]*?)```/g;
+  const re = /```(vega-lite|table|json)\s*\n([\s\S]*?)```/g;
   const text = s => { if (s.trim()) html += DOMPurify.sanitize(marked.parse(s)); };
   while ((m = re.exec(md))) {
     text(md.slice(last, m.index));
+    if (m[1] === 'json') { last = m.index + m[0].length; continue; }   // data for page apps, not shown
     if (m[1] === 'table') html += tableHtml(m[2]);
     else {
       // Remember the line printed right above the chart: if it is the chart's title, don't repeat it.
@@ -461,12 +462,18 @@ const OPEN = new Set();
 let searching = false;
 const node = (id, summary, inner) => `<details class="node" data-node="${esc(id)}"${OPEN.has(id) ? ' open' : ''}><summary>${summary}</summary>${inner}</details>`;
 
-function folder(title, scope, cmds, schs) {
+function pageLeaf(pg, scope) {
+  const key = 'pg:' + pg.id;
+  ITEMS.set(key, { kind: 'page', pg, scope });
+  return `<div class="leaf" data-key="${esc(key)}" data-search="${esc(pg.name)} 页面"><span class="name">${esc(pg.name)}</span><span class="chip">页面</span>${pg.mine ? '' : '<span class="sub">别人分享</span>'}</div>`;
+}
+
+function folder(title, scope, cmds, schs, pages = []) {
   const ids = new Set(cmds.map(c => c.id));
   const orphans = schs.filter(s => !ids.has(s.commandId));   // e.g. the command was retired; the schedule is paused
-  const inner = (cmds.length ? cmds.map(c => cmdLeaf(c, scope) + schs.filter(s => s.commandId === c.id).map(s => schLeaf(s, scope, false)).join('')).join('') : '<div class="empty-leaf">还没有应用</div>')
-    + orphans.map(s => schLeaf(s, scope, true)).join('');
-  return node(scope, `${esc(title)}<span class="count">${cmds.length}</span>`, inner);
+  const inner = (cmds.length || pages.length ? cmds.map(c => cmdLeaf(c, scope) + schs.filter(s => s.commandId === c.id).map(s => schLeaf(s, scope, false)).join('')).join('') : '<div class="empty-leaf">还没有应用</div>')
+    + orphans.map(s => schLeaf(s, scope, true)).join('') + pages.map(pg => pageLeaf(pg, scope)).join('');
+  return node(scope, `${esc(title)}<span class="count">${cmds.length + pages.length}</span>`, inner);
 }
 
 function renderTree() {
@@ -474,10 +481,10 @@ function renderTree() {
   const o = DATA;
   let html = '<input class="search" id="q" placeholder="搜索应用">';
   if (o.membershipUnknown) html += '<div class="banner">Amber 暂时无法读取群成员，群里的应用先不显示。</div>';
-  html += folder('我的私聊', 'p2p', o.p2p.commands, o.p2p.schedules);
+  html += folder('我的私聊', 'p2p', o.p2p.commands, o.p2p.schedules, o.p2p.pages || []);
   const groupApps = o.groups.reduce((n, g) => n + g.commands.length, 0);
   html += node('groups', `我的群聊<span class="count">${groupApps}</span>`,
-    o.groups.map(g => folder(g.name, 'group:' + g.chatId, g.commands, g.schedules)).join('') || '<div class="empty-leaf">还没有群里的应用</div>');
+    o.groups.map(g => folder(g.name, 'group:' + g.chatId, g.commands, g.schedules, g.pages || [])).join('') || '<div class="empty-leaf">还没有群里的应用</div>');
   html += folder('全局应用', 'global', o.global, []);
   if (STORE && STORE.ok) {
     html += node('store', `Amber Store<span class="count">${STORE.apps.length}</span>`, STORE.apps.map(a => {
@@ -549,6 +556,7 @@ function select(key, push = true) {
   else if (it.kind === 'set-limits') limitsPane();
   else if (it.kind === 'set-hosts') hostsPane();
   else if (it.kind === 'audit') auditPane();
+  else if (it.kind === 'page') pagePane(it);
   else runPane(it);
 }
 
@@ -793,6 +801,7 @@ const AUDIT_LABEL = {
   'command.clone_decline': '拒绝接收复制', 'command.reassign_request': '发起重新分配', 'command.reassign_decline': '拒绝接收重新分配',
   'config.delete': '删除配置项', 'config.drop_all': '删除全部配置项', 'secret.delete': '删除密钥', 'request.cancel': '取消确认请求',
   'review.feishu_check_failed': '飞书审批状态查询失败', 'schedule.missed': '定时任务错过（Amber 未运行）', 'web.logout_all': '退出所有网站登录',
+  'page.publish_request': '请求发布页面', 'page.publish': '发布页面', 'page.publish_cancel': '取消发布页面', 'page.update': '更新页面内容', 'page.access': '修改页面访问范围', 'page.delete': '删除页面', 'page.call': '页面调用应用',
   'startup.seed': '首次启动写入默认设置', 'startup.interrupted_runs': '重启时标记中断的执行', 'startup.unrunnable': '发现不能执行的应用',
 };
 let AUDIT = { rows: [], cat: '', q: '', done: false, categories: [] };
@@ -822,6 +831,47 @@ async function auditPane(more = false) {
   const form = document.getElementById('audit-form');
   form.addEventListener('submit', ev => { ev.preventDefault(); AUDIT.cat = form.cat.value; AUDIT.q = form.q.value.trim(); auditPane(); });
   document.getElementById('audit-more')?.addEventListener('click', () => auditPane(true));
+}
+
+// A page app: open it (new tab), who may open it (owner), the apps it calls, delete.
+function pagePane({ pg, scope }) {
+  const ACC = { owner: '仅我', group: '群里所有人', members: '指定的群成员' };
+  const appLine = a => a.missing ? `<li>${esc(a.name)} <span class="chip warn">${esc(a.missing)}</span></li>`
+    : `<li>${esc(a.name)}${a.global ? ' <span class="chip">全局应用</span>' : ''}${a.env ? ` <span class="chip warn">在执行端环境 ${esc(a.env)} 里运行</span>` : ''}${a.secrets ? ' <span class="chip warn">用到密钥：只有你自己能通过页面调用</span>' : ''}${a.confirm ? ' <span class="chip">执行前确认</span>' : ''}</li>`;
+  const envApps = pg.apps.filter(a => a.env && !a.secrets);
+  const group = scope.startsWith('group:');
+  document.getElementById('pane').innerHTML = `${backBtn}
+    <div class="pane-head"><h1>${esc(pg.name)}</h1><span class="chip">页面</span></div>
+    <div class="where">${esc(scopeName(scope))} · 第 ${esc(pg.version)} 版 · 更新于 ${fmtTime(pg.updatedAt)}${pg.mine ? '' : ' · 别人分享给你的'}</div>
+    <p class="desc">页面由 agent 发布，在新标签页打开。页面里查数、写飞书都通过下面这些应用，每次都以打开页面的人自己的身份执行。</p>
+    <div class="actions" style="margin-bottom:24px"><a class="btn primary" href="${esc(pg.url)}" target="_blank" rel="noopener">打开页面</a></div>
+    <div class="box"><h3>页面会调用的应用</h3>${pg.apps.length ? `<ul class="paths">${pg.apps.map(appLine).join('')}</ul>` : '<p class="note">这个页面不调用任何应用。</p>'}</div>
+    ${pg.access !== undefined ? `<div class="box"><h3>谁能访问</h3>
+      ${pg.mine ? `${group ? `<div class="field"><label>访问范围</label><div class="field-main">
+        ${['owner', 'group', 'members'].map(k => `<label style="display:block;padding:2px 0;min-width:0"><input type="radio" name="pg-access" value="${k}"${pg.access === k ? ' checked' : ''}> ${ACC[k]}</label>`).join('')}
+        <div id="pg-members" style="margin-top:8px;${pg.access === 'members' ? '' : 'display:none'}"><p class="note">加载群成员……</p></div>
+        ${envApps.length ? `<p class="note">⚠️ 访问的人会在执行端环境里运行：${envApps.map(a => esc(a.name) + '（' + esc(a.env) + '）').join('、')}，能读到那个环境里的数据。</p>` : ''}
+        <p class="note">每次打开和每次调用都会检查：在名单里，并且现在还在这个群里。退群的人自动失去访问权限。</p>
+      </div></div>
+      <div class="actions"><button class="btn primary" data-pg="access">保存</button></div>` : '<p class="note">私聊里的页面只有你自己能访问。</p>'}`
+      : `<p>${ACC[pg.access]}${pg.access === 'members' ? `（${pg.members.length} 人）` : ''}</p>`}</div>` : ''}
+    ${pg.canDelete ? `<div class="manage"><h3>删除页面</h3><p class="note">删除后链接立即失效，页面文件一起删除。应用不受影响。</p><button class="btn danger" data-pg="delete">删除这个页面</button></div>` : ''}`;
+  if (pg.mine && group) {
+    const chat = scope.slice(6);
+    const showMembers = async () => {
+      const box = document.getElementById('pg-members');
+      const r = await fetch(`/web/api/groups/${encodeURIComponent(chat)}/members`).then(x => x.json()).catch(() => ({ ok: false }));
+      if (!r.ok) { box.innerHTML = '<p class="note">读不到群成员</p>'; return; }
+      const sel = new Set(pg.members || []);
+      box.innerHTML = r.members.filter(u => u.unionId !== DATA.me).map(u => `<label style="display:inline-block;margin:2px 12px 2px 0;min-width:0"><input type="checkbox" name="pg-member" value="${esc(u.unionId)}"${sel.has(u.unionId) ? ' checked' : ''}> ${esc(u.name)}</label>`).join('') || '<p class="note">群里没有别人</p>';
+    };
+    document.querySelectorAll('input[name=pg-access]').forEach(r => r.addEventListener('change', () => {
+      const on = document.querySelector('input[name=pg-access]:checked').value === 'members';
+      document.getElementById('pg-members').style.display = on ? '' : 'none';
+      if (on) showMembers();
+    }));
+    if (pg.access === 'members') showMembers();
+  }
 }
 
 function exeLimitBlock(e) {
@@ -941,6 +991,23 @@ async function reload(keepKey) {
 }
 
 document.addEventListener('click', async ev => {
+  const pgBtn = ev.target.closest('[data-pg]');
+  if (pgBtn) {
+    const it = ITEMS.get(SEL);
+    if (!it || it.kind !== 'page') return;
+    if (pgBtn.dataset.pg === 'delete') {
+      if (!confirm(`删除页面「${it.pg.name}」？链接会立即失效。`)) return;
+      const r = await post(`/web/api/pages/${it.pg.id}/delete`, {}).catch(e => ({ ok: false, message: e.message }));
+      if (!r.ok) return alert(r.message || '删除失败');
+      SEL = null; await reload(null); return;
+    }
+    const access = document.querySelector('input[name=pg-access]:checked')?.value;
+    const members = [...document.querySelectorAll('input[name=pg-member]:checked')].map(i => i.value);
+    const r = await post(`/web/api/pages/${it.pg.id}/access`, { access, members }).catch(e => ({ ok: false, message: e.message }));
+    if (!r.ok) return alert(r.message || '保存失败');
+    await reload(SEL);
+    return;
+  }
   const limBtn = ev.target.closest('[data-exe-limit]');
   if (limBtn) {
     const it = ITEMS.get(SEL);

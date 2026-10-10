@@ -8,6 +8,7 @@ import type { Flow, DraftInput } from './flow.ts';
 import type { AgentGate, AgentContext } from './agent.ts';
 import { AmberError } from './engine.ts';
 import type { ExecutorHub } from './executors.ts';
+import type { PageService } from './pages.ts';
 
 function readRaw(req: IncomingMessage, limit: number): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -25,7 +26,7 @@ async function readBody(req: IncomingMessage): Promise<any> {
   try { return JSON.parse(body); } catch { throw new AmberError('bad_json', '请求不是合法的 JSON'); }
 }
 
-export function startApi(port: number, machines: Record<string, string>, flow: Flow, agent: AgentGate, jwks: () => object, info: { webUrl: string }, hub?: ExecutorHub): import('node:http').Server {
+export function startApi(port: number, machines: Record<string, string>, flow: Flow, agent: AgentGate, jwks: () => object, info: { webUrl: string }, hub?: ExecutorHub, pages?: PageService): import('node:http').Server {
   const server = createServer(async (req, res) => {
     const reply = (status: number, body: unknown) => {
       res.writeHead(status, { 'content-type': 'application/json; charset=utf-8' });
@@ -63,6 +64,15 @@ export function startApi(port: number, machines: Record<string, string>, flow: F
         if (path === '/v1/executor/result') return reply(200, hub.result(e, raw));
         if (path === '/v1/executor/relay') return reply(200, await hub.relay(e, raw));
         return reply(404, { ok: false, error: 'not_found' });
+      }
+      // Page apps: the files come with the request (up to 10MB, base64 in JSON).
+      if (path === '/v1/pages' && pages) {
+        const raw = await readRaw(req, 16 * 1024 * 1024);
+        let body: any;
+        try { body = JSON.parse(raw || '{}'); } catch { throw new AmberError('bad_json', '请求不是合法的 JSON'); }
+        const ctx = await agent.context(body as AgentContext, machine);
+        if (!ctx.user) throw new AmberError('user_required', '发布页面要用 --user 指明页面属于谁（email）');
+        return reply(200, { ok: true, ...(await pages.publish({ ...ctx, user: ctx.user }, String(body.name ?? ''), body.files)) });
       }
       const body = await readBody(req);
       if (path === '/v1/drafts') {

@@ -34,7 +34,7 @@ export async function startAmber(cfg: AmberConfig, opts: { apiPort: number; webP
   await bot.start();
   const hub = bot.hub;
   setExecutorHub(hub);
-  const api = startApi(opts.apiPort, cfg.machines, bot.flow, bot.agent, () => bot.signer.jwks(), { webUrl: cfg.webBaseUrl }, hub);
+  const api = startApi(opts.apiPort, cfg.machines, bot.flow, bot.agent, () => bot.signer.jwks(), { webUrl: cfg.webBaseUrl }, hub, bot.pages);
   const web = startWeb(opts.webPort, store, {
     isMember: (c, u) => bot.isMember(c, u),
     chatName: c => bot.chatName(c),
@@ -54,6 +54,8 @@ export async function startAmber(cfg: AmberConfig, opts: { apiPort: number; webP
     groupMembers: c => bot.groupMembers(c),
     requestReassign: (id, to, admin) => bot.requestReassign(id, to, admin),
     requestClone: (id, to, from) => bot.requestClone(id, to, from),
+    pages: bot.pages,
+    pagesBaseUrl: cfg.pagesBaseUrl,
   });
   const closeServer = (s: Server) => new Promise<void>(r => { s.close(() => r()); s.closeAllConnections(); });
   return { bot, store, api, web, hub, close: async () => { hub.close(); await Promise.all([closeServer(api), closeServer(web)]); } };

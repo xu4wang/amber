@@ -69,7 +69,7 @@ export interface Caller {
   /** Chat the request came from (Feishu event / card context). */
   chatId: string;
   chatType: 'group' | 'p2p';
-  channel: 'bot' | 'web' | 'agent' | 'schedule';
+  channel: 'bot' | 'web' | 'agent' | 'schedule' | 'page';
 }
 
 export class AmberError extends Error {

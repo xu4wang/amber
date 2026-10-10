@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>__TITLE__</title>
+<style>
+/* The shell of a page app: the page fills the window; Amber only shows a confirmation dialog when an app needs one. */
+html, body { margin: 0; height: 100%; background: #fff; }
+iframe { border: 0; width: 100%; height: 100%; display: block; }
+.mask { position: fixed; inset: 0; background: rgba(0,0,0,.45); display: none; align-items: center; justify-content: center; z-index: 10; }
+.mask.on { display: flex; }
+.dlg { background: #fff; color: #151515; max-width: 460px; width: calc(100% - 32px); padding: 24px; font: 14px/1.7 -apple-system, "PingFang SC", system-ui, sans-serif; box-shadow: 0 12px 40px rgba(0,0,0,.3); }
+.dlg h3 { margin: 0 0 8px; font-size: 17px; }
+.dlg .args { background: #f4f4f4; padding: 8px 12px; margin: 12px 0; font: 12px/1.6 ui-monospace, Menlo, monospace; white-space: pre-wrap; word-break: break-all; max-height: 200px; overflow: auto; }
+.dlg .note { color: #6b6b6b; font-size: 12px; }
+.dlg .btns { display: flex; gap: 8px; justify-content: flex-end; margin-top: 16px; }
+.dlg button { font: inherit; padding: 8px 18px; border: 1px solid #151515; background: #fff; cursor: pointer; }
+.dlg button.ok { background: #f2a23a; border-color: #f2a23a; color: #181818; font-weight: 600; }
+</style>
+</head>
+<body>
+<iframe id="page" sandbox="allow-scripts allow-same-origin allow-forms allow-downloads allow-modals" referrerpolicy="no-referrer"></iframe>
+<div class="mask" id="mask"><div class="dlg">
+  <h3 id="dlg-title"></h3>
+  <div>这个页面要执行一个会修改数据的应用，以你本人的身份：</div>
+  <div class="args" id="dlg-args"></div>
+  <div class="note">确认框由 Amber 显示，页面改不了这里的内容。</div>
+  <div class="btns"><button id="dlg-no">取消</button><button class="ok" id="dlg-ok">确认执行</button></div>
+</div></div>
+<script>
+const PAGE = __PAGE_DATA__;
+const frame = document.getElementById('page');
+frame.src = PAGE.src;
+
+// Only Amber's own dialog may approve an app that changes data.
+function confirmRun(app, args) {
+  return new Promise(resolve => {
+    document.getElementById('dlg-title').textContent = `执行「${app}」？`;
+    document.getElementById('dlg-args').textContent = Object.keys(args).length ? Object.entries(args).map(([k, v]) => `${k} = ${v}`).join('\n') : '（没有参数）';
+    const mask = document.getElementById('mask');
+    mask.classList.add('on');
+    const done = v => { mask.classList.remove('on'); resolve(v); };
+    document.getElementById('dlg-ok').onclick = () => done(true);
+    document.getElementById('dlg-no').onclick = () => done(false);
+  });
+}
+
+async function call(app, args, confirm) {
+  const r = await fetch(`/web/api/pages/${PAGE.id}/run`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ app, args, confirm }) });
+  let j = await r.json().catch(() => ({ ok: false, error: 'internal', message: '服务器返回异常' }));
+  if (r.status === 401) return { ok: false, error: 'login_required', message: '登录已过期：请在飞书里私聊 Amber 发「登录」，再刷新这个页面' };
+  // A long run: ask for it until it ends.
+  const job = j.ok && j.pending ? j.job : null;
+  while (job && j.ok && j.pending) {
+    await new Promise(ok => setTimeout(ok, 2000));
+    j = await fetch(`/web/api/run-jobs/${job}`).then(x => x.json()).catch(() => ({ ok: true, pending: true }));
+  }
+  return j;
+}
+
+// Hosts Amber.open may open: the network allow list (Feishu by default), https only.
+function allowed(url) {
+  let u;
+  try { u = new URL(url); } catch { return false; }
+  if (u.protocol !== 'https:') return false;
+  const h = u.hostname.toLowerCase(), port = Number(u.port || 443);
+  return PAGE.allowHosts.some(e => {
+    const [name, p] = e.split(':');
+    if ((p ? Number(p) : 443) !== port) return false;
+    return name.startsWith('*.') ? h.endsWith(name.slice(1)) : h === name;
+  });
+}
+
+window.addEventListener('message', async ev => {
+  if (ev.origin !== PAGE.pagesOrigin || ev.source !== frame.contentWindow) return;
+  const m = ev.data || {};
+  if (m.amber !== 1 || typeof m.id !== 'number') return;
+  const reply = body => frame.contentWindow.postMessage({ amber: 1, id: m.id, ...body }, PAGE.pagesOrigin);
+  try {
+    if (m.type === 'me') return reply({ ok: true, result: { name: PAGE.me, page: PAGE.name } });
+    if (m.type === 'open') {
+      if (!allowed(String(m.url))) return reply({ ok: false, message: '这个地址不在网络白名单里，不能打开' });
+      window.open(String(m.url), '_blank', 'noopener,noreferrer');
+      return reply({ ok: true });
+    }
+    if (m.type === 'run') {
+      const app = String(m.app || ''), args = m.args && typeof m.args === 'object' ? m.args : {};
+      let j = await call(app, args, false);
+      if (!j.ok && j.error === 'needs_confirm') {
+        if (!(await confirmRun(app, args))) return reply({ ok: false, error: 'canceled', message: '已取消' });
+        j = await call(app, args, true);
+      }
+      return reply(j.ok ? { ok: true, result: j } : { ok: false, error: j.error, message: j.message || j.error || '执行失败' });
+    }
+    reply({ ok: false, message: '不支持的调用' });
+  } catch (e) { reply({ ok: false, message: String(e && e.message || e) }); }
+});
+</script>
+</body>
+</html>

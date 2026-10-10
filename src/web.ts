@@ -8,13 +8,14 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { createHash, randomBytes } from 'node:crypto';
 import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
-import type { Store, CommandRow, ScheduleRow } from './db.ts';
+import type { Store, CommandRow, ScheduleRow, PageRow } from './db.ts';
 import type { Caller } from './engine.ts';
 import { runCommand, AmberError, secretVault, lineOf, runParams, configParams, configValues, validateArgs } from './engine.ts';
 import type { Signer } from './identity.ts';
 import type { Scheduler } from './scheduler.ts';
 import { envsHash, effectiveAccess, credentialPaths, type ExecutorHub } from './executors.ts';
 import type { AppStore } from './apps.ts';
+import { outputBlocks, type PageService } from './pages.ts';
 import { showFingerprint } from './exec-proto.ts';
 import { describeRule, formatAt, defaultTz, timezones } from './schedule-rule.ts';
 import { CARD_FOOTER_KEY, CARD_FOOTER_MAX, DEFAULT_CARD_FOOTER, cleanFooter } from './cards.ts';
@@ -59,6 +60,9 @@ export interface WebDeps {
   origin: string;
   /** How long a website run is waited for before the page is told to poll for it (default 20 s). */
   runWaitMs?: number;
+  /** Page apps (pages.ts) and the separate origin their files are served from. */
+  pages?: PageService;
+  pagesBaseUrl?: string;
 }
 
 /** A website run still going after runWaitMs: the page asks for it by job id. Kept 30 minutes after it ends. */
@@ -72,9 +76,12 @@ const AUDIT_CATEGORIES: Record<string, { label: string; prefixes: string[] }> = 
   schedule: { label: '定时任务', prefixes: ['schedule.'] },
   executor: { label: '执行端', prefixes: ['executor.', 'web.executor'] },
   settings: { label: '设置、配置项与密钥', prefixes: ['web.card_footer', 'web.run_limits', 'web.allow_hosts', 'config.', 'secret.set', 'secret.delete', 'secret.drop'] },
+  page: { label: '页面应用', prefixes: ['page.'] },
   login: { label: '登录', prefixes: ['web.login', 'web.logout', 'web.selftest'] },
   system: { label: '系统', prefixes: ['startup.', 'migrate.'] },
 };
+
+const escHtml = (s: string) => s.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]!));
 
 const pick = (o: Record<string, unknown>, keys: string[]) => Object.fromEntries(keys.filter(k => o[k] !== undefined).map(k => [k, o[k]]));
 
@@ -145,7 +152,7 @@ export function startWeb(port: number, store: Store, deps: WebDeps): import('nod
   const logo = readFileSync(join(import.meta.dirname, '..', 'web', 'logo.svg'));
   // Documentation (docs/*.md), readable without logging in. Rendered in the browser.
   // [file, title, nav group "section/subgroup"]; an empty group keeps the page out of the nav (old links still work).
-  const DOCS: [string, string, string][] = [['quickstart', '快速上手', '使用手册/业务开发人员'], ['chat', 'Amber 机器人对话', '使用手册/业务开发人员'], ['with-agent', '和自己的 agent 协作', '使用手册/业务开发人员'], ['web', '网站操作', '使用手册/业务开发人员'], ['scenarios', '主要场景的实现方式', '使用手册/业务开发人员'], ['sharing', '应用的分享', '使用手册/业务开发人员'], ['faq', '常见问题', '使用手册/业务开发人员'], ['review', '审核指南', '使用手册/审核人员'], ['admin', '管理员手册', '使用手册/系统管理员'], ['install', '安装与部署', '安装运维'], ['feishu-setup', '飞书应用配置', '安装运维'], ['executor', '执行端与运行环境', '安装运维'], ['concepts', '概念模型', '概念模型与开发参考'], ['script', '脚本约定', '概念模型与开发参考'], ['cli-and-skill', 'agent 接入：命令行、skill 与接口', '概念模型与开发参考'], ['identity', '可信身份', '概念模型与开发参考'], ['identity-example', '可信身份：完整示例', '概念模型与开发参考'], ['environment-format', '运行环境定义格式', '概念模型与开发参考'], ['usage', '使用指南（已拆分）', '']];
+  const DOCS: [string, string, string][] = [['quickstart', '快速上手', '使用手册/业务开发人员'], ['chat', 'Amber 机器人对话', '使用手册/业务开发人员'], ['with-agent', '和自己的 agent 协作', '使用手册/业务开发人员'], ['web', '网站操作', '使用手册/业务开发人员'], ['scenarios', '主要场景的实现方式', '使用手册/业务开发人员'], ['pages', '页面应用', '使用手册/业务开发人员'], ['sharing', '应用的分享', '使用手册/业务开发人员'], ['faq', '常见问题', '使用手册/业务开发人员'], ['review', '审核指南', '使用手册/审核人员'], ['admin', '管理员手册', '使用手册/系统管理员'], ['install', '安装与部署', '安装运维'], ['feishu-setup', '飞书应用配置', '安装运维'], ['executor', '执行端与运行环境', '安装运维'], ['concepts', '概念模型', '概念模型与开发参考'], ['script', '脚本约定', '概念模型与开发参考'], ['cli-and-skill', 'agent 接入：命令行、skill 与接口', '概念模型与开发参考'], ['identity', '可信身份', '概念模型与开发参考'], ['identity-example', '可信身份：完整示例', '概念模型与开发参考'], ['environment-format', '运行环境定义格式', '概念模型与开发参考'], ['usage', '使用指南（已拆分）', '']];
   // Diagrams referenced from the docs as assets/<name>.svg, and the login-page animation (amber-why.gif).
   const docAssets = new Map<string, { type: string; body: Buffer }>();
   for (const f of readdirSync(join(import.meta.dirname, '..', 'docs', 'assets'))) {
@@ -175,9 +182,44 @@ export function startWeb(port: number, store: Store, deps: WebDeps): import('nod
   const json = (res: ServerResponse, status: number, body: unknown, extra: Record<string, string | string[]> = {}) =>
     send(res, status, 'application/json; charset=utf-8', JSON.stringify(body), extra);
 
+  // Page apps: files are served from their own origin (pagesBaseUrl), never from Amber's, so a page has no
+  // access to Amber's cookies or API; the shell on Amber's origin frames it and relays its calls.
+  const pagesOrigin = deps.pagesBaseUrl ? new URL(deps.pagesBaseUrl).origin : '';
+  const pagesHost = deps.pagesBaseUrl ? new URL(deps.pagesBaseUrl).host : '';
+  const sdk = readFileSync(join(import.meta.dirname, '..', 'web', 'page-sdk.js'), 'utf8').replace('__AMBER_ORIGIN__', JSON.stringify(deps.origin));
+  const shellTpl = readFileSync(join(import.meta.dirname, '..', 'web', 'page-shell.html'), 'utf8');
+  const PAGE_CSP = `default-src 'self' data: blob:; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; `
+    + `connect-src 'self'; media-src 'self' data: blob:; frame-src 'none'; object-src 'none'; form-action 'none'; base-uri 'self'; frame-ancestors ${deps.origin}`;
+  const pageFile = (res: ServerResponse, status: number, type: string, body: string | Buffer) => {
+    res.writeHead(status, { 'content-type': type, 'content-security-policy': PAGE_CSP, 'x-content-type-options': 'nosniff', 'referrer-policy': 'no-referrer', 'cache-control': 'no-store' });
+    res.end(body);
+  };
+
+  /** A run can take minutes (run limits); one still going after a short wait is handed to the page as a job to poll. */
+  const longRun = async <T,>(res: ServerResponse, owner: string, run: Promise<T>, view: (r: T) => Record<string, unknown>) => {
+    const quick = await Promise.race([run.then(r => ({ r }), e => ({ e })), new Promise<null>(ok => setTimeout(() => ok(null), deps.runWaitMs ?? (Number(process.env.AMBER_WEB_RUN_WAIT_MS) || 20_000)))]);
+    if (quick) { if ('e' in quick) throw quick.e; return json(res, 200, view(quick.r)); }
+    const id = randomBytes(12).toString('hex');
+    const job: WebJob = { owner };
+    jobs.set(id, job);
+    run.then(r => { job.done = view(r); }, e => { job.done = { ok: false, error: e instanceof AmberError ? e.code : 'internal', message: e instanceof AmberError ? e.message : '执行失败' }; })
+      .finally(() => { job.endedAt = Date.now(); });
+    return json(res, 200, { ok: true, pending: true, job: id });
+  };
+
   const server = createServer(async (req, res) => {
     const url = new URL(req.url ?? '/', 'http://amber');
     try {
+      if (pagesHost && req.headers.host === pagesHost) {
+        // The page origin: page files (behind a signed, expiring link), the page SDK and the shared libraries. Nothing else.
+        if (req.method !== 'GET') return pageFile(res, 405, 'text/plain; charset=utf-8', '');
+        if (url.pathname === '/sdk/amber-page.js') return pageFile(res, 200, 'text/javascript; charset=utf-8', sdk);
+        if (vendor.has(url.pathname)) return pageFile(res, 200, 'text/javascript; charset=utf-8', vendor.get(url.pathname)!);
+        const cm = /^\/c\/([A-Za-z0-9._-]{1,300})\/(.*)$/.exec(url.pathname);
+        const f = cm && deps.pages ? await deps.pages.file(cm[1], decodeURIComponent(cm[2])) : undefined;
+        if (!f) return pageFile(res, 404, 'text/plain; charset=utf-8', '链接无效或已过期，请回到页面刷新');
+        return pageFile(res, 200, f.type, f.bytes);
+      }
       if (req.method === 'GET' && (url.pathname === '/' || url.pathname === '/index.html')) return send(res, 200, 'text/html; charset=utf-8', page);
       if (req.method === 'GET' && (url.pathname === '/docs' || url.pathname === '/docs/')) return send(res, 200, 'text/html; charset=utf-8', docPages.get(DOCS[0][0])!);
       const dm = /^\/docs\/([a-z-]+)$/.exec(url.pathname);
@@ -202,6 +244,20 @@ export function startWeb(port: number, store: Store, deps: WebDeps): import('nod
 
       const raw = cookieOf(req);
       const who = raw ? store.webSession(hashToken(raw)) : undefined;
+
+      // The shell for a page app: a full-window frame around the page, relaying its calls (web/page-shell.html).
+      const pm = req.method === 'GET' ? /^\/p\/([0-9a-f]{8})(\/?)$/.exec(url.pathname) : null;
+      if (pm && deps.pages && pagesOrigin) {
+        if (!pm[2]) return send(res, 301, 'text/plain', '', { location: `/p/${pm[1]}/` });
+        const note = (title: string, text: string) => send(res, 200, 'text/html; charset=utf-8', `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Amber</title><body style="font:16px/1.7 system-ui,sans-serif;padding:40px 16px;max-width:560px;margin:auto"><h2>${title}</h2><p>${text}</p>`);
+        if (!who) return note('请先登录 Amber', '在飞书里私聊 Amber 发送「登录」，点卡片上的按钮登录后，再回到这个页面刷新。');
+        const p = store.getPage(pm[1]);
+        if (!p || !(await deps.pages.canView(p, who.unionId))) return note('打不开这个页面', '页面不存在，或者你没有访问权限。需要的话请联系页面的创建人。');
+        const data = JSON.stringify({ id: p.id, name: p.name, src: `${pagesOrigin}/c/${deps.pages.token(p, who.unionId)}/`, pagesOrigin, me: (await deps.nameOf(who.unionId)) ?? '', allowHosts: getGlobalAllowHosts(store) }).replace(/</g, '\\u003c');
+        return send(res, 200, 'text/html; charset=utf-8', shellTpl.replace('__TITLE__', escHtml(p.name)).replace('__PAGE_DATA__', data), {
+          'content-security-policy': `default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; frame-src ${pagesOrigin}; base-uri 'none'; form-action 'none'; frame-ancestors 'none'`,
+        });
+      }
 
       if (url.pathname === '/web/api/logout' && req.method === 'POST') {
         if (raw) store.revokeWebSession(hashToken(raw));
@@ -299,6 +355,16 @@ export function startWeb(port: number, store: Store, deps: WebDeps): import('nod
         }
         const body = await readJson(req);
         const person: Caller = { unionId: who.unionId, openId: who.openId ?? undefined, chatId: '', chatType: 'p2p', channel: 'web' };
+        if (deps.pages && (m = /^\/web\/api\/pages\/([0-9a-f]{8})\/(run|access|delete)$/.exec(url.pathname))) {
+          const id = m[1];
+          if (m[2] === 'access') { const p = deps.pages.setAccess(id, who.unionId, body.access, body.members); return json(res, 200, { ok: true, access: p.access, members: p.members }); }
+          if (m[2] === 'delete') { deps.pages.remove(id, who.unionId, deps.isAdmin(who.unionId)); return json(res, 200, { ok: true }); }
+          rateLimit(who.unionId);
+          const args: Record<string, string> = {};
+          for (const [k, v] of Object.entries(body.args ?? {})) if (v !== null && v !== undefined) args[k] = String(v).slice(0, 2000);
+          const run = deps.pages.run(id, { unionId: who.unionId, openId: who.openId ?? undefined }, String(body.app ?? ''), args, body.confirm === true);
+          return await longRun(res, who.unionId, run, r => ({ ok: r.ok, runId: r.runId, markdown: r.markdown, ...outputBlocks(r.markdown), error: r.error, elapsedMs: r.elapsedMs }));
+        }
         if (url.pathname === '/web/api/run') {
           rateLimit(who.unionId);
           const t = await target(store, deps, who.unionId, String(body.scope ?? ''), String(body.commandId ?? ''));
@@ -307,16 +373,7 @@ export function startWeb(port: number, store: Store, deps: WebDeps): import('nod
           for (const [k, v] of Object.entries(body.args ?? {})) if (v !== null && v !== undefined) args[k] = String(v).slice(0, 2000);
           const run = runCommand(store, t.cmd, args, { ...person, chatId: t.chatId, chatType: t.chatType },
             { city: () => deps.cityOf(who.unionId), signer: deps.signer }, { viaForm: true });
-          const view = (r: Awaited<typeof run>) => ({ ok: r.ok, runId: r.runId, markdown: r.markdown, error: r.error, elapsedMs: r.elapsedMs });
-          // A run can take minutes (run limits); one still going after a short wait is handed to the page as a job to poll.
-          const quick = await Promise.race([run.then(r => ({ r }), e => ({ e })), new Promise<null>(ok => setTimeout(() => ok(null), deps.runWaitMs ?? (Number(process.env.AMBER_WEB_RUN_WAIT_MS) || 20_000)))]);
-          if (quick) { if ('e' in quick) throw quick.e; return json(res, 200, view(quick.r)); }
-          const id = randomBytes(12).toString('hex');
-          const job: WebJob = { owner: who.unionId };
-          jobs.set(id, job);
-          run.then(r => { job.done = view(r); }, e => { job.done = { ok: false, error: e instanceof AmberError ? e.code : 'internal', message: e instanceof AmberError ? e.message : '执行失败' }; })
-            .finally(() => { job.endedAt = Date.now(); });
-          return json(res, 200, { ok: true, pending: true, job: id });
+          return await longRun(res, who.unionId, run, r => ({ ok: r.ok, runId: r.runId, markdown: r.markdown, error: r.error, elapsedMs: r.elapsedMs }));
         }
         if (url.pathname === '/web/api/schedules') {
           const t = await target(store, deps, who.unionId, String(body.scope ?? ''), String(body.commandId ?? ''));
@@ -545,10 +602,14 @@ function schView(store: Store, s: ScheduleRow, viewer?: string, isAdmin?: (u: st
 /** What this person can see: their own commands (in their private chat and in groups they are in) and global
  *  commands (#4). An admin also sees everyone's commands, in every group, to look at and take offline. */
 async function overview(store: Store, deps: WebDeps, unionId: string) {
-  const groups: { chatId: string; name: string; commands: unknown[]; schedules: unknown[] }[] = [];
+  const groups: { chatId: string; name: string; commands: unknown[]; schedules: unknown[]; pages: unknown[] }[] = [];
   const admin = deps.isAdmin(unionId);
   let membershipUnknown = false;
-  for (const chatId of store.groupChatsWithContent()) {
+  const allPages = deps.pages ? store.listPages().filter(p => p.status === 'active') : [];
+  // A page is listed for its owner, for the people it is shared with, and for admins (to manage; opening still needs access).
+  const pagesIn = (chatId: string) => allPages.filter(p => p.chatId === chatId && (admin || p.ownerUnionId === unionId || p.access === 'group' || (p.access === 'members' && p.members.includes(unionId))))
+    .map(p => pageView(store, deps, p, unionId));
+  for (const chatId of [...new Set([...store.groupChatsWithContent(), ...allPages.filter(p => p.chatType === 'group').map(p => p.chatId)])]) {
     if (!admin) {
       const m = await deps.isMember(chatId, unionId);
       if (m === undefined) { membershipUnknown = true; continue; }
@@ -559,23 +620,42 @@ async function overview(store: Store, deps: WebDeps, unionId: string) {
     const orphans = new Set<string>();
     if (admin) for (const c of commands) if (await deps.isOrphan(c) === true) orphans.add(c.id);
     const schedules = store.schedulesInChat(chatId).filter(s => admin || s.creatorUnionId === unionId);
-    if (!commands.length && !schedules.length) continue;
+    const pages = pagesIn(chatId);
+    if (!commands.length && !schedules.length && !pages.length) continue;
     groups.push({
       chatId, name: (await deps.chatName(chatId)) ?? chatId,
       commands: commands.map(c => ({ ...cmdView(c, unionId, deps.isAdmin, store, deps.apps), orphan: orphans.has(c.id) })),
       schedules: schedules.map(s => schView(store, s, unionId, deps.isAdmin)),
+      pages,
     });
   }
   return {
     p2p: {
       commands: store.listActiveP2pByOwner(unionId).map(c => cmdView(c, unionId, deps.isAdmin, store, deps.apps)),
       schedules: store.schedulesByCreator(unionId).filter(s => s.chatType === 'p2p').map(s => schView(store, s, unionId)),
+      pages: allPages.filter(p => p.chatType === 'p2p' && p.ownerUnionId === unionId).map(p => pageView(store, deps, p, unionId)),
     },
     groups,
     global: store.listActiveGlobal().map(c => cmdView(c, unionId, deps.isAdmin, store, deps.apps)),
     membershipUnknown,
+    me: unionId,
     isAdmin: deps.isAdmin(unionId),
     ...(deps.isAdmin(unionId) && deps.hub ? { executors: await executorViews(store, deps) } : {}),
+  };
+}
+
+/** What the website shows about a page. Who may open it is shown to its owner (and admins) only. */
+function pageView(store: Store, deps: WebDeps, p: PageRow, viewer: string) {
+  const mine = p.ownerUnionId === viewer, admin = deps.isAdmin(viewer);
+  return {
+    id: p.id, name: p.name, version: p.version, updatedAt: p.updatedAt, mine, canDelete: mine || admin, url: `/p/${p.id}/`,
+    ...(mine || admin ? { access: p.access, members: p.members } : {}),
+    apps: p.apps.map(a => {
+      try {
+        const c = deps.pages!.resolveApp(p, a.name);
+        return { name: a.name, global: c.global, env: c.script.env ?? null, secrets: !!c.script.secrets?.length, confirm: !!c.options.confirm };
+      } catch (e) { return { name: a.name, missing: (e as Error).message }; }
+    }),
   };
 }
 
