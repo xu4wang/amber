@@ -69,6 +69,7 @@ amber retire <应用>                          下线应用，需要创建人或
 amber global <应用>                          设为全局，需要管理员在卡片上确认
 amber local <应用>                           取消全局，需要管理员在卡片上确认
 amber envs [--mine]                          已批准的运行环境（草稿里 env 写第一列）；--mine 只看从本机器人导出的
+amber page publish <目录> [--name 名字]      发布或更新页面应用，必须带 --user；见下面「页面应用」
 amber info                                   本机连的 Amber 服务、网站地址
 amber config set-url <地址>                  设置本机的 Amber 服务地址
 ```
@@ -126,6 +127,19 @@ $ amber wait 4f0c…
 
 **修改已有应用**：在同一个会话里用同一个名字提交草稿，就是这个应用的新版本。认领卡和审核文档会附上和当前版本的代码差异；新版本只能由原创建人认领；同一个应用同时只能有一个版本在认领或审核中。审核通过后旧版本自动下线，挂在旧版本上的定时任务暂停，并私聊创建人确认换绑。提交后，由人在认领卡上试运行、提交审核，审核人在飞书审批里同意后应用生效。agent 不能认领或审核。
 
+## 页面应用
+
+用户要一个能交互的网页（查数、看图表、写飞书）时，agent 写一个目录发布成[页面应用](pages.md)：
+
+```bash
+amber page publish ./shanghu --name shanghu --user zhangsan@example.com
+```
+
+- 目录里要有 `index.html`；`amber.json` 写明页面会调用哪些应用：`{"apps": ["注册商户数"]}`。点开头的文件和 `node_modules` 不会上传。最多 200 个文件、共 10MB
+- `--name` 是页面名：小写字母、数字和 `-`，以字母或数字开头，最多 40 个字符；不填就用目录名（转成小写）
+- 第一次发布，或者 `amber.json` 里的应用变了，会在会话里发确认卡片（附页面首屏截图），`--user` 那个人点「确认发布」后生效；命令返回 `awaiting`。只改页面内容直接生效，返回 `updated`，告诉用户刷新页面
+- 页面里怎么调用应用（`Amber.run`、`Amber.render` 等）见[页面应用](pages.md#给写页面的-agent)
+
 ## 接口（给不想用命令行的 agent）
 
 所有接口都在 `/v1/` 下，只放行白名单 IP。除标注 GET 的以外都是 POST，请求体为 JSON。会话上下文字段是 `chatId`、`chatType`、`user`、`replyTo`、`inThread`、`label`。
@@ -142,5 +156,6 @@ $ amber wait 4f0c…
 | POST | `/v1/commands/retire` | `command` |
 | POST | `/v1/commands/scope` | `command`、`global`（true 设为全局，false 取消全局） |
 | POST | `/v1/drafts` | 草稿 JSON |
+| POST | `/v1/pages` | `name`、`files`（`[{"path": "index.html", "data": "<base64>"}, …]`），必须带 `user`；请求体最大 16MB |
 | GET | `/v1/info` | 无，返回网站地址 `webUrl` 和本机名字 |
 | GET | `/v1/keys` | 无，返回公钥，见 [identity.md](identity.md) |
