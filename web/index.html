@@ -2,10 +2,11 @@
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
-<meta name="color-scheme" content="dark">
+<meta name="color-scheme" content="light dark">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Amber</title>
 <link rel="icon" href="/logo.svg">
+<script>try { if (localStorage.getItem('amber-theme') === 'dark') document.documentElement.dataset.theme = 'dark'; } catch {}</script>
 <script src="/vendor/marked.min.js"></script>
 <script src="/vendor/purify.min.js"></script>
 <script src="/vendor/vega.min.js"></script>
@@ -14,12 +15,25 @@
 <script src="/vendor/highlight.min.js"></script>
 <style>
 :root {
+  /* Light (default). The dark palette below applies when <html data-theme="dark">. */
+  color-scheme: light;
+  --bg: #ffffff; --panel: #ffffff; --card: #f4f4f4; --ink: #151515; --body-ink: #2b2b2b; --muted: #6b6b6b; --muted-2: #8f8f8f; --line: #e4e4e4; --line-2: #d2d2d2;
+  --accent: #f2a23a; --accent-press: #b8620e; --accent-hover: #ffb34d; --accent-ink: #a85a0c; --accent-soft: rgba(242, 162, 58, 0.18); --on-accent: #181818; --focus: #f2a23a; --ok: #03904a; --warn: #d92d20; --info: #2f7fa3;
+  --chip: #f0f0f0; --hover: #f2f2f2; --code-bg: #f6f6f6;
+  --hl-kw: #cf222e; --hl-str: #0a7d33; --hl-num: #b35900; --hl-cmt: #6e7781; --hl-fn: #0550ae; --hl-meta: #8250df;
+  --dg-bg: #ffffff; --dg-card: #f7f7f7; --dg-line: #c9c9c9; --dg-ink: #151515; --dg-muted: #5f5f5f; --dg-accent: #e0891c;
+  --font: Inter, -apple-system, BlinkMacSystemFont, "PingFang SC", "Noto Sans SC", system-ui, sans-serif;
+}
+:root[data-theme="dark"] {
   /* Cinematic dark: near-black canvas, one scarce Amber accent (the logo's #F2A23A), white type at weight 500, sharp corners. */
   --bg: #181818; --panel: #181818; --card: #303030; --ink: #ffffff; --muted: #969696; --muted-2: #666666; --line: #303030;
   --accent: #f2a23a; --accent-press: #b8620e; --accent-soft: rgba(242, 162, 58, 0.16); --on-accent: #181818; --ok: #03904a; --warn: #f13a2c; --info: #4c98b9;
   --chip: #303030; --hover: #222222; --code-bg: #111111;
   --hl-kw: #ff7b72; --hl-str: #a5d6a7; --hl-num: #ffb74d; --hl-cmt: #7d7d7d; --hl-fn: #90caf9; --hl-meta: #e5c07b;
   --font: Inter, -apple-system, BlinkMacSystemFont, "PingFang SC", "Noto Sans SC", system-ui, sans-serif;
+  color-scheme: dark;
+  --body-ink: #d6d6d6; --line-2: #444444; --accent-hover: #ffb34d; --accent-ink: #f2a23a; --focus: #ffd27a;
+  --dg-bg: #181818; --dg-card: #262626; --dg-line: #4a4a4a; --dg-ink: #ffffff; --dg-muted: #a8a8a8; --dg-accent: #f2a23a;
 }
 * { box-sizing: border-box; }
 html, body { height: 100%; }
@@ -30,7 +44,7 @@ header .brand { font-weight: 700; font-size: 17px; }
 header .who { margin-left: auto; color: var(--muted); font-size: 14px; display: flex; gap: 14px; align-items: center; }
 header .who-inner { display: flex; gap: 10px; align-items: center; }
 header .doclink { color: var(--muted); text-decoration: none; }
-header .doclink:hover { color: var(--accent); }
+header .doclink:hover { color: var(--accent-ink); }
 button, .btn { font: inherit; border: 1px solid var(--line); background: var(--panel); color: var(--ink); border-radius: 8px; padding: 6px 14px; cursor: pointer; text-decoration: none; display: inline-block; }
 .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
 .btn.danger { background: var(--warn); border-color: var(--warn); color: #fff; }
@@ -38,7 +52,7 @@ button, .btn { font: inherit; border: 1px solid var(--line); background: var(--p
 button:disabled { opacity: .55; cursor: default; }
 .note { color: var(--muted); font-size: 13px; }
 .chip { font-size: 12px; background: var(--chip); color: var(--muted); border-radius: 999px; padding: 1px 8px; font-weight: 400; white-space: nowrap; }
-.chip.accent { background: var(--accent-soft); color: var(--accent); }
+.chip.accent { background: var(--accent-soft); color: var(--accent-ink); }
 .chip.warn { color: var(--warn); }
 code { font-family: ui-monospace, Menlo, monospace; font-size: 13px; }
 
@@ -71,7 +85,7 @@ details.node details.node > summary { font-weight: 500; color: var(--muted); }
 .leaf .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .leaf .sub { color: var(--muted); font-size: 12px; margin-left: auto; white-space: nowrap; }
 .leaf:hover { background: var(--hover); }
-.leaf.sel { background: var(--accent-soft); color: var(--accent); }
+.leaf.sel { background: var(--accent-soft); color: var(--accent-ink); }
 .leaf .dot { width: 7px; height: 7px; border-radius: 50%; flex: none; background: var(--muted); }
 .leaf .dot.ok { background: var(--ok); } .leaf .dot.failed { background: var(--warn); } .leaf .dot.paused { background: var(--warn); }
 .leaf.sch.child { padding-left: 38px; font-size: 13px; }
@@ -80,7 +94,7 @@ details.node details.node > summary { font-weight: 500; color: var(--muted); }
 .leaf .state.active { color: var(--ok); } .leaf .state.paused { color: var(--warn); }
 .examples { flex: 1; font-size: 13px; color: var(--muted); line-height: 2; }
 .chip.ex { border: 1px solid var(--line); cursor: pointer; font: inherit; font-size: 12px; padding: 1px 8px; }
-.chip.ex:hover { border-color: var(--accent); color: var(--accent); }
+.chip.ex:hover { border-color: var(--accent); color: var(--accent-ink); }
 .empty-leaf { padding: 2px 6px 6px 22px; color: var(--muted); font-size: 13px; }
 
 /* right pane */
@@ -96,7 +110,7 @@ details.node details.node > summary { font-weight: 500; color: var(--muted); }
 .actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; align-items: center; }
 .tabs { display: flex; gap: 4px; margin-bottom: 12px; border-bottom: 1px solid var(--line); }
 .tabs button { border: none; border-bottom: 2px solid transparent; border-radius: 0; background: none; padding: 6px 12px; color: var(--muted); }
-.tabs button.on { color: var(--accent); border-bottom-color: var(--accent); font-weight: 600; }
+.tabs button.on { color: var(--accent-ink); border-bottom-color: var(--accent); font-weight: 600; }
 .output { border: 1px solid var(--line); border-radius: 12px; padding: 14px 18px; background: var(--panel); overflow-x: auto; }
 .output.err { border-color: var(--warn); color: var(--warn); }
 .output.wait { color: var(--muted); }
@@ -148,7 +162,7 @@ ul.paths li { padding: 1px 0; word-break: break-all; }
 /* ---- Ferrari-inspired overrides ---- */
 body { font-family: var(--font); font-size: 14px; letter-spacing: 0; }
 a { color: var(--ink); text-decoration-color: var(--accent); text-underline-offset: 3px; }
-a:hover { color: var(--accent); }
+a:hover { color: var(--accent-ink); }
 header { height: 64px; padding: 0 24px; border-bottom: 1px solid var(--line); }
 header img { border-radius: 0; }
 header .brand { font-weight: 500; font-size: 15px; letter-spacing: 1.4px; text-transform: uppercase; }
@@ -158,7 +172,7 @@ button, .btn { border-radius: 0; border: 1px solid var(--ink); background: trans
 button:hover, .btn:hover { background: var(--hover); }
 .btn.primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
 .btn.primary:active { background: var(--accent-press); border-color: var(--accent-press); color: #fff; }
-.btn.primary:hover { background: #ffb34d; border-color: #ffb34d; }
+.btn.primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
 .btn.danger { background: transparent; border-color: var(--warn); color: var(--warn); }
 .btn.small { padding: 6px 14px; font-size: 11px; letter-spacing: 1.1px; }
 .chip { background: var(--card); color: var(--ink); font-size: 11px; font-weight: 600; letter-spacing: 1.1px; padding: 2px 10px; }
@@ -168,7 +182,7 @@ button:hover, .btn:hover { background: var(--hover); }
 #tree { background: var(--panel); padding: 16px 8px 32px; }
 #pane { padding: 48px 56px 96px; }
 .search, .field input, .field select { border-radius: 4px; border: 1px solid var(--line); background: var(--bg); color: var(--ink); padding: 10px 14px; }
-.search:focus, .field input:focus, .field select:focus { outline: 2px solid #ffd27a; outline-offset: 1px; }
+.search:focus, .field input:focus, .field select:focus { outline: 2px solid var(--focus); outline-offset: 1px; }
 details.node > summary { border-radius: 0; font-size: 11px; font-weight: 600; letter-spacing: 1.1px; text-transform: uppercase; color: var(--muted); padding: 10px 8px 6px; }
 details.node > summary:hover { background: none; color: var(--ink); }
 .leaf { border-radius: 0; border-left: 2px solid transparent; padding: 7px 8px 7px 20px; }
@@ -182,12 +196,12 @@ details.node > summary:hover { background: none; color: var(--ink); }
 .box h3, .manage h3, .result-area h3 { font-size: 11px !important; font-weight: 600; letter-spacing: 1.1px; text-transform: uppercase; color: var(--muted); }
 .box .field input, .box .field select { background: var(--bg); }
 .field label { color: var(--muted); font-size: 13px; }
-.tabs { border-bottom: 1px solid #444; }
+.tabs { border-bottom: 1px solid var(--line-2); }
 .tabs button { border: none; border-bottom: 2px solid transparent; padding: 10px 16px; color: var(--muted); background: none; }
 .tabs button:hover { background: none; color: var(--ink); }
 .tabs button.on { color: var(--ink); border-bottom-color: var(--accent); font-weight: 700; }
 .output th { background: var(--bg); }
-.output th, .output td { border-color: #444; }
+.output th, .output td { border-color: var(--line-2); }
 .output.err { border: 1px solid var(--warn); }
 .code, pre.diff { border-radius: 0; border: none; background: var(--code-bg); }
 .code .gutter { border-right: 1px solid var(--line); }
@@ -209,16 +223,30 @@ details.node > summary:hover { background: none; color: var(--ink); }
 .btn.small { height: 40px; padding: 0 18px; font-size: 11px; letter-spacing: 1.1px; }
 .chip.ex { height: auto; }
 @media (max-width: 860px) { #pane { padding: 24px 16px 64px; } .pane-head h1 { font-size: 26px; } }
+
+/* ---- Light / dark switch ---- */
+.themebtn { display: inline-flex; align-items: center; justify-content: center; width: 36px; height: 36px; padding: 0; background: none; border: 1px solid transparent; color: var(--muted); cursor: pointer; letter-spacing: 0; }
+.themebtn:hover, .themebtn:focus-visible { background: none; color: var(--ink); border-color: var(--line); outline: none; }
+.themebtn svg { width: 18px; height: 18px; stroke: currentColor; stroke-width: 1.6; fill: none; }
+.themebtn .i-sun, :root[data-theme="dark"] .themebtn .i-moon { display: none; }
+:root[data-theme="dark"] .themebtn .i-sun { display: inline; }
 </style>
 </head>
 <body>
 <header>
   <img src="/logo.svg" alt="">
   <span class="brand">Amber</span>
-  <span class="who"><a class="doclink" href="/docs" target="_blank" rel="noopener">文档</a><span id="who" class="who-inner"></span></span>
+  <span class="who"><button class="themebtn" id="themebtn" type="button" title="切换浅色 / 深色"><svg class="i-moon" viewBox="0 0 20 20" aria-hidden="true"><path d="M16.5 12.5A7 7 0 0 1 7.5 3.5a7 7 0 1 0 9 9z"/></svg><svg class="i-sun" viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="3.5"/><path d="M10 1.5v2M10 16.5v2M1.5 10h2M16.5 10h2M4 4l1.4 1.4M14.6 14.6 16 16M4 16l1.4-1.4M14.6 5.4 16 4"/></svg></button><a class="doclink" href="/docs" target="_blank" rel="noopener">文档</a><span id="who" class="who-inner"></span></span>
 </header>
 <main id="app"><p class="note" style="padding:16px">加载中……</p></main>
 <script>
+// Light / dark: light unless this browser chose dark. Pages that draw with JS listen for "amber-theme".
+document.getElementById('themebtn').addEventListener('click', () => {
+  const dark = document.documentElement.dataset.theme !== 'dark';
+  if (dark) document.documentElement.dataset.theme = 'dark'; else delete document.documentElement.dataset.theme;
+  try { localStorage.setItem('amber-theme', dark ? 'dark' : 'light'); } catch {}
+  document.dispatchEvent(new Event('amber-theme'));
+});
 const FEISHU = '__FEISHU_CHAT_LINK__';
 const app = document.getElementById('app');
 const whoEl = document.getElementById('who');
@@ -285,7 +313,7 @@ function withValueLabels(spec) {
         { calculate: `${side} > 0 ? 'left' : 'right'`, as: '__align' },
         { calculate: `datum['${c}'] + '，' + format(datum['${v}'] / datum.__total, '.1%') + '\\n' + format(datum['${v}'], ',.0f')`, as: '__label' }],
       layer: [
-        { mark: { ...(typeof m === 'object' ? m : { type: 'arc' }), outerRadius: R, stroke: '#fff', strokeWidth: 1 }, encoding: { theta: { ...enc.theta, stack: true }, color: { ...enc.color, sort: null, legend: null }, tooltip: [{ field: c, type: 'nominal' }, { field: v, type: 'quantitative', format: ',.2~f' }] } },
+        { mark: { ...(typeof m === 'object' ? m : { type: 'arc' }), outerRadius: R, strokeWidth: 1 }, encoding: { theta: { ...enc.theta, stack: true }, color: { ...enc.color, sort: null, legend: null }, tooltip: [{ field: c, type: 'nominal' }, { field: v, type: 'quantitative', format: ',.2~f' }] } },
         { mark: { type: 'rule', strokeWidth: 1 }, encoding: { x: { field: '__x0', ...raw }, y: { field: '__y0', ...raw }, x2: { field: '__x1' }, y2: { field: '__y1' }, color: { ...enc.color, sort: null, legend: null } } },
         { mark: { type: 'rule', strokeWidth: 1 }, encoding: { x: { field: '__x1', ...raw }, y: { field: '__y1', ...raw }, x2: { field: '__x2' }, y2: { field: '__y1' }, color: { ...enc.color, sort: null, legend: null } } },
         ...['left', 'right'].map(al => ({ transform: [{ filter: `datum.__align === '${al}'` }], mark: { type: 'text', fontSize: 12, align: al, dx: al === 'left' ? 3 : -3, dy: -7, baseline: 'middle', lineBreak: '\n' }, encoding: { x: { field: '__x2', ...raw }, y: { field: '__y1', ...raw }, text: { field: '__label' }, color: { ...enc.color, sort: null, legend: null } } })),
@@ -329,20 +357,29 @@ function renderOutput(el, md) {
     const strip = o => { if (o && typeof o === 'object') { if (o.data && o.data.url) delete o.data.url; Object.values(o).forEach(strip); } };
     strip(spec);
     spec.width = spec.width ?? 'container';
-    try { vegaEmbed(div, spec, { actions: false, renderer: 'svg', config: CHART_CONFIG }).catch(() => { div.innerHTML = '<p class="note">（图表无法显示）</p>'; }); }
-    catch { div.innerHTML = '<p class="note">（图表无法显示）</p>'; }
+    div._spec = spec;
+    embedChart(div);
   });
 }
 
-// Charts on the dark canvas: grey labels and hairlines, Amber first in the palette.
-const CHART_CONFIG = {
-  background: 'transparent', font: 'Inter, -apple-system, "PingFang SC", sans-serif',
-  title: { color: '#ffffff', fontWeight: 500 }, view: { stroke: null },
-  axis: { labelColor: '#969696', titleColor: '#969696', domainColor: '#444444', gridColor: '#303030', tickColor: '#444444' },
-  legend: { labelColor: '#969696', titleColor: '#969696' },
-  text: { color: '#ffffff' }, mark: { color: '#f2a23a' },
-  range: { category: ['#f2a23a', '#ffffff', '#969696', '#4c98b9', '#666666', '#b8620e', '#ffd27a', '#03904a'] },
+// Charts follow the light / dark theme: grey labels and hairlines, Amber first in the palette.
+const chartConfig = () => {
+  const dark = document.documentElement.dataset.theme === 'dark';
+  const ink = dark ? '#ffffff' : '#151515', muted = dark ? '#969696' : '#6b6b6b', line = dark ? '#444444' : '#d2d2d2', grid = dark ? '#303030' : '#ececec';
+  return {
+    background: 'transparent', font: 'Inter, -apple-system, "PingFang SC", sans-serif',
+    title: { color: ink, fontWeight: 500 }, view: { stroke: null },
+    axis: { labelColor: muted, titleColor: muted, domainColor: line, gridColor: grid, tickColor: line },
+    legend: { labelColor: muted, titleColor: muted },
+    text: { color: ink }, mark: { color: '#f2a23a' }, arc: { stroke: dark ? '#181818' : '#ffffff' },
+    range: { category: dark ? ['#f2a23a', '#ffffff', '#969696', '#4c98b9', '#666666', '#b8620e', '#ffd27a', '#03904a'] : ['#f2a23a', '#151515', '#8f8f8f', '#2f7fa3', '#c4c4c4', '#b8620e', '#e6c35c', '#03904a'] },
+  };
 };
+const embedChart = div => {
+  try { vegaEmbed(div, div._spec, { actions: false, renderer: 'svg', config: chartConfig() }).catch(() => { div.innerHTML = '<p class="note">（图表无法显示）</p>'; }); }
+  catch { div.innerHTML = '<p class="note">（图表无法显示）</p>'; }
+};
+document.addEventListener('amber-theme', () => document.querySelectorAll('.chart').forEach(d => { if (d._spec) embedChart(d); }));
 
 function showOutput(el, r, meta) {
   el.className = 'output' + (r.ok ? '' : ' err');
@@ -386,12 +423,18 @@ function schLeaf(s, scope, orphan) {
     <span class="state ${s.status}">${state}</span></div>`;
 }
 
-function folder(title, scope, cmds, schs, open) {
+// Which folders are open. Empty when the page loads, so every folder starts folded; kept while the tree
+// is redrawn after an action.
+const OPEN = new Set();
+let searching = false;
+const node = (id, summary, inner) => `<details class="node" data-node="${esc(id)}"${OPEN.has(id) ? ' open' : ''}><summary>${summary}</summary>${inner}</details>`;
+
+function folder(title, scope, cmds, schs) {
   const ids = new Set(cmds.map(c => c.id));
   const orphans = schs.filter(s => !ids.has(s.commandId));   // e.g. the command was retired; the schedule is paused
   const inner = (cmds.length ? cmds.map(c => cmdLeaf(c, scope) + schs.filter(s => s.commandId === c.id).map(s => schLeaf(s, scope, false)).join('')).join('') : '<div class="empty-leaf">还没有应用</div>')
     + orphans.map(s => schLeaf(s, scope, true)).join('');
-  return `<details class="node" ${open ? 'open' : ''}><summary>${esc(title)}<span class="count">${cmds.length}</span></summary>${inner}</details>`;
+  return node(scope, `${esc(title)}<span class="count">${cmds.length}</span>`, inner);
 }
 
 function renderTree() {
@@ -399,36 +442,44 @@ function renderTree() {
   const o = DATA;
   let html = '<input class="search" id="q" placeholder="搜索应用">';
   if (o.membershipUnknown) html += '<div class="banner">Amber 暂时无法读取群成员，群里的应用先不显示。</div>';
-  html += folder('我的私聊', 'p2p', o.p2p.commands, o.p2p.schedules, true);
-  for (const g of o.groups) html += folder(`群：${g.name}`, 'group:' + g.chatId, g.commands, g.schedules, true);
-  html += folder('全局应用', 'global', o.global, [], true);
+  html += folder('我的私聊', 'p2p', o.p2p.commands, o.p2p.schedules);
+  const groupApps = o.groups.reduce((n, g) => n + g.commands.length, 0);
+  html += node('groups', `我的群聊<span class="count">${groupApps}</span>`,
+    o.groups.map(g => folder(g.name, 'group:' + g.chatId, g.commands, g.schedules)).join('') || '<div class="empty-leaf">还没有群里的应用</div>');
+  html += folder('全局应用', 'global', o.global, []);
   if (STORE && STORE.ok) {
-    html += `<details class="node"><summary>Amber Store<span class="count">${STORE.apps.length}</span></summary>${STORE.apps.map(a => {
+    html += node('store', `Amber Store<span class="count">${STORE.apps.length}</span>`, STORE.apps.map(a => {
       const key = 'a:' + a.id;
       ITEMS.set(key, { kind: 'app', a });
       return `<div class="leaf" data-key="${esc(key)}" data-search="${esc((a.name + ' ' + (a.description || '')).toLowerCase())}"><span class="name">${esc(a.name)}</span>${a.status === 'delisted' ? '<span class="chip warn">已下架</span>' : `<span class="sub">v${esc(a.version)}</span>`}</div>`;
-    }).join('') || '<div class="empty-leaf">还没有上架的应用</div>'}</details>`;
+    }).join('') || '<div class="empty-leaf">还没有上架的应用</div>');
   }
   if (o.isAdmin && o.executors) {
     const ST = { pending: '待批准', approved: '已批准', rejected: '已拒绝', revoked: '已撤销' };
     const pending = o.executors.filter(e => e.status === 'pending').length;
-    html += `<details class="node" ${pending ? 'open' : ''}><summary>执行端（管理员）<span class="count">${o.executors.length}</span></summary>${o.executors.map(e => {
+    html += node('executors', `执行端（管理员）${pending ? '<span class="chip warn">待批准</span>' : ''}<span class="count">${o.executors.length}</span>`, o.executors.map(e => {
       const key = 'e:' + e.id;
       ITEMS.set(key, { kind: 'exe', e });
       const state = e.status === 'approved' ? (e.online ? '在线' : '离线') : ST[e.status] || e.status;
       return `<div class="leaf" data-key="${esc(key)}" data-search="${esc(e.name)}"><span class="dot ${e.status === 'approved' ? (e.online ? 'ok' : 'failed') : 'running'}"></span><span class="name">${esc(e.name)}</span>${e.status === 'pending' ? '<span class="chip warn">待批准</span>' : `<span class="sub">${esc(state)}</span>`}</div>`;
-    }).join('') || '<div class="empty-leaf">还没有执行端登记</div>'}</details>`;
+    }).join('') || '<div class="empty-leaf">还没有执行端登记</div>');
   }
-  html += `<details class="node"><summary>最近运行<span class="count">${RUNS.length}</span></summary>${RUNS.map(r => {
+  html += node('runs', `最近运行<span class="count">${RUNS.length}</span>`, RUNS.map(r => {
     const key = 'r:' + r.id;
     ITEMS.set(key, { kind: 'run', r });
     return `<div class="leaf" data-key="${esc(key)}" data-search="${esc(r.command.toLowerCase())}"><span class="dot ${esc(r.status)}"></span><span class="name">${esc(r.command)}</span><span class="sub">${fmtTime(r.startedAt)} · ${esc(CH[r.channel] || r.channel)}</span></div>`;
-  }).join('') || '<div class="empty-leaf">还没有运行记录</div>'}</details>`;
+  }).join('') || '<div class="empty-leaf">还没有运行记录</div>');
   document.getElementById('tree').innerHTML = html;
+  document.querySelectorAll('#tree details.node').forEach(d => d.addEventListener('toggle', () => {
+    if (searching) return;   // opened by a search, not by the reader
+    if (d.open) OPEN.add(d.dataset.node); else OPEN.delete(d.dataset.node);
+  }));
   document.getElementById('q').addEventListener('input', e => {
     const q = e.target.value.trim().toLowerCase();
     document.querySelectorAll('#tree .leaf').forEach(l => { l.style.display = !q || l.dataset.search.includes(q) ? '' : 'none'; });
-    if (q) document.querySelectorAll('#tree details').forEach(d => { d.open = true; });
+    searching = !!q;
+    // While searching every folder is open; clearing the search puts back what the reader had open.
+    document.querySelectorAll('#tree details.node').forEach(d => { d.open = q ? true : OPEN.has(d.dataset.node); });
   });
   markSelected();
 }

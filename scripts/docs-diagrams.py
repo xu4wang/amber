@@ -3,31 +3,34 @@
 #   python3 scripts/docs-diagrams.py
 import sys, os
 OUT = sys.argv[1] if len(sys.argv) > 1 else os.path.join(os.path.dirname(__file__), '..', 'docs', 'assets')
-BG, CARD, LINE, INK, MUTED, ACC = '#181818', '#262626', '#4a4a4a', '#ffffff', '#a8a8a8', '#f2a23a'
+# Colours are CSS variables with the dark palette as fallback: the docs page inlines the SVG and sets the
+# variables for its light / dark theme; opened on its own (e.g. on GitHub) the SVG is dark.
+BG, CARD, LINE, INK, MUTED, ACC = ('var(--dg-bg, #181818)', 'var(--dg-card, #262626)', 'var(--dg-line, #4a4a4a)',
+                                   'var(--dg-ink, #ffffff)', 'var(--dg-muted, #a8a8a8)', 'var(--dg-accent, #f2a23a)')
 FONT = "-apple-system, BlinkMacSystemFont, 'PingFang SC', 'Hiragino Sans GB', 'Noto Sans CJK SC', 'Microsoft YaHei', sans-serif"
 
 def esc(s): return s.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
 
 class D:
-    def __init__(s, w, h, title):
-        s.w, s.h, s.el = w, h, []
+    def __init__(s, id, w, h, title):
+        s.id, s.w, s.h, s.el = id, w, h, []
         s.title = title
     def box(s, x, y, w, h, title, lines=(), accent=False, dashed=False):
-        st = f'stroke="{ACC if accent else LINE}" stroke-width="{2 if accent else 1.2}"' + (' stroke-dasharray="5 4"' if dashed else '')
-        s.el.append(f'<rect x="{x}" y="{y}" width="{w}" height="{h}" fill="{CARD}" {st}/>')
+        st = f'style="fill: {CARD}; stroke: {ACC if accent else LINE}" stroke-width="{2 if accent else 1.2}"' + (' stroke-dasharray="5 4"' if dashed else '')
+        s.el.append(f'<rect x="{x}" y="{y}" width="{w}" height="{h}" {st}/>')
         n = len(lines)
         ty = y + h / 2 - (n * 20) / 2 + (6 if n else 6)
         s.text(x + w / 2, ty, title, 17, INK, 600)
         for i, l in enumerate(lines):
             s.text(x + w / 2, ty + 23 + i * 21, l, 14, MUTED)
     def region(s, x, y, w, h, label):
-        s.el.append(f'<rect x="{x}" y="{y}" width="{w}" height="{h}" fill="none" stroke="{LINE}" stroke-dasharray="4 4"/>')
+        s.el.append(f'<rect x="{x}" y="{y}" width="{w}" height="{h}" style="fill: none; stroke: {LINE}" stroke-dasharray="4 4"/>')
         s.text(x + 12, y + 20, label, 12, MUTED, 600, 'start')
     def text(s, x, y, t, size=13, color=INK, weight=400, anchor='middle'):
-        s.el.append(f'<text x="{x}" y="{y}" font-size="{size}" fill="{color}" font-weight="{weight}" text-anchor="{anchor}">{esc(t)}</text>')
+        s.el.append(f'<text x="{x}" y="{y}" font-size="{size}" style="fill: {color}" font-weight="{weight}" text-anchor="{anchor}">{esc(t)}</text>')
     def arrow(s, pts, label=None, lx=None, ly=None, color=ACC, anchor='middle'):
         d = 'M' + ' L'.join(f'{x} {y}' for x, y in pts)
-        s.el.append(f'<path d="{d}" fill="none" stroke="{color}" stroke-width="1.6" marker-end="url(#ah)"/>')
+        s.el.append(f'<path d="{d}" style="fill: none; stroke: {color}" stroke-width="1.6" marker-end="url(#ah-{s.id})"/>')
         if label:
             if lx is None:
                 (x1, y1), (x2, y2) = pts[0], pts[-1]
@@ -36,12 +39,12 @@ class D:
     def save(s, name):
         svg = (f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {s.w} {s.h}" width="{s.w}" height="{s.h}" font-family="{FONT}" role="img" aria-label="{esc(s.title)}">'
                f'<title>{esc(s.title)}</title>'
-               f'<defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="{ACC}"/></marker></defs>'
-               f'<rect width="100%" height="100%" fill="{BG}"/>' + ''.join(s.el) + '</svg>\n')
+               f'<defs><marker id="ah-{s.id}" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" style="fill: {ACC}"/></marker></defs>'
+               f'<rect width="100%" height="100%" style="fill: {BG}"/>' + ''.join(s.el) + '</svg>\n')
         open(os.path.join(OUT, name), 'w', encoding='utf-8').write(svg)
 
 # 1. 应用的生命周期
-d = D(960, 430, '应用的生命周期：草稿经认领、试运行和审核后生效；生效的应用可以执行、定时、设置配置项和密钥、分享')
+d = D('lifecycle', 960, 430, '应用的生命周期：草稿经认领、试运行和审核后生效；生效的应用可以执行、定时、设置配置项和密钥、分享')
 y, h = 40, 76
 d.box(30, y, 150, h, '草稿', ['agent 写的脚本和参数'])
 d.box(260, y, 170, h, '认领与试运行', ['创建人负责'])
@@ -54,7 +57,7 @@ d.text(595, y + h + 24, '驳回后改好，用同一个名字重新提交', 13, 
 # fan out
 bx, by, bw, bh = [30, 260, 490, 720], 250, 210, 140
 cx = 835
-d.el.append(f'<path d="M{cx} {y + h} L{cx} 200 L{bx[0] + bw / 2} 200" fill="none" stroke="{ACC}" stroke-width="1.6"/>')
+d.el.append(f'<path d="M{cx} {y + h} L{cx} 200 L{bx[0] + bw / 2} 200" style="fill: none; stroke: {ACC}" stroke-width="1.6"/>')
 for x in bx:
     d.arrow([(x + bw / 2, 200), (x + bw / 2, by - 2)])
 d.box(bx[0], by, bw, bh, '执行', ['飞书、网站、agent', '以执行人的身份'])
@@ -64,7 +67,7 @@ d.box(bx[3], by, bw, bh, '分享', ['复制给同群的人', '上架到 Store �
 d.save('lifecycle.svg')
 
 # 2. 执行位置
-d = D(960, 300, '执行位置：不写运行环境的应用在 Amber 本机沙箱运行，看不到业务数据；写了 env 的应用在执行端上、按运行环境的权限在沙箱里运行')
+d = D('run-location', 960, 300, '执行位置：不写运行环境的应用在 Amber 本机沙箱运行，看不到业务数据；写了 env 的应用在执行端上、按运行环境的权限在沙箱里运行')
 d.box(30, 110, 170, 80, '应用', ['审核过的代码'], accent=True)
 d.box(300, 30, 300, 80, 'Amber 本机的沙箱', ['只有本次运行的临时目录', '看不到任何业务数据'])
 d.region(300, 150, 630, 130, '数据所在的机器')
@@ -78,7 +81,7 @@ d.arrow([(710, 225), (748, 225)])
 d.save('run-location.svg')
 
 # 3. 执行端的工作方式
-d = D(960, 290, '执行端的工作方式：执行端主动连接 Amber；Amber 把签名并加密的任务发给执行端，执行端验签、核对代码哈希后按运行环境的权限执行，把遮盖了密钥的结果返回')
+d = D('executor-flow', 960, 290, '执行端的工作方式：执行端主动连接 Amber；Amber 把签名并加密的任务发给执行端，执行端验签、核对代码哈希后按运行环境的权限执行，把遮盖了密钥的结果返回')
 d.box(40, 70, 230, 150, 'Amber', ['保存审核过的应用', '签名任务，用执行端的', '公钥加密代码、参数、密钥'], accent=True)
 d.region(560, 30, 370, 240, '数据所在的机器')
 d.box(590, 70, 310, 150, '执行端', ['验签、核对收件人和有效期', '重新计算代码哈希并比对', '按运行环境的权限在沙箱里执行'])
@@ -88,7 +91,7 @@ d.text(300, 250, '连接由执行端发起，执行端那台机器不用开端�
 d.save('executor-flow.svg')
 
 # 4. 可信身份示例的调用流程
-d = D(960, 330, '可信身份的调用流程：执行人点执行，Amber 为执行人签发凭证并在沙盒里运行脚本，脚本带凭证调用服务，服务验签后按执行人的权限返回数据')
+d = D('identity-flow', 960, 330, '可信身份的调用流程：执行人点执行，Amber 为执行人签发凭证并在沙盒里运行脚本，脚本带凭证调用服务，服务验签后按执行人的权限返回数据')
 xs, w, y, h = [20, 260, 500, 740], 200, 70, 110
 d.box(xs[0], y, w, h, '执行人', ['在飞书或网站点「执行」', '身份来自飞书'])
 d.box(xs[1], y, w, h, 'Amber', ['核对应用版本', '签发凭证', 'sub = 执行人'], accent=True)
