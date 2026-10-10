@@ -280,6 +280,75 @@ table.audit .mono { font-family: ui-monospace, Menlo, monospace; font-size: 11px
 .pg-members input { margin: 0; accent-color: var(--accent); }
 .pg-warn { border-left: 3px solid var(--warn); background: var(--bg); padding: 8px 12px; font-size: 13px; color: var(--body-ink); margin: 0 0 12px; }
 .pg-foot { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+/* Landing page (logged out) */
+#app.center:has(.landing) { display: block; }
+.landing { color: var(--body-ink); line-height: 1.75; }
+.landing section { padding: 56px 0; }
+.lp-wrap { max-width: 1040px; margin: 0 auto; padding: 0 24px; }
+@media (max-width: 640px) { .lp-wrap { padding: 0 16px; } .landing section { padding: 40px 0; } }
+.landing h2 { font-size: 26px; font-weight: 600; color: var(--ink); margin: 0 0 20px; line-height: 1.4; }
+.landing h3 { font-size: 17px; font-weight: 600; color: var(--ink); margin: 0 0 8px; line-height: 1.45; }
+.landing p { margin: 0; }
+.landing ul, .landing ol { margin: 0; padding-left: 20px; }
+.landing li { margin-bottom: 4px; }
+.lp-kicker { color: var(--accent-ink); font-weight: 700; font-size: 13px; letter-spacing: 1.5px; margin-bottom: 10px; }
+.lp-hero { background: #181818; color: #d9d2c7; }
+.lp-hero-in { display: grid; grid-template-columns: minmax(0, 1fr) 360px; gap: 48px; align-items: center; }
+@media (max-width: 900px) { .lp-hero-in { grid-template-columns: 1fr; gap: 32px; } }
+.lp-hero .lp-kicker { color: var(--accent); letter-spacing: 3px; }
+.lp-hero h1 { color: #fff; font-size: clamp(30px, 4.6vw, 46px); font-weight: 700; line-height: 1.3; margin: 0; letter-spacing: 0; }
+.lp-hero h1 em { font-style: normal; color: var(--accent); }
+.lp-lead { font-size: 18px; color: #cfc8bd; margin-top: 18px !important; }
+.lp-slogan { display: inline-block; margin-top: 24px; padding: 6px 14px; border: 1px solid #3a342c; color: #f2c27a; font-size: 14px; }
+.lp-login { background: var(--panel); color: var(--body-ink); padding: 24px 26px; }
+.lp-login ol { margin: 4px 0 18px; }
+.lp-login .btn { display: block; text-align: center; padding: 10px 14px; }
+.lp-login .note { margin-top: 12px; }
+.lp-card { background: var(--card); padding: 22px 24px; }
+.lp-card.on { box-shadow: inset 0 0 0 2px var(--accent); }
+.lp-tag { display: inline-block; font-size: 12px; font-weight: 700; padding: 2px 10px; margin-bottom: 12px; background: var(--accent-soft); color: var(--accent-ink); }
+.lp-tag.bad { background: rgba(217, 45, 32, 0.12); color: var(--warn); }
+.lp-vs { display: grid; grid-template-columns: 1fr auto 1fr; gap: 16px; align-items: stretch; }
+.lp-arrow { align-self: center; color: var(--accent); font-size: 28px; font-weight: 700; }
+@media (max-width: 760px) { .lp-vs { grid-template-columns: 1fr; } .lp-arrow { transform: rotate(90deg); justify-self: center; } }
+.lp-why { display: grid; grid-template-columns: 420px minmax(0, 1fr); gap: 32px; align-items: center; margin-top: 32px; }
+.lp-why img { width: 100%; height: auto; display: block; }
+@media (max-width: 860px) { .lp-why { grid-template-columns: 1fr; gap: 16px; } }
+.lp-uses { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-bottom: 20px; }
+@media (max-width: 860px) { .lp-uses { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 460px) { .lp-uses { grid-template-columns: 1fr; } }
+.lp-use { background: var(--card); padding: 16px 18px; position: relative; }
+.lp-use b { display: block; color: var(--ink); padding-right: 14px; }
+.lp-use span { display: block; color: var(--muted); font-size: 13px; margin-top: 2px; }
+.lp-use.id::after, .lp-legend i { content: ''; position: absolute; top: 14px; right: 14px; width: 9px; height: 9px; border-radius: 50%; background: var(--accent); }
+.lp-idbox { border-left: 4px solid var(--accent); background: var(--card); padding: 22px 26px; }
+.lp-idbox h3 { font-size: 19px; margin-bottom: 10px; }
+.lp-idbox p { margin-bottom: 10px; }
+.lp-idbox b { color: var(--accent-ink); }
+.lp-legend { position: relative; padding-left: 18px; color: var(--muted); font-size: 13px; margin: 0 !important; }
+.lp-legend i { top: 8px; left: 0; right: auto; }
+.lp-grid2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+@media (max-width: 680px) { .lp-grid2 { grid-template-columns: 1fr; } }
+.lp-num { color: var(--accent); font-weight: 800; font-size: 14px; letter-spacing: 1px; }
+.lp-band { background: var(--card); }
+.lp-band h3.bad { color: var(--warn); }
+.lp-band h3.good { color: var(--ok); }
+.lp-sub { color: var(--muted); margin: -8px 0 20px !important; }
+.lp-steps { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; counter-reset: lp; }
+@media (max-width: 760px) { .lp-steps { grid-template-columns: 1fr; } }
+.lp-steps .lp-card::before { counter-increment: lp; content: counter(lp); display: flex; align-items: center; justify-content: center; width: 30px; height: 30px; background: var(--accent); color: #181818; font-weight: 800; margin-bottom: 12px; }
+.lp-say { display: block; margin-top: 12px; padding: 8px 12px; background: var(--accent-soft); color: var(--accent-ink); font-size: 14px; }
+.lp-faq { background: var(--card); padding: 14px 20px; margin-bottom: 10px; }
+.lp-faq summary { cursor: pointer; color: var(--ink); font-weight: 600; list-style: none; }
+.lp-faq summary::-webkit-details-marker { display: none; }
+.lp-faq summary::before { content: '+'; display: inline-block; width: 20px; color: var(--accent); font-weight: 800; }
+.lp-faq[open] summary::before { content: '−'; }
+.lp-faq p { margin: 10px 0 2px 20px; }
+.lp-cta { background: #181818; color: #cfc8bd; }
+.lp-cta h2 { color: #fff; margin-bottom: 6px; }
+.lp-cta-in { display: flex; align-items: center; justify-content: space-between; gap: 24px; flex-wrap: wrap; }
+.lp-cta-btns { display: flex; gap: 12px; flex-wrap: wrap; }
+.lp-cta .btn:not(.primary) { background: transparent; color: #fff; border-color: #555; }
 </style>
 </head>
 <body>
@@ -304,23 +373,111 @@ const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': 
 const fmtTime = t => { const d = new Date(t); return `${d.getMonth() + 1}-${d.getDate()} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`; };
 const CH = { bot: '飞书', web: '网站', agent: 'agent', schedule: '定时', page: '页面', 'bot.trial': '试运行', 'agent.trial': '试运行' };
 
+// Logged out: the landing page. What Amber is for, in plain words, with the way in (log in from Feishu) up top.
 function loginView() {
   whoEl.innerHTML = '';
   app.className = 'center';
-  app.innerHTML = `
-    <div class="login">
-      <img class="why" src="/docs/assets/amber-why.gif" width="520" height="292" alt="为什么叫 Amber：琥珀把一瞬间封存起来，多年后取出还是原样。Amber 把和 AI 一起跑通的操作封存起来，审核通过后按哈希锁定，以后每次执行都和审核时一模一样。">
-      <div class="login-side">
-      <h2 class="login-title">登录 Amber 网站</h2>
-      <div class="steps"><ol>
-        <li>在飞书里打开与 <b>Amber</b> 的私聊</li>
-        <li>发送「<b>登录</b>」</li>
-        <li>点卡片上的「打开 Amber 网站」</li>
-      </ol></div>
+  const loginCard = `<div class="lp-login">
+      <h3>登录 Amber 网站</h3>
+      <ol><li>在飞书里打开与 <b>Amber</b> 的私聊</li><li>发送「<b>登录</b>」</li><li>点卡片上的「打开 Amber 网站」</li></ol>
       <a class="btn primary" href="${esc(FEISHU)}">打开 Amber 私聊</a>
-      <p class="note" style="margin-top:20px">登录链接 5 分钟内有效、只能用一次，请不要转发给别人。</p>
-      </div>
+      <p class="note">登录链接 5 分钟内有效、只能用一次，请不要转发给别人。</p>
     </div>`;
+  app.innerHTML = `<div class="landing">
+    <section class="lp-hero"><div class="lp-wrap lp-hero-in">
+      <div>
+        <div class="lp-kicker">AMBER</div>
+        <h1>AI 做对一次的事，<br>变成<em>随时能用、每次都对</em>的按钮</h1>
+        <p class="lp-lead">查数据、写文档、盯异常、调公司的系统……你在飞书里让 AI 机器人做的事，只要做对过一次，Amber 就能把它固定成一个按钮：以后谁按，都按同样的方式、以自己的身份做成。</p>
+        <div class="lp-slogan">AI 跑通的，Amber 封存。</div>
+      </div>
+      ${loginCard}
+    </div></section>
+
+    <section><div class="lp-wrap">
+      <div class="lp-kicker">打个比方</div>
+      <h2>从「每次凭感觉做菜」到「照着签过字的菜谱做」</h2>
+      <div class="lp-vs">
+        <div class="lp-card"><span class="lp-tag bad">只靠 AI 机器人</span><h3>聪明的新厨师，每次凭感觉</h3><p>今天的红烧肉很好吃，明天再让他做，盐放多少、火候怎样，他又重新想一遍。味道可能变了，而有时你根本没发现。</p></div>
+        <div class="lp-arrow">→</div>
+        <div class="lp-card on"><span class="lp-tag">用上 Amber</span><h3>写成菜谱，主厨尝过签字</h3><p>把做对的那次写成菜谱，请主厨尝过、签字，锁进柜子。以后谁要这道菜，都照这份菜谱做，味道每次一样。要改菜谱，得重新尝、重新签。</p></div>
+      </div>
+      <div class="lp-why"><img src="/docs/assets/amber-why.gif" width="520" height="292" alt="为什么叫 Amber：琥珀把一瞬间封存起来，多年后取出还是原样。Amber 把和 AI 一起跑通的操作封存起来，审核通过后锁定，以后每次执行都和审核时一模一样。">
+        <div><h3>为什么叫 Amber</h3><p>琥珀能把一瞬间封存起来，多年后取出来还是原样。Amber 把你和 AI 一起做对的那一次封存起来，审核通过后锁定，以后每次执行都和审核时一模一样。</p></div></div>
+    </div></section>
+
+    <section><div class="lp-wrap">
+      <div class="lp-kicker">能做成按钮的事</div>
+      <h2>机器人做过的事，大多都可以</h2>
+      <div class="lp-uses">
+        ${[['查数据、出报表', '按执行人自己的数据权限出数', 1], ['写飞书文档、表格', '把结果整理好写进去'], ['定时盯异常', '每天自动检查，有问题才提醒'], ['调用公司其他系统', '代码仓库、工单这类要账号的系统', 1],
+          ['读机器人电脑上的记录', '比如机器人自己维护的台账', 1], ['通知同事或别的机器人', '把结果交给下一个环节'], ['做成能点的网页', '选条件、点按钮，结果实时出来'], ['生成图表和汇总', '把一堆数字整理成一眼能看懂的样子']]
+          .map(([t, d, id]) => `<div class="lp-use${id ? ' id' : ''}"><b>${t}</b><span>${d}</span></div>`).join('')}
+      </div>
+      <div class="lp-idbox">
+        <h3>其中最需要 Amber 的，是「要知道是谁在做」的事</h3>
+        <p>查数据就是最典型的一种：同一个查询，经理和专员能看到的范围本来就不一样。直接让机器人做，它分不清是谁在问，要么查不到，要么谁都能借它的权限查。</p>
+        <p>Amber 的规则很简单：<b>谁按按钮，就以谁的身份去做</b>。能看什么、能动什么，跟他本人一样；用到某个人的账号或密码时，只有这个人自己能用，别人拿不到。每一次都有记录，说得清是谁做的。</p>
+        <p class="lp-legend"><i></i>上面带这个标记的，都是需要身份的事</p>
+      </div>
+    </div></section>
+
+    <section><div class="lp-wrap">
+      <div class="lp-kicker">对你有什么好处</div>
+      <h2>四件你会在意的事</h2>
+      <div class="lp-grid2">
+        <div class="lp-card"><div class="lp-num">01</div><h3>每次都按同样的方式做</h3><p>同一个按钮，今天按、下个月按，做法都一样：数字是同一个口径，文档是同一个格式，检查是同一套规则。</p></div>
+        <div class="lp-card"><div class="lp-num">02</div><h3>快，而且省事</h3><p>不用每次跟机器人解释半天。在飞书里说一句或点一下，几秒出结果。也可以设成每天早上自动发到群里，有异常才提醒你。</p></div>
+        <div class="lp-card"><div class="lp-num">03</div><h3>能直接给同事用</h3><p>你做好的按钮，复制一份给同事就能用，不用他再从头教一遍机器人。还能做成网页，大家选条件、点按钮就行。</p></div>
+        <div class="lp-card"><div class="lp-num">04</div><h3>不会越权，出了事说得清</h3><p>谁按就以谁的身份做，借不了别人的权限。每个按钮上线前都有专人检查过它会做什么，谁在什么时候做了什么都有记录。</p></div>
+      </div>
+    </div></section>
+
+    <section class="lp-band"><div class="lp-wrap">
+      <div class="lp-kicker">一个小例子</div>
+      <h2>小K的周一早上</h2>
+      <p class="lp-sub">以每周看一次数据为例；写周报、盯异常、给系统提单，道理一样。</p>
+      <div class="lp-grid2">
+        <div><h3 class="bad">以前</h3><ul><li>每周一问机器人「上周各区域新增了多少客户」</li><li>每次都要等一会儿，有时还要来回解释口径</li><li>偶尔两次问出来的数字对不上，不知道该信哪个</li><li>同组的小李想看，只能自己再问一遍</li></ul></div>
+        <div><h3 class="good">现在</h3><ul><li>第一次做对后，跟机器人说「存进 Amber」，审核通过</li><li>每周一 9 点，结果自动发到群里，口径永远一致</li><li>想看别的时间段，点一下、换个天数就行</li><li>小李也装了一份，看到的是他自己权限内的数据</li></ul></div>
+      </div>
+    </div></section>
+
+    <section><div class="lp-wrap">
+      <div class="lp-kicker">怎么用</div>
+      <h2>三步，不用学编程</h2>
+      <div class="lp-steps">
+        <div class="lp-card"><h3>先让机器人把事做对</h3><p>和平时一样，在飞书里跟你的 AI 机器人说要做什么，直到结果是你要的。</p><span class="lp-say">「帮我查一下上周各区域的新增客户数」</span></div>
+        <div class="lp-card"><h3>说一句「存进 Amber」</h3><p>机器人会把它整理好提交。你在卡片上试一下、提交审核，审核通过就上线了。</p><span class="lp-say">「把刚才这个存进 Amber，天数做成参数」</span></div>
+        <div class="lp-card"><h3>以后随时用</h3><p>在飞书里一句话或点一下就出结果；也可以定时自动跑，或者分享给同事。</p><span class="lp-say">「每天早上 9 点跑一下，有异常再提醒我」</span></div>
+      </div>
+    </div></section>
+
+    <section><div class="lp-wrap">
+      <div class="lp-kicker">什么时候用</div>
+      <h2>临时问题问机器人，常做的事放进 Amber</h2>
+      <div class="lp-grid2">
+        <div class="lp-card"><h3>直接问机器人就好</h3><ul><li>一次性的、临时想知道的问题</li><li>还在摸索、需求每次都不一样</li><li>只有自己看、不碰敏感数据</li></ul></div>
+        <div class="lp-card on"><h3>适合放进 Amber</h3><ul><li>经常要做、每周每天都要看</li><li>要给同事或整个群用</li><li>要定时自动跑、有异常才提醒</li><li>要知道是谁在做：按各自的权限查数据、用各自的账号办事</li><li>会写数据、发消息、改系统，需要先有人把关</li></ul></div>
+      </div>
+    </div></section>
+
+    <section><div class="lp-wrap">
+      <div class="lp-kicker">常见问题</div>
+      <h2>你可能会问</h2>
+      ${[['我要学编程吗？', '不用。跟以前一样跟机器人说话，最后多说一句「存进 Amber」。代码由机器人写，检查由审核人负责。'],
+        ['为什么要审核？会不会很慢？', '审核一次，以后无限次用。就像新菜谱上菜单前，主厨要先尝一次。审核在飞书审批里完成，通过后马上就能用。'],
+        ['和直接问机器人有什么区别？', '问机器人是「每次现想」，Amber 是「照做对的那次去做」。所以结果更稳定、更快，而且能放心交给别人用。'],
+        ['同事用我的按钮，是用谁的身份？', '用他自己的。查数据只能看到他有权限看的；按钮要用到你的账号或密码时，只有你自己能用，同事拿不到。'],
+        ['除了查数据，还能做什么？', '机器人做过的事大多可以：写飞书文档、定时检查、调用公司其他系统、通知同事或机器人、做成能点的网页等。查数据只是最常见、也最需要分清身份的一种。']]
+        .map(([q, a]) => `<details class="lp-faq"><summary>${q}</summary><p>${a}</p></details>`).join('')}
+    </div></section>
+
+    <section class="lp-cta"><div class="lp-wrap lp-cta-in">
+      <div><h2>开始用 Amber</h2><p>在飞书里私聊 Amber 发「登录」，或者先看看文档。</p></div>
+      <div class="lp-cta-btns"><a class="btn primary" href="${esc(FEISHU)}">打开 Amber 私聊</a><a class="btn" href="/docs" target="_blank" rel="noopener">阅读文档</a></div>
+    </div></section>
+  </div>`;
 }
 
 async function post(path, body) {
