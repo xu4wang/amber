@@ -2,6 +2,7 @@
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
+<meta name="color-scheme" content="dark">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>__TITLE__</title>
 <link rel="icon" href="/logo.svg">
@@ -10,21 +11,12 @@
 <script src="/vendor/highlight.min.js"></script>
 <style>
 :root {
-  --bg: #f7f5f1; --panel: #ffffff; --ink: #1d1a16; --muted: #6b645b; --line: #e6e0d6;
-  --accent: #b8620e; --accent-soft: #fbefe0; --code-bg: #f3efe8;
-  --hl-kw: #9a3e9a; --hl-str: #2f7d4f; --hl-num: #b8620e; --hl-cmt: #8a8177; --hl-fn: #2a5db0; --hl-meta: #8a5a00;
-}
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) {
-    --bg: #14110e; --panel: #1d1915; --ink: #ece6dd; --muted: #a39a8e; --line: #322b24;
-    --accent: #f2a23a; --accent-soft: #2e2214; --code-bg: #221d18;
-    --hl-kw: #d39bd6; --hl-str: #8fd19e; --hl-num: #f2a23a; --hl-cmt: #8f877b; --hl-fn: #82aaff; --hl-meta: #e5c07b;
-  }
-}
-:root[data-theme="dark"] {
-  --bg: #14110e; --panel: #1d1915; --ink: #ece6dd; --muted: #a39a8e; --line: #322b24;
-  --accent: #f2a23a; --accent-soft: #2e2214; --code-bg: #221d18;
-  --hl-kw: #d39bd6; --hl-str: #8fd19e; --hl-num: #f2a23a; --hl-cmt: #8f877b; --hl-fn: #82aaff; --hl-meta: #e5c07b;
+  /* Ferrari-inspired: near-black canvas, one scarce red accent, white type at weight 500, sharp corners. */
+  --bg: #181818; --panel: #181818; --card: #303030; --ink: #ffffff; --muted: #969696; --muted-2: #666666; --line: #303030;
+  --accent: #da291c; --accent-press: #b01e0a; --accent-soft: rgba(218, 41, 28, 0.16); --ok: #03904a; --warn: #f13a2c; --info: #4c98b9;
+  --chip: #303030; --hover: #222222; --code-bg: #111111;
+  --hl-kw: #ff7b72; --hl-str: #a5d6a7; --hl-num: #ffb74d; --hl-cmt: #7d7d7d; --hl-fn: #90caf9; --hl-meta: #e5c07b;
+  --font: Inter, -apple-system, BlinkMacSystemFont, "PingFang SC", "Noto Sans SC", system-ui, sans-serif;
 }
 * { box-sizing: border-box; }
 body { margin: 0; background: var(--bg); color: var(--ink); font: 16px/1.75 "PingFang SC", "Noto Sans SC", system-ui, sans-serif; }
@@ -68,6 +60,37 @@ article blockquote { margin: 12px 0; padding: 4px 16px; border-left: 3px solid v
   nav .toc { display: none; }
   article { padding: 16px 16px 60px; }
 }
+
+/* ---- Ferrari-inspired overrides ---- */
+body { font-family: var(--font); font-size: 15px; }
+header { height: 64px; padding: 0 24px; }
+header img { border-radius: 0; }
+header .brand { font-weight: 500; font-size: 15px; letter-spacing: 1.4px; text-transform: uppercase; }
+header .back, header .gh { font-size: 12px; font-weight: 600; letter-spacing: 0.65px; text-transform: uppercase; }
+header .back:hover, header .gh:hover { color: var(--ink); }
+nav { top: 65px; max-height: calc(100vh - 65px); padding: 32px 12px; }
+nav .group { font-size: 11px; font-weight: 600; letter-spacing: 1.1px; text-transform: uppercase; color: var(--muted-2); margin: 20px 10px 6px; }
+nav a { border-radius: 0; border-left: 2px solid transparent; color: var(--muted); }
+nav a:hover { background: none; color: var(--ink); }
+nav a.cur { background: none; color: var(--ink); font-weight: 600; border-left-color: var(--accent); }
+nav .toc a { color: var(--muted-2); }
+nav .toc a:hover { color: var(--ink); }
+article { padding: 48px 56px 128px; color: #d6d6d6; }
+article h1 { font-size: 56px; font-weight: 500; letter-spacing: -1.12px; line-height: 1.1; color: var(--ink); margin: 8px 0 32px; }
+article h2 { font-size: 26px; font-weight: 500; letter-spacing: 0.2px; color: var(--ink); border-top: 1px solid var(--line); margin: 64px 0 16px; padding-top: 32px; }
+article h3 { font-size: 18px; font-weight: 500; color: var(--ink); }
+article strong { color: var(--ink); font-weight: 600; }
+article a { color: var(--ink); text-decoration-color: var(--accent); text-underline-offset: 3px; }
+article a:hover { color: var(--accent); }
+article table { font-size: 14px; }
+article th { background: var(--card); color: var(--ink); font-weight: 600; }
+article th, article td { border-color: #3a3a3a; }
+article code { background: var(--card); border-radius: 0; color: var(--ink); }
+article pre { background: var(--code-bg); border: none; border-radius: 0; }
+article pre code { background: none; }
+article blockquote { border-left: 2px solid var(--accent); background: var(--card); color: #d6d6d6; padding: 12px 20px; }
+article hr { border: none; border-top: 1px solid var(--line); }
+@media (max-width: 860px) { article { padding: 24px 16px 64px; } article h1 { font-size: 32px; } }
 </style>
 </head>
 <body>
