@@ -183,8 +183,11 @@ button:hover, .btn:hover { background: var(--hover); }
 #pane { padding: 48px 56px 96px; }
 .search, .field input, .field select { border-radius: 4px; border: 1px solid var(--line); background: var(--bg); color: var(--ink); padding: 10px 14px; }
 .search:focus, .field input:focus, .field select:focus { outline: 2px solid var(--focus); outline-offset: 1px; }
-details.node > summary { border-radius: 0; font-size: 11px; font-weight: 600; letter-spacing: 1.1px; text-transform: uppercase; color: var(--muted); padding: 10px 8px 6px; }
-details.node > summary:hover { background: none; color: var(--ink); }
+details.node > summary { border-radius: 0; font-size: 13px; font-weight: 600; letter-spacing: 0.2px; color: var(--ink); padding: 9px 8px; }
+details.node > summary:hover { background: var(--hover); color: var(--ink); }
+details.node > summary::before { color: var(--muted); }
+details.node > summary .count { color: var(--muted); font-size: 12px; }
+details.node details.node > summary { font-size: 13px; font-weight: 500; color: var(--body-ink); padding: 7px 8px; }
 .leaf { border-radius: 0; border-left: 2px solid transparent; padding: 7px 8px 7px 20px; }
 .leaf:hover { background: var(--hover); }
 .leaf.sel { background: var(--hover); color: var(--ink); border-left-color: var(--accent); }
