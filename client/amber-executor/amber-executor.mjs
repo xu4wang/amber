@@ -31,6 +31,7 @@ import { newExecutorKeys, keyFromPem, pubB64, fingerprint, showFingerprint, sign
 import { randomBytes } from 'node:crypto';
 import { setSandboxContext, validateEnvAccess, buildPolicy, compileToSeatbelt, normalizePath, hardDenyRoots, credentialGrants, describeAccess } from './lib/sandbox-policy.mjs';
 import { runSandboxed } from './lib/sandbox-run.mjs';
+import { validateHosts } from './lib/egress-proxy.mjs';
 
 export const VERSION = '1';
 const DIR = process.env.AMBER_EXECUTOR_DIR ?? join(homedir(), '.config', 'amber-executor');
@@ -139,7 +140,9 @@ export function prepare(cfg, payload) {
   const vars = checkVars(env.vars);
   // Amber sends the limit for this run (the admin's run limits applied); older Amber did not, so fall back to the app's own.
   const timeoutMs = Math.min(Math.max(Number(payload.timeoutMs ?? s.timeoutMs) || 30000, 1000), 1_800_000);
-  return { code: s.code, python, timeoutMs, workdir, vars, realHome: env.realHome === true, profileFor: (dir, tcpPorts = []) => compileToSeatbelt(buildPolicy({ runDir: dir, access }), { all: !!s.network, tcpPorts }) };
+  // The environment's network allow list (reached through a local proxy); scripts with full internet access don't need it.
+  const egress = !s.network && env.allowHosts?.length ? validateHosts(env.allowHosts) : undefined;
+  return { code: s.code, python, timeoutMs, workdir, vars, egress, realHome: env.realHome === true, profileFor: (dir, tcpPorts = []) => compileToSeatbelt(buildPolicy({ runDir: dir, access }), { all: !!s.network, tcpPorts }) };
 }
 
 const RESERVED_VARS = /^(PATH|HOME|TMPDIR|WORKDIR|LANG|PYTHON.*|DYLD_.*|LD_.*|NODE_OPTIONS)$/;
@@ -168,7 +171,7 @@ export async function handle(cfg, me, amberPub, envelope) {
     // Declared services (D52): a local port per service, relayed to Amber; the script only reaches these ports.
     relays = await startRelays(cfg, me, amberPub, envelope.jobId, payload.input?.services);
     const input = relays.services ? { ...payload.input, services: relays.services } : payload.input;
-    const r = await runSandboxed({ code: job.code, python: job.python, profileFor: dir => job.profileFor(dir, relays.ports), input, timeoutMs: job.timeoutMs, env: { ...job.vars, WORKDIR: job.workdir }, ...(job.realHome ? { home: homedir() } : {}) });
+    const r = await runSandboxed({ code: job.code, python: job.python, profileFor: (dir, ports) => job.profileFor(dir, [...relays.ports, ...ports]), input, timeoutMs: job.timeoutMs, env: { ...job.vars, WORKDIR: job.workdir }, ...(job.egress ? { egress: job.egress } : {}), ...(job.realHome ? { home: homedir() } : {}) });
     // The log never sees a secret: the error text can contain one (e.g. an exception message).
     log('job done', envelope.jobId, r.ok ? 'ok' : `failed: ${redact(r.error ?? '', secrets)}`);
     await call(cfg, me, '/v1/executor/result', { jobId: envelope.jobId, ok: r.ok, content: redact(r.content, secrets), ...(r.error ? { error: redact(r.error, secrets) } : {}) });
@@ -331,7 +334,8 @@ export function buildEntry(def) {
   }
   if (def.realHome !== undefined && typeof def.realHome !== 'boolean') throw new Error('realHome 只能是 true 或 false');
   if (def.source !== undefined && typeof def.source !== 'string') throw new Error('source 要是字符串');
-  return { workdir, ...(interpreter ? { interpreter } : {}), access, ...(def.vars && Object.keys(def.vars).length ? { vars: def.vars } : {}), ...(def.source ? { source: def.source.slice(0, 200) } : {}), ...(def.realHome === true ? { realHome: true } : {}) };
+  const allowHosts = def.allowHosts === undefined ? [] : validateHosts(def.allowHosts);
+  return { workdir, ...(interpreter ? { interpreter } : {}), access, ...(def.vars && Object.keys(def.vars).length ? { vars: def.vars } : {}), ...(allowHosts.length ? { allowHosts } : {}), ...(def.source ? { source: def.source.slice(0, 200) } : {}), ...(def.realHome === true ? { realHome: true } : {}) };
 }
 
 /** Writes a definition into envs/ after checking it (the running executor picks it up). */
@@ -357,7 +361,7 @@ export function refreshEnvs(cfg) {
 /** A stored environment as a definition (the same JSON format; re-importable). */
 function toDef(name, v) {
   return { format: 'amber-env/1', name, workdir: v.workdir, ...(v.interpreter ? { python: v.interpreter } : {}), access: v.access ?? { readWrite: [v.workdir] },
-    ...(v.vars ? { vars: v.vars } : {}), ...(v.realHome ? { realHome: true } : {}), ...(v.source ? { source: v.source } : {}) };
+    ...(v.vars ? { vars: v.vars } : {}), ...(v.allowHosts ? { allowHosts: v.allowHosts } : {}), ...(v.realHome ? { realHome: true } : {}), ...(v.source ? { source: v.source } : {}) };
 }
 
 function envCmd(args) {

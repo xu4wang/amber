@@ -2,6 +2,7 @@
 // the most an app may ask for) and how many runs may go at once. Runs are counted where they use a machine:
 // Amber's own machine, or each executor on its own; plus a per-person cap so one person cannot crowd others out.
 import { AmberError } from './engine.ts';
+import { validateHosts } from './egress-proxy.ts';
 
 export interface RunLimits {
   defaultTimeoutSec: number; maxTimeoutSec: number;
@@ -111,3 +112,20 @@ export class RunSlots {
   /** Runs going on now, per place ("local" or "exe:<name>"). */
   snapshot(): Record<string, number> { return Object.fromEntries(this.byPlace); }
 }
+
+/** Amber's own network allow list (admin, on the website): hosts that scripts run here (no env) may reach
+ *  through the local proxy without full internet access. Empty by default. */
+export const LOCAL_ALLOW_HOSTS_KEY = 'local_allow_hosts';
+export function getLocalAllowHosts(store: Settings): string[] {
+  try { const v = JSON.parse(store.getSetting(LOCAL_ALLOW_HOSTS_KEY) ?? '[]'); return Array.isArray(v) ? v.map(String) : []; } catch { return []; }
+}
+export function saveLocalAllowHosts(store: Settings, x: unknown): string[] {
+  let list: string[];
+  try { list = validateHosts(x, '白名单'); } catch (e) { throw new AmberError('bad_request', (e as Error).message); }
+  store.setSetting(LOCAL_ALLOW_HOSTS_KEY, JSON.stringify(list));
+  return list;
+}
+
+/** Runs going on now in this Amber, counted per machine and per person. (Here, not in engine.ts: limits.ts and
+ *  engine.ts import each other, and only this order lets either be loaded first.) */
+export const SLOTS = new RunSlots();

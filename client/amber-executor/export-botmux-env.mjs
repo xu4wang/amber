@@ -3,7 +3,7 @@
 // environment can access exactly what the bot's agent can in its botmux sandbox — no more. The
 // executor only reads the definition file and knows nothing about botmux; this script is the adapter.
 //
-//   node export-botmux-env.mjs --bot <appId> [--name <env>] [--python <path>] [--readonly] [--bots-json <path>] > env.json
+//   node export-botmux-env.mjs --bot <appId> [--name <env>] [--python <path>] [--readonly] [--allow-hosts a,b | --no-allow-hosts] [--bots-json <path>] > env.json
 //   node amber-executor.mjs env import env.json
 //
 // Following botmux (D53): write the definition to a file, keep it current, and let the executor follow that file.
@@ -23,6 +23,9 @@
 //   variables   LARKSUITE_CLI_CONFIG_DIR, so lark-cli in a script uses the bot's own identity, as in its sessions
 //   HOME        the user's real home, as in the bot's sessions (lark-cli finds its key store under $HOME/Library);
 //               only the paths above are reachable there
+//   allowHosts  Feishu's API hosts (when the bot has a lark-cli identity), so lark-cli works through the proxy even in
+//               apps that may not connect directly (e.g. ones that query data-mcp). --allow-hosts replaces the list,
+//               --no-allow-hosts leaves it out
 // --readonly turns every data grant read-only (the lark-cli config stays writable: lark-cli refreshes tokens there).
 import { readFileSync, existsSync, lstatSync, writeFileSync, renameSync, mkdirSync, unlinkSync, realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
@@ -76,6 +79,9 @@ const readOnly = [...(readonly ? dataRw : []), ...list(sp.readOnly),
 const deny = [...list(sp.deny), join(botHome, 'send-cred.json')];
 
 const uniq = a => [...new Set(a)];
+/** What lark-cli talks to: the open platform and file transfer under feishu.cn, its CDN, and Lark (international). */
+const FEISHU_HOSTS = ['*.feishu.cn', '*.feishucdn.com', '*.larksuite.com'];
+const allowHosts = args.includes('--no-allow-hosts') ? [] : flag('--allow-hosts') ? flag('--allow-hosts').split(',').map(s => s.trim()).filter(Boolean) : isDir(larkDir) ? FEISHU_HOSTS : [];
 const def = {
   format: 'amber-env/1',
   name: flag('--name') ?? appId,
@@ -83,6 +89,7 @@ const def = {
   ...(flag('--python') ? { python: flag('--python') } : {}),
   access: { readWrite: uniq(readWrite), readOnly: uniq(readOnly), deny: uniq(deny) },
   ...(isDir(larkDir) ? { vars: { LARKSUITE_CLI_CONFIG_DIR: larkDir } } : {}),
+  ...(allowHosts.length ? { allowHosts } : {}),
   realHome: true,
   source: `botmux:${appId}${readonly ? '（只读）' : ''}${homeLike ? '（workingDir 是主目录或未配置，未开放整个主目录）' : ''}`,
 };
@@ -110,8 +117,8 @@ if (args.includes('--uninstall-launchd')) {
     const esc = x => String(x).replace(/&/g, '&amp;').replace(/</g, '&lt;');
     const node = ['/opt/homebrew/bin/node', '/usr/local/bin/node'].find(p => { try { return realpathSync(p) === realpathSync(process.execPath); } catch { return false; } }) ?? process.execPath;
     const keep = [];
-    for (const f of ['--bot', '--name', '--python', '--bots-json']) if (flag(f)) keep.push(f, flag(f));
-    if (args.includes('--readonly')) keep.push('--readonly');
+    for (const f of ['--bot', '--name', '--python', '--bots-json', '--allow-hosts']) if (flag(f)) keep.push(f, flag(f));
+    for (const f of ['--readonly', '--no-allow-hosts']) if (args.includes(f)) keep.push(f);
     keep.push('--out', file);
     const argv = [node, fileURLToPath(import.meta.url), ...keep].map(a => `<string>${esc(a)}</string>`).join('');
     try { execFileSync('launchctl', ['bootout', `${domain}/${label}`], { stdio: 'ignore' }); } catch { /* not loaded */ }

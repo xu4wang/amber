@@ -72,6 +72,8 @@ export interface ExecutorEnv {
   access?: { readOnly?: string[]; readWrite?: string[]; deny?: string[] };
   /** Extra environment variables for scripts, e.g. LARKSUITE_CLI_CONFIG_DIR for a bot's lark-cli identity. */
   vars?: Record<string, string>;
+  /** Hosts scripts may reach through the local proxy (no direct network). "*.a.com" = any subdomain; ":port" (default 443). */
+  allowHosts?: string[];
   /** Where the definition came from, e.g. "botmux:cli_xxx". Shown to admins. */
   source?: string;
   /** HOME is the user's real home (as in the bot's own sessions) instead of the run dir. */

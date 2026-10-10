@@ -16,6 +16,7 @@
 // An offline executor fails the run immediately; a job that is not picked up or answered in time
 // fails too. Nothing is queued for later.
 import { CONCURRENCY_BOUNDS } from './limits.ts';
+import { validateHosts } from './egress-proxy.ts';
 import { createHash, randomUUID } from 'node:crypto';
 import type { Store, ExecutorRow, ExecutorEnv } from './db.ts';
 import type { Signer } from './identity.ts';
@@ -44,10 +45,12 @@ const RELAY_MAX_RESPONSE = 4 * 1024 * 1024;
 const RELAY_TIMEOUT_MS = 60_000;
 
 /** What changed in one followed environment (D53), for the admin notice. `removedEnv`: the whole environment went away. */
-export interface FollowChange { env: string; added: Record<string, string[]>; removed: Record<string, string[]>; vars: [string, string | null, string | null][]; python?: [string | null, string | null]; removedEnv?: boolean }
+export interface FollowChange { env: string; added: Record<string, string[]>; removed: Record<string, string[]>; vars: [string, string | null, string | null][]; python?: [string | null, string | null]; removedEnv?: boolean;
+  /** The network allow list: hosts added and removed (reached through the proxy). */
+  hosts?: { added: string[]; removed: string[] } }
 
 /** Changes allowed without a new approval (D53), or null when a new approval is needed:
- *  - a followed environment whose file changed only its paths, variables or Python (same file, source, WORKDIR, HOME mode);
+ *  - a followed environment whose file changed only its paths, network allow list, variables or Python (same file, source, WORKDIR, HOME mode);
  *  - an environment removed (access only shrinks);
  *  - an environment that starts following its file with otherwise identical content (moving to the folder layout).
  *  New environments always need approval. Returns null when nothing changed at all. */
@@ -79,7 +82,10 @@ export function followDiff(prev: Record<string, ExecutorEnv>, next: Record<strin
     const ov = o.vars ?? {}, nv = n.vars ?? {};
     // Values are shown to admins: environment variables are configuration (credentials go through command secrets).
     const vars = [...new Set([...Object.keys(ov), ...Object.keys(nv)])].filter(v => ov[v] !== nv[v]).sort().map(v => [v, ov[v] ?? null, nv[v] ?? null] as [string, string | null, string | null]);
-    out.push({ env: k, added, removed, vars, ...((o.interpreter ?? null) !== (n.interpreter ?? null) ? { python: [o.interpreter ?? null, n.interpreter ?? null] as [string | null, string | null] } : {}) });
+    const oh = new Set(o.allowHosts ?? []), nh = new Set(n.allowHosts ?? []);
+    const hAdded = [...nh].filter(h => !oh.has(h)).sort(), hRemoved = [...oh].filter(h => !nh.has(h)).sort();
+    out.push({ env: k, added, removed, vars, ...((o.interpreter ?? null) !== (n.interpreter ?? null) ? { python: [o.interpreter ?? null, n.interpreter ?? null] as [string | null, string | null] } : {}),
+      ...(hAdded.length || hRemoved.length ? { hosts: { added: hAdded, removed: hRemoved } } : {}) });
   }
   return changed ? out : null;
 }
@@ -404,7 +410,9 @@ function validateEnvs(x: unknown): Record<string, ExecutorEnv> {
     if (v?.realHome !== undefined && typeof v.realHome !== 'boolean') throw new AmberError('invalid', `环境「${k}」的 realHome 只能是 true/false`);
     const follow = v?.follow === undefined ? undefined : String(v.follow);
     if (follow !== undefined && (!follow.startsWith('/') || follow.length > 1024 || /[\0\n\r]/.test(follow))) throw new AmberError('invalid', `环境「${k}」的 follow 要是定义文件的绝对路径`);
-    out[k] = { workdir, ...(interpreter ? { interpreter } : {}), ...(access ? { access } : {}), ...(vars ? { vars } : {}), ...(source ? { source } : {}), ...(v?.realHome === true ? { realHome: true } : {}), ...(follow ? { follow } : {}) };
+    let allowHosts: string[] | undefined;
+    try { allowHosts = v?.allowHosts === undefined ? undefined : validateHosts(v.allowHosts, `环境「${k}」的 allowHosts`); } catch (e) { throw new AmberError('invalid', (e as Error).message); }
+    out[k] = { workdir, ...(interpreter ? { interpreter } : {}), ...(access ? { access } : {}), ...(vars ? { vars } : {}), ...(allowHosts?.length ? { allowHosts } : {}), ...(source ? { source } : {}), ...(v?.realHome === true ? { realHome: true } : {}), ...(follow ? { follow } : {}) };
   }
   return out;
 }
@@ -459,7 +467,7 @@ export function credentialPaths(e: ExecutorEnv): string[] {
 export function describeEnvAccess(e: ExecutorEnv): string {
   const a = effectiveAccess(e);
   const parts = [a.readWrite?.length ? `读写 ${a.readWrite.join('、')}` : '', a.readOnly?.length ? `只读 ${a.readOnly.join('、')}` : '', a.deny?.length ? `禁止 ${a.deny.join('、')}` : ''].filter(Boolean);
-  return (parts.join('；') || '不能访问任何数据') + `（{WORKDIR} = ${e.workdir}）`;
+  return (parts.join('；') || '不能访问任何数据') + `（{WORKDIR} = ${e.workdir}）` + (e.allowHosts?.length ? `；网络白名单（经代理）：${e.allowHosts.join('、')}` : '');
 }
 
 export { showFingerprint };
