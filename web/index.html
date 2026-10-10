@@ -311,7 +311,7 @@ table.audit .mono { font-family: ui-monospace, Menlo, monospace; font-size: 11px
 .lp-vs { display: grid; grid-template-columns: 1fr auto 1fr; gap: 16px; align-items: stretch; }
 .lp-arrow { align-self: center; color: var(--accent); font-size: 28px; font-weight: 700; }
 @media (max-width: 760px) { .lp-vs { grid-template-columns: 1fr; } .lp-arrow { transform: rotate(90deg); justify-self: center; } }
-.lp-why { display: grid; grid-template-columns: 420px minmax(0, 1fr); gap: 32px; align-items: center; margin-top: 32px; }
+.lp-why { display: grid; grid-template-columns: 420px minmax(0, 1fr); gap: 32px; align-items: center; }
 .lp-why img { width: 100%; height: auto; display: block; }
 @media (max-width: 860px) { .lp-why { grid-template-columns: 1fr; gap: 16px; } }
 .lp-uses { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-bottom: 20px; }
@@ -402,8 +402,6 @@ function loginView() {
         <div class="lp-arrow">→</div>
         <div class="lp-card on"><span class="lp-tag">用上 Amber</span><h3>写成菜谱，主厨尝过签字</h3><p>把做对的那次写成菜谱，请主厨尝过、签字，锁进柜子。以后谁要这道菜，都照这份菜谱做，味道每次一样。要改菜谱，得重新尝、重新签。</p></div>
       </div>
-      <div class="lp-why"><img src="/docs/assets/amber-why.gif" width="520" height="292" alt="为什么叫 Amber：琥珀把一瞬间封存起来，多年后取出还是原样。Amber 把和 AI 一起跑通的操作封存起来，审核通过后锁定，以后每次执行都和审核时一模一样。">
-        <div><h3>为什么叫 Amber</h3><p>琥珀能把一瞬间封存起来，多年后取出来还是原样。Amber 把你和 AI 一起做对的那一次封存起来，审核通过后锁定，以后每次执行都和审核时一模一样。</p></div></div>
     </div></section>
 
     <section><div class="lp-wrap">
@@ -460,6 +458,12 @@ function loginView() {
         <div class="lp-card"><h3>直接问机器人就好</h3><ul><li>一次性的、临时想知道的问题</li><li>还在摸索、需求每次都不一样</li><li>只有自己看、不碰敏感数据</li></ul></div>
         <div class="lp-card on"><h3>适合放进 Amber</h3><ul><li>经常要做、每周每天都要看</li><li>要给同事或整个群用</li><li>要定时自动跑、有异常才提醒</li><li>要知道是谁在做：按各自的权限查数据、用各自的账号办事</li><li>会写数据、发消息、改系统，需要先有人把关</li></ul></div>
       </div>
+    </div></section>
+
+    <section><div class="lp-wrap">
+      <div class="lp-kicker">名字的由来</div>
+      <div class="lp-why"><img src="/docs/assets/amber-why.gif" width="520" height="292" alt="为什么叫 Amber：琥珀把一瞬间封存起来，多年后取出还是原样。Amber 把和 AI 一起跑通的操作封存起来，审核通过后锁定，以后每次执行都和审核时一模一样。">
+        <div><h3>为什么叫 Amber</h3><p>琥珀能把一瞬间封存起来，多年后取出来还是原样。Amber 把你和 AI 一起做对的那一次封存起来，审核通过后锁定，以后每次执行都和审核时一模一样。</p></div></div>
     </div></section>
 
     <section><div class="lp-wrap">
