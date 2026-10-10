@@ -148,7 +148,11 @@ const SECURITY_HEADERS = {
 };
 
 export function startWeb(port: number, store: Store, deps: WebDeps): import('node:http').Server {
-  const page = readFileSync(join(import.meta.dirname, '..', 'web', 'index.html'), 'utf8').replace('__FEISHU_CHAT_LINK__', deps.feishuChatLink);
+  // The landing page for people not logged in (shared with the docs site's front page): the website's own blocks.
+  const landing = readFileSync(join(import.meta.dirname, '..', 'web', 'landing.html'), 'utf8').replace(/^<!--[\s\S]*?-->\n/, '')
+    .replace(/<!--docs-->[\s\S]*?<!--\/docs-->\n?/g, '').replace(/<!--\/?web-->\n?/g, '')
+    .split('__FEISHU__').join(escHtml(deps.feishuChatLink)).split('__DOCS__').join('/docs').split('__ASSETS__').join('/docs/assets');
+  const page = readFileSync(join(import.meta.dirname, '..', 'web', 'index.html'), 'utf8').replace('__FEISHU_CHAT_LINK__', deps.feishuChatLink).replace('__LANDING__', () => landing);
   const logo = readFileSync(join(import.meta.dirname, '..', 'web', 'logo.svg'));
   // Documentation (docs/*.md), readable without logging in. Rendered in the browser.
   // [file, title, nav group "section/subgroup"]; an empty group keeps the page out of the nav (old links still work).

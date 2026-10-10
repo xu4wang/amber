@@ -1,7 +1,7 @@
 // Renders docs/*.md into a static site for GitHub Pages, using the same docs page as the Amber website
 // (web/docs.html, rendered in the browser). Published at https://xu4wang.github.io/amber-manual/docs/
 // by .github/workflows/docs-site.yml.
-// usage: node scripts/build-docs-site.mjs <out-dir>   writes <out>/docs/*.html, <out>/vendor/*, <out>/logo.svg
+// usage: node scripts/build-docs-site.mjs <out-dir>   writes <out>/docs/*.html (index.html: the landing page), <out>/vendor/*, <out>/logo.svg
 import { readFileSync, writeFileSync, mkdirSync, copyFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 const ROOT = join(import.meta.dirname, '..');
@@ -32,10 +32,33 @@ for (const [name, title] of DOCS) {
   const data = JSON.stringify({ md, nav }).replace(/</g, '\\u003c');
   writeFileSync(join(OUT, 'docs', name + '.html'), tpl.replace('__TITLE__', `${title} · Amber`).replace('__DOC_DATA__', data));
 }
-const [first, firstTitle] = DOCS[0];
-writeFileSync(join(OUT, 'docs', 'index.html'), `<!doctype html><meta charset="utf-8"><meta http-equiv="refresh" content="0; url=${first}.html"><title>Amber 文档</title><a href="${first}.html">${firstTitle}</a>\n`);
+// The front page: the same landing page the website shows when not logged in (web/landing.html), its docs blocks,
+// under the docs page's own header (theme button, GitHub link) and styles.
+const [first] = DOCS[0];
+const landing = readFileSync(join(ROOT, 'web/landing.html'), 'utf8').replace(/^<!--[\s\S]*?-->\n/, '')
+  .replace(/<!--web-->[\s\S]*?<!--\/web-->\n?/g, '').replace(/<!--\/?docs-->\n?/g, '')
+  .split('__DOCS__').join(`${first}.html`).split('__ASSETS__').join('assets');
+const pick = re => { const m = re.exec(tpl); if (!m) throw new Error('web/docs.html changed, update scripts/build-docs-site.mjs: ' + re); return m[0]; };
+const head = tpl.slice(0, tpl.indexOf('<body>')).replace('__TITLE__', 'Amber · AI 跑通的，Amber 封存。');
+const themeBtn = pick(/<button class="themebtn"[\s\S]*?<\/button>/);
+const ghLink = pick(/<a class="gh"[\s\S]*?<\/a>/);
+const themeJs = pick(/document\.getElementById\('themebtn'\)\.addEventListener[\s\S]*?\n\}\);/);
+writeFileSync(join(OUT, 'docs', 'index.html'), `${head}<body>
+<header>
+  <img src="../logo.svg" alt="">
+  <a class="brand" href="./">Amber</a>
+  <a class="back" href="${first}.html">阅读文档</a>
+  ${themeBtn}
+  ${ghLink}
+</header>
+${landing}<script>
+${themeJs}
+</script>
+</body>
+</html>
+`);
 for (const f of ['marked.min.js', 'purify.min.js', 'highlight.min.js']) copyFileSync(join(ROOT, 'web/vendor', f), join(OUT, 'vendor', f));
 copyFileSync(join(ROOT, 'web/logo.svg'), join(OUT, 'logo.svg'));
 mkdirSync(join(OUT, 'docs', 'assets'), { recursive: true });
-for (const f of readdirSync(join(ROOT, 'docs/assets'))) if (f.endsWith('.svg')) copyFileSync(join(ROOT, 'docs/assets', f), join(OUT, 'docs', 'assets', f));
+for (const f of readdirSync(join(ROOT, 'docs/assets'))) if (f.endsWith('.svg') || f === 'amber-why.gif') copyFileSync(join(ROOT, 'docs/assets', f), join(OUT, 'docs', 'assets', f));
 console.log(`docs site: ${DOCS.length} pages -> ${OUT}`);

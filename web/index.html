@@ -280,6 +280,7 @@ table.audit .mono { font-family: ui-monospace, Menlo, monospace; font-size: 11px
 .pg-members input { margin: 0; accent-color: var(--accent); }
 .pg-warn { border-left: 3px solid var(--warn); background: var(--bg); padding: 8px 12px; font-size: 13px; color: var(--body-ink); margin: 0 0 12px; }
 .pg-foot { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+#app.center:has(.landing) { display: block; }
 </style>
 </head>
 <body>
@@ -289,6 +290,7 @@ table.audit .mono { font-family: ui-monospace, Menlo, monospace; font-size: 11px
   <span class="who"><button class="themebtn" id="themebtn" type="button" title="切换浅色 / 深色"><svg class="i-moon" viewBox="0 0 20 20" aria-hidden="true"><path d="M16.5 12.5A7 7 0 0 1 7.5 3.5a7 7 0 1 0 9 9z"/></svg><svg class="i-sun" viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="3.5"/><path d="M10 1.5v2M10 16.5v2M1.5 10h2M16.5 10h2M4 4l1.4 1.4M14.6 14.6 16 16M4 16l1.4-1.4M14.6 5.4 16 4"/></svg></button><a class="doclink" href="/docs" target="_blank" rel="noopener">文档</a><span id="who" class="who-inner"></span></span>
 </header>
 <main id="app"><p class="note" style="padding:16px">加载中……</p></main>
+<template id="landing">__LANDING__</template>
 <script>
 // Light / dark: light unless this browser chose dark. Pages that draw with JS listen for "amber-theme".
 document.getElementById('themebtn').addEventListener('click', () => {
@@ -304,23 +306,11 @@ const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': 
 const fmtTime = t => { const d = new Date(t); return `${d.getMonth() + 1}-${d.getDate()} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`; };
 const CH = { bot: '飞书', web: '网站', agent: 'agent', schedule: '定时', page: '页面', 'bot.trial': '试运行', 'agent.trial': '试运行' };
 
+// Logged out: the landing page (web/landing.html, filled in by the server), with the way in (log in from Feishu) up top.
 function loginView() {
   whoEl.innerHTML = '';
   app.className = 'center';
-  app.innerHTML = `
-    <div class="login">
-      <img class="why" src="/docs/assets/amber-why.gif" width="520" height="292" alt="为什么叫 Amber：琥珀把一瞬间封存起来，多年后取出还是原样。Amber 把和 AI 一起跑通的操作封存起来，审核通过后按哈希锁定，以后每次执行都和审核时一模一样。">
-      <div class="login-side">
-      <h2 class="login-title">登录 Amber 网站</h2>
-      <div class="steps"><ol>
-        <li>在飞书里打开与 <b>Amber</b> 的私聊</li>
-        <li>发送「<b>登录</b>」</li>
-        <li>点卡片上的「打开 Amber 网站」</li>
-      </ol></div>
-      <a class="btn primary" href="${esc(FEISHU)}">打开 Amber 私聊</a>
-      <p class="note" style="margin-top:20px">登录链接 5 分钟内有效、只能用一次，请不要转发给别人。</p>
-      </div>
-    </div>`;
+  app.innerHTML = document.getElementById('landing').innerHTML;
 }
 
 async function post(path, body) {
