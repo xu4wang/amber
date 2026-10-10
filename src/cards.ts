@@ -13,6 +13,31 @@ export function sanitizeMarkdown(md: string, maxChars = 6000): string {
   return s;
 }
 
+/** The line at the bottom of every card. An admin sets it on the website; until then it points to the project. */
+export const DEFAULT_CARD_FOOTER = '[Amber · github.com/xu4wang/amber](https://github.com/xu4wang/amber)';
+export const CARD_FOOTER_MAX = 200;
+export const CARD_FOOTER_KEY = 'card_footer';
+
+/** What an admin typed, made safe for a card: one line, no tags, no @ (it must never notify anyone), and only
+ *  http(s) links stay links; any other link is shown as plain text. */
+export function cleanFooter(text: string): string {
+  return text.replace(/[\r\n]+/g, ' ').replace(/</g, '＜').replace(/>/g, '＞').replace(/@/g, '＠')
+    .replace(/\[([^\]]*)\]\(([^)]*)\)/g, (m, t, u) => /^https?:\/\/[^\s]+$/i.test(u.trim()) ? m : `${t}（${u}）`)
+    .trim().slice(0, CARD_FOOTER_MAX);
+}
+
+export function cardFooter(store: { getSetting(k: string): string | undefined }): string {
+  const v = store.getSetting(CARD_FOOTER_KEY);
+  return v === undefined ? DEFAULT_CARD_FOOTER : v;
+}
+
+/** Adds the footer as the card's last element; a card that already has it is left alone. An empty footer adds nothing. */
+export function withFooter<T>(card: T, footer: string): T {
+  const els = (card as { body?: { elements?: { element_id?: string }[] } })?.body?.elements;
+  if (!footer || !Array.isArray(els) || els.some(e => e?.element_id === 'amber_footer')) return card;
+  return { ...card, body: { ...(card as any).body, elements: [...els, { tag: 'hr', element_id: 'amber_footer_hr' }, { tag: 'markdown', element_id: 'amber_footer', text_size: 'notation', content: `<font color="grey">${footer}</font>` }] } };
+}
+
 /** At most this many people or bots a run's result can @ (#1). */
 export const MAX_MENTIONS = 5;
 

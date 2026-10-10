@@ -13,7 +13,7 @@ import { describeSecrets } from './secrets.ts';
 import type { FeishuReview } from './feishu-review.ts';
 import type { Caller, CallerFacts, Block } from './engine.ts';
 import { runCommand, AmberError, dropOrphanSettings, executorHub } from './engine.ts';
-import { sanitizeMarkdown, person, renderBlocks, buttonRow } from './cards.ts';
+import { sanitizeMarkdown, person, renderBlocks, buttonRow, cardFooter, withFooter } from './cards.ts';
 import { lineDiff } from './diff.ts';
 
 function log(...a: unknown[]): void { console.log(new Date().toISOString(), ...a); }
@@ -248,7 +248,7 @@ export class Flow {
   }
 
   async send(receive: { chatId?: string; unionId?: string; replyTo?: string; inThread?: boolean }, card: object): Promise<string | undefined> {
-    const content = JSON.stringify(card);
+    const content = JSON.stringify(withFooter(card, cardFooter(this.store)));
     if (receive.replyTo) {
       const r = await this.client.im.v1.message.reply({ path: { message_id: receive.replyTo }, data: { msg_type: 'interactive', content, reply_in_thread: !!receive.inThread } }) as any;
       return r?.data?.message_id;
@@ -261,7 +261,7 @@ export class Flow {
   }
 
   async patch(messageId: string, card: object): Promise<void> {
-    try { await this.client.im.v1.message.patch({ path: { message_id: messageId }, data: { content: JSON.stringify(card) } }); }
+    try { await this.client.im.v1.message.patch({ path: { message_id: messageId }, data: { content: JSON.stringify(withFooter(card, cardFooter(this.store))) } }); }
     catch (e: any) { log('patch failed', messageId, e?.response?.data?.code ?? e?.message); }
   }
 

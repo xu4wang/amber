@@ -88,9 +88,10 @@ if (smoke.testChat) {
     ['执行端列表', cards.executorListCard([{ e: { ...{ id: 'abcd1234abcd1234', name: 'ledger-mac', fingerprint: 'ab'.repeat(32), signPub: '', boxPub: '', envs: { 台账: { workdir: '/Users/me/bots/ledger', interpreter: '/Users/me/venv/bin/python3' }, 导出: { workdir: '/Users/me/exports' } }, machine: 'fleet-a', version: '1', status: 'pending' as const, createdAt: Date.now(), decidedBy: null, decidedAt: null, lastSeen: Date.now() }, status: 'approved' }, online: true }])],
     ['认领卡（带密钥）', claimCard({ ...sample, script: { ...sample.script, secrets: ['API_TOKEN'] } }, undefined, 'SmokeBot')],
   ];
+  // Every card goes out with the footer (as Amber sends it), so Feishu checks the footer's elements too.
   for (const [name, card] of all) {
     await check(`飞书接受卡片：${name}`, async () => {
-      const r = await client.im.v1.message.create({ params: { receive_id_type: 'chat_id' }, data: { receive_id: smoke.testChat, msg_type: 'interactive', content: JSON.stringify(card) } }) as any;
+      const r = await client.im.v1.message.create({ params: { receive_id_type: 'chat_id' }, data: { receive_id: smoke.testChat, msg_type: 'interactive', content: JSON.stringify(cards.withFooter(card, cards.DEFAULT_CARD_FOOTER)) } }) as any;
       const id = r?.data?.message_id;
       must(id, JSON.stringify(r?.msg ?? r));
       await recall(id);

@@ -232,6 +232,12 @@ details.node details.node { margin-left: 13px; padding-left: 0; border-left: 2px
 .chip.ex { height: auto; }
 @media (max-width: 860px) { #pane { padding: 24px 16px 64px; } .pane-head h1 { font-size: 26px; } }
 
+.field-main { flex: 1 1 320px; min-width: 0; }
+.field-main input { width: 100%; }
+.field-main .note { margin: 6px 0 0; }
+.footer-preview { padding: 10px 14px; background: var(--bg); border: 1px dashed var(--line-2); color: var(--muted); font-size: 13px; }
+.footer-preview a { color: var(--accent-ink); }
+
 /* ---- Light / dark switch ---- */
 .themebtn { display: inline-flex; align-items: center; justify-content: center; width: 36px; height: 36px; padding: 0; background: none; border: 1px solid transparent; color: var(--muted); cursor: pointer; letter-spacing: 0; }
 .themebtn:hover, .themebtn:focus-visible { background: none; color: var(--ink); border-color: var(--line); outline: none; }
@@ -403,6 +409,7 @@ function showOutput(el, r, meta) {
 let DATA = null;          // overview
 let STORE = null;         // Amber Store: { apps, targets }
 let RUNS = [];
+let SETTINGS = null;      // site-wide settings (admins only): { cardFooter, defaultCardFooter, max }
 let SEL = null;           // { kind: 'cmd'|'sch'|'run', key }
 const ITEMS = new Map();  // key -> { kind, c?, scope?, where?, s?, r? }
 const LAST = new Map();   // command key -> last result shown this page session
@@ -472,6 +479,10 @@ function renderTree() {
       return `<div class="leaf" data-key="${esc(key)}" data-search="${esc(e.name)}"><span class="dot ${e.status === 'approved' ? (e.online ? 'ok' : 'failed') : 'running'}"></span><span class="name">${esc(e.name)}</span>${e.status === 'pending' ? '<span class="chip warn">待批准</span>' : `<span class="sub">${esc(state)}</span>`}</div>`;
     }).join('') || '<div class="empty-leaf">还没有执行端登记</div>');
   }
+  if (o.isAdmin && SETTINGS && SETTINGS.ok) {
+    ITEMS.set('set:card-footer', { kind: 'set' });
+    html += node('settings', '系统设置（管理员）', '<div class="leaf" data-key="set:card-footer" data-search="卡片页脚 footer"><span class="name">卡片页脚</span></div>');
+  }
   html += node('runs', `最近运行<span class="count">${RUNS.length}</span>`, RUNS.map(r => {
     const key = 'r:' + r.id;
     ITEMS.set(key, { kind: 'run', r });
@@ -507,6 +518,7 @@ function select(key, push = true) {
   else if (it.kind === 'sch') schPane(it);
   else if (it.kind === 'exe') exePane(it);
   else if (it.kind === 'app') appPane(it);
+  else if (it.kind === 'set') footerPane();
   else runPane(it);
 }
 
@@ -649,6 +661,28 @@ function appPane({ a }) {
   }).catch(() => {});
 }
 
+// The line at the bottom of every Feishu card Amber sends. Markdown links work; nothing else is formatted.
+const footerHtml = t => esc(t).replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g, (_, a, u) => `<a href="${u}" target="_blank" rel="noopener noreferrer">${a}</a>`);
+function footerPane() {
+  const S = SETTINGS, cur = S.cardFooter;
+  const state = cur === null ? '没有设置，卡片上显示默认页脚（项目地址）' : cur === '' ? '已关闭：卡片上不显示页脚' : '已设置';
+  const shown = cur === null ? S.defaultCardFooter : cur;
+  document.getElementById('pane').innerHTML = `${backBtn}
+    <div class="pane-head"><h1>卡片页脚</h1></div>
+    <div class="where">系统设置 · 管理员</div>
+    <p class="desc">Amber 在飞书里发的每一张卡片，最下面都会带这一行。可以写公司或团队的说明、联系人、文档链接。</p>
+    <div class="box">
+      <dl class="kv"><dt>当前</dt><dd>${esc(state)}</dd></dl>
+      <div class="field"><label>页脚</label><div class="field-main"><input id="footer-input" maxlength="${S.max}" value="${esc(cur ?? '')}" placeholder="${esc(S.defaultCardFooter)}"><p class="note">一行，最多 ${S.max} 个字。链接写成 [文字](https://…)。不支持 @ 和其他格式。</p></div></div>
+      <div class="field"><label>预览</label><div class="field-main"><div class="footer-preview" id="footer-preview">${shown ? footerHtml(shown) : '<span class="note">（不显示页脚）</span>'}</div></div></div>
+      <div class="actions"><button class="btn primary" data-footer="save">保存</button> <button class="btn" data-footer="default">恢复默认</button> <button class="btn" data-footer="none">不显示页脚</button></div>
+    </div>`;
+  document.getElementById('footer-input').addEventListener('input', e => {
+    const v = e.target.value.trim();
+    document.getElementById('footer-preview').innerHTML = v ? footerHtml(v) : footerHtml(S.defaultCardFooter) + ' <span class="note">（留空保存＝恢复默认）</span>';
+  });
+}
+
 function exePane({ e }) {
   const ST = { pending: '等待管理员批准', approved: '已批准', rejected: '已拒绝', revoked: '已撤销' };
   // One block per environment; every path on its own line, sorted; credential paths marked in place.
@@ -748,12 +782,28 @@ async function reload(keepKey) {
   if (!o.ok) return loginView();
   DATA = o;
   STORE = await fetch('/web/api/store').then(r => r.json()).catch(() => null);
+  SETTINGS = o.isAdmin ? await fetch('/web/api/settings').then(r => r.json()).catch(() => null) : null;
   await refreshRuns();
   renderTree();
   if (keepKey && ITEMS.has(keepKey)) select(keepKey, false);
 }
 
 document.addEventListener('click', async ev => {
+  const footerBtn = ev.target.closest('[data-footer]');
+  if (footerBtn) {
+    const op = footerBtn.dataset.footer;
+    const typed = document.getElementById('footer-input').value.trim();
+    // Saving an empty box means "back to the default"; "不显示页脚" is the explicit way to turn it off.
+    const value = op === 'none' ? '' : op === 'default' || !typed ? null : typed;
+    if (op === 'none' && !confirm('关闭后，卡片上不再显示任何页脚。确定吗？')) return;
+    footerBtn.disabled = true;
+    const r = await post('/web/api/settings/card-footer', { value }).catch(e => ({ ok: false, message: e.message }));
+    footerBtn.disabled = false;
+    if (!r.ok) return alert(r.message || '保存失败');
+    SETTINGS.cardFooter = r.cardFooter;
+    footerPane();
+    return;
+  }
   const exeBtn = ev.target.closest('[data-exe]');
   if (exeBtn) {
     const it = ITEMS.get(SEL);
