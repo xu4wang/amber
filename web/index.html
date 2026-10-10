@@ -197,6 +197,17 @@ details.node > summary:hover { background: none; color: var(--ink); }
 .login h1 { font-weight: 500; font-size: 56px; letter-spacing: -1.12px; }
 .login img { border-radius: 0; }
 .steps { border-radius: 0; border: none; background: var(--card); }
+/* A field row: label on the left; on the right an input with its button on one line, the note beneath. */
+.field { align-items: flex-start; gap: 16px; margin-bottom: 16px; }
+.field label { padding-top: 10px; min-width: 112px; }
+.field > span:not(.examples), .field > code { padding-top: 10px; }
+.field .examples { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; line-height: 1.5; }
+.field .examples br { display: none; }
+.field .examples > .note { flex-basis: 100%; margin-top: 2px; }
+.field input, .field select, .search { height: 40px; padding: 0 12px; font-size: 14px; }
+.field .examples input { flex: 1 1 220px; max-width: 360px; min-width: 180px; }
+.btn.small { height: 40px; padding: 0 18px; font-size: 11px; letter-spacing: 1.1px; }
+.chip.ex { height: auto; }
 @media (max-width: 860px) { #pane { padding: 24px 16px 64px; } .pane-head h1 { font-size: 26px; } }
 </style>
 </head>
