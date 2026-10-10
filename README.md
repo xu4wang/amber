@@ -4,7 +4,7 @@
 
 跑通一次，随时再用。
 
-![Amber：每次都让大模型重跑，慢、费 token、可能出错 → 跑通一次存进 Amber、审核后固化 → 以后从飞书、网站、AI 助手或定时任务一键执行，结果每次都一样](docs/assets/amber-hero.gif)
+![为什么叫 Amber：琥珀把一瞬间封存起来，多年后取出还是原样。Amber 把和 AI 一起跑通的操作封存起来，审核通过后按哈希锁定，以后每次执行都和审核时一模一样](docs/assets/amber-why.gif)
 
 > 📺 [视频手册](https://xu4wang.github.io/amber-manual/)：每章 1 分钟左右的操作演示 · 📖 [文档站](https://xu4wang.github.io/amber-manual/docs/)
 
