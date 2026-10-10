@@ -83,7 +83,10 @@ export class AmberBot {
       mentionsFor: (chatId, chatType, blocks) => this.mentionsFor(chatId, chatType, blocks),
     };
     this.agent = new AgentGate(store, deps);
-    this.pages = new PageService(store, cfg.dataDir, { send: deps.send, isMember: deps.isMember, cityOf: deps.cityOf, facts: { signer: this.signer }, webUrl: () => cfg.webBaseUrl });
+    this.pages = new PageService(store, cfg.dataDir, {
+      send: deps.send, isMember: deps.isMember, cityOf: deps.cityOf, facts: { signer: this.signer }, webUrl: () => cfg.webBaseUrl,
+      uploadImage: async png => { const r = await this.client.im.v1.image.create({ data: { image_type: 'message', image: png } }) as any; return r?.image_key ?? r?.data?.image_key; },
+    });
     this.scheduler = new Scheduler(store, deps);
     this.agent.scheduler = this.scheduler;
     this.flow.isListed = c => !!this.apps.appOfOriginal(c);
@@ -748,13 +751,45 @@ export class AmberBot {
     }
     if (sentId) this.store.setWebLoginMessage(h, sentId);
     this.store.audit(caller.unionId, 'web.login_link', inGroup ? { requestedIn: caller.chatId } : {});
-    const sent = { data: { message_id: sentId } };
-    // Expire the card visibly once the link can no longer be used.
+    this.expireLoginCard(h, sentId);
+  }
+
+  /** Expires a login card visibly once its link can no longer be used. */
+  private expireLoginCard(h: string, messageId: string | undefined): void {
     setTimeout(() => {
-      if (sent?.data?.message_id && this.store.consumeWebLogin(h, LOGIN_TTL_MS + 60_000)) {
-        this.patch(sent.data.message_id, infoCard('登录链接已过期', '这个登录链接没有使用，已失效。需要时请重新发送「登录」。')).catch(() => {});
+      if (messageId && this.store.consumeWebLogin(h, LOGIN_TTL_MS + 60_000)) {
+        this.patch(messageId, infoCard('登录链接已过期', '这个登录链接没有使用，已失效。需要时请重新发送「登录」。')).catch(() => {});
       }
     }, LOGIN_TTL_MS + 5_000);
+  }
+
+  /** 「私聊我免登录链接」on a page's card: a one-time link in the clicker's private chat that logs them in and
+   *  lands on the page. Only for people who may open it; the link never appears in the group. */
+  private async pageLink(pageId: string, caller: Caller): Promise<object> {
+    const p = this.store.getPage(pageId);
+    if (!p || !(await this.pages.canView(p, caller.unionId))) return { toast: { type: 'error', content: '你没有这个页面的访问权限：页面创建人可以在网站上设置谁能访问' } };
+    if (this.store.recentWebLogins(caller.unionId, 3600_000) >= 10) return { toast: { type: 'error', content: '一小时内申请登录太多次了，请稍后再试' } };
+    const token = newToken();
+    const h = hashToken(token);
+    this.store.insertWebLogin(h, caller.unionId, caller.openId ?? null, `/p/${p.id}/`);
+    const card = {
+      schema: '2.0', config: { update_multi: true },
+      header: { title: { tag: 'plain_text', content: `Amber · 打开页面：${p.name}` }, template: 'orange' },
+      body: { elements: [
+        { tag: 'markdown', content: '点下面的按钮，在浏览器里打开页面，同时登录 Amber 网站。\n<font color="grey">链接 5 分钟内有效、只能用一次。**不要转发给别人**——拿到链接的人就能以你的身份登录。</font>' },
+        { tag: 'button', text: { tag: 'plain_text', content: '打开页面' }, type: 'primary', behaviors: [{ type: 'open_url', default_url: `${this.cfg.webBaseUrl}/login?t=${token}` }] },
+      ] },
+    };
+    let sentId: string | undefined;
+    try { sentId = await this.flow.send({ unionId: caller.unionId }, card); } catch (e: any) { log('page link dm failed', e?.response?.data?.code ?? e?.message); }
+    if (!sentId) {
+      this.store.consumeWebLogin(h, LOGIN_TTL_MS + 60_000); // burn the unsent link
+      return { toast: { type: 'error', content: '没能给你发私聊消息，请先私聊 Amber 发一句话再试' } };
+    }
+    this.store.setWebLoginMessage(h, sentId);
+    this.store.audit(caller.unionId, 'web.login_link', { page: p.id });
+    this.expireLoginCard(h, sentId);
+    return { toast: { type: 'success', content: '已私聊发给你，点开就能直接打开页面' } };
   }
 
   /** Card in the private chat after the link was used. */
@@ -898,6 +933,7 @@ export class AmberBot {
         return raw(await this.agent.onClick(value.a === 'req_ok', String(value.r), caller, chatId, messageId));
       }
       if (value.a === 'rs_ok' || value.a === 'rs_no') return raw(await this.onReassignClick(value, caller));
+      if (value.a === 'pg_open') return await this.pageLink(String(value.p), caller);
       if (value.a === 'pg_ok' || value.a === 'pg_no') return raw(await this.pages.onClick(value.a === 'pg_ok', String(value.p), Number(value.v), caller, chatId));
       if (value.a === 'cl_ok' || value.a === 'cl_no') return raw(await this.onCloneClick(value, d.action?.form_value ?? {}, caller));
       if (value.a === 'sch_rebind' || value.a === 'sch_drop') {

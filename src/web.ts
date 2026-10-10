@@ -239,7 +239,7 @@ export function startWeb(port: number, store: Store, deps: WebDeps): import('nod
         store.audit(login.unionId, 'web.login', { ip: String(req.headers['x-amber-client-ip'] ?? ''), ua: String(req.headers['user-agent'] ?? '').slice(0, 200) });
         if (login.messageId) deps.onLoginUsed(login.messageId, Date.now()).catch(() => {});
         return send(res, 302, 'text/plain', '', {
-          location: '/',
+          location: login.next && /^\/p\/[0-9a-f]{8}\/$/.test(login.next) ? login.next : '/',   // a link sent for a page opens it
           'set-cookie': `${COOKIE}=${session}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${SESSION_TTL_MS / 1000}`,
         });
       }
@@ -252,7 +252,7 @@ export function startWeb(port: number, store: Store, deps: WebDeps): import('nod
       if (pm && deps.pages && pagesOrigin) {
         if (!pm[2]) return send(res, 301, 'text/plain', '', { location: `/p/${pm[1]}/` });
         const note = (title: string, text: string) => send(res, 200, 'text/html; charset=utf-8', `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Amber</title><body style="font:16px/1.7 system-ui,sans-serif;padding:40px 16px;max-width:560px;margin:auto"><h2>${title}</h2><p>${text}</p>`);
-        if (!who) return note('请先登录 Amber', '在飞书里私聊 Amber 发送「登录」，点卡片上的按钮登录后，再回到这个页面刷新。');
+        if (!who) return note('请先登录 Amber', '回到飞书里这个页面的卡片，点「私聊我免登录链接」，在私聊里一点就能打开。也可以私聊 Amber 发送「登录」，登录后回到这个页面刷新。');
         const p = store.getPage(pm[1]);
         if (!p || !(await deps.pages.canView(p, who.unionId))) return note('打不开这个页面', '页面不存在，或者你没有访问权限。需要的话请联系页面的创建人。');
         const data = JSON.stringify({ id: p.id, name: p.name, src: `${pagesOrigin}/c/${deps.pages.token(p, who.unionId)}/`, pagesOrigin, me: (await deps.nameOf(who.unionId)) ?? '', allowHosts: getGlobalAllowHosts(store) }).replace(/</g, '\\u003c');

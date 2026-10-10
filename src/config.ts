@@ -25,6 +25,8 @@ export interface AmberConfig {
   webBaseUrl: string;
   /** Separate origin page apps are served from (their files), e.g. http://pages.amber.example.com. Unset = no page apps. */
   pagesBaseUrl?: string;
+  /** A headless Chrome (or chrome-headless-shell) for screenshots on page confirmation cards. Unset = no screenshots. */
+  pageScreenshotChrome?: string;
 }
 
 function parseEnvFile(path: string): Record<string, string> {
@@ -63,5 +65,6 @@ export function loadConfig(): AmberConfig {
     timezones: Array.isArray(fileCfg.timezones) ? fileCfg.timezones : [],
     webBaseUrl: String(fileCfg.webBaseUrl ?? `http://localhost:${process.env.AMBER_WEB_PORT ?? 7342}`).replace(/\/$/, ''),
     ...(fileCfg.pagesBaseUrl ? { pagesBaseUrl: String(fileCfg.pagesBaseUrl).replace(/\/$/, '') } : {}),
+    ...(fileCfg.pageScreenshotChrome ? { pageScreenshotChrome: String(fileCfg.pageScreenshotChrome) } : {}),
   };
 }

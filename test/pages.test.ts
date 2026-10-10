@@ -48,6 +48,15 @@ test('pages: publish with confirmation, access, calls as the viewer, signed file
     await activate(env, { chatId: GROUP, chatType: 'group', name: '查服务', params: [], script: script(claim, { services: { demo: { calls: 1 } } }) }, bob);
     await activate(env, { chatId: GROUP, chatType: 'group', name: '没绑定', params: [], script: script('print(1)') }, bob);
 
+    // Screenshots for the card: the stand-in browser fetches what a real one would, from the page origin.
+    const shots: { path: string; status: number; body: string }[] = [];
+    (env.amber.bot as any).pages.shoot = async (path: string) => {
+      const r = await fetch(pages + path + 'index.html');
+      const body = await r.text();
+      shots.push({ path, status: r.status, body });
+      return r.ok ? Buffer.from('PNG' + body) : undefined;
+    };
+
     // 1. Publish: a new page waits for the owner's confirmation.
     const index = '<!doctype html><script src="/sdk/amber-page.js"></script><h1>报表</h1>';
     assert.ok(!existsSync(join(env.cfg.dataDir, 'pages', 'x')));
@@ -57,10 +66,19 @@ test('pages: publish with confirmation, access, calls as the viewer, signed file
     const card = fake.sent.at(-1)!;
     assert.match(FakeFeishu.text(card.card), /查数/);
     assert.ok(button(card.card, 'pg_ok'));
+    // The card shows a screenshot of the upload waiting for confirmation.
+    assert.equal(shots.length, 1);
+    assert.equal(shots[0].status, 200);
+    assert.match(shots[0].body, /报表/);
+    const img = JSON.stringify(card.card).match(/"img_key":"([^"]+)"/);
+    assert.ok(img, 'an image on the card');
+    assert.match(String(fake.images.get(img![1])), /报表/);
     assert.match(JSON.stringify(await env.click(alice, card.id, button(card.card, 'pg_ok')!)), /只有页面的创建人/);
     const ok: any = await env.click(bob, card.id, button(card.card, 'pg_ok')!);
     assert.match(JSON.stringify(ok), /页面已发布/);
     assert.match(JSON.stringify(ok), new RegExp(`/p/${id}/`), 'the card opens the page');
+    // The screenshot's link only ever showed the upload while it waited.
+    assert.equal((await fetch(pages + shots[0].path + 'index.html')).status, 404, 'a preview link does not open the live page');
     const p = env.amber.store.getPage(id)!;
     assert.equal(p.status, 'active');
     assert.deepEqual(p.apps.map(a => a.name), ['查数', '写文档', '带密钥', '查服务']);
@@ -106,6 +124,23 @@ test('pages: publish with confirmation, access, calls as the viewer, signed file
     assert.equal((await post(bobC, `/web/api/pages/${id}/access`, { access: 'members', members: [carol.unionId] })).body.ok, true);
     assert.match((await shell(carolC)).text, /\/c\//, 'a chosen member opens it');
     assert.match((await shell(aliceC)).text, /打不开这个页面/, 'others still cannot');
+    // 「私聊我免登录链接」: a one-time link in the clicker's private chat that logs them in and opens the page.
+    const openBtn = button(ok, 'pg_open')!;
+    assert.match(JSON.stringify(ok), /私聊我免登录链接/, 'the label the login note points to');
+    assert.match(JSON.stringify(await env.click(alice, card.id, openBtn)), /没有这个页面的访问权限/);
+    const before = fake.sent.length;
+    assert.match(JSON.stringify(await env.click(carol, card.id, openBtn)), /已私聊发给你/);
+    const dm = fake.sent.slice(before);
+    assert.equal(dm.length, 1);
+    assert.deepEqual(dm[0].to, { unionId: carol.unionId }, 'only to the clicker, never the group');
+    const link = urlButton(dm[0].card)!;
+    const landed = await fetch(link, { redirect: 'manual' });
+    assert.equal(landed.status, 302);
+    assert.equal(landed.headers.get('location'), `/p/${id}/`, 'lands on the page');
+    const viaLink = landed.headers.get('set-cookie')!.split(';')[0];
+    assert.match((await shell(viaLink)).text, /\/c\//, 'logged in, the page opens');
+    assert.equal((await fetch(link, { redirect: 'manual' })).status, 400, 'the link works once');
+    assert.ok(env.amber.store.listAudit({ prefixes: ['web.'], limit: 20 }).some(a => a.action === 'web.login_link' && a.actor === carol.unionId && JSON.parse(a.detail).page === id));
     assert.equal((await post(bobC, `/web/api/pages/${id}/access`, { access: 'group' })).body.ok, true);
     assert.match((await shell(aliceC)).text, /\/c\//, 'everyone in the group');
 

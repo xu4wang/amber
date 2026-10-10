@@ -138,7 +138,7 @@ amber submit draft.json --label <你的 bot 名>
 1. 写一个目录：`index.html` 加样式、脚本、图片，样式自己定。页面里用 `<script src="/sdk/amber-page.js"></script>` 加载 Amber 接口
 2. 数据一律通过已审核的 Amber 应用拿：`const r = await Amber.run('应用名', {参数: '值'})`，返回 `{markdown, blocks, json}`；`await Amber.render(元素, r)` 画成和卡片一样的显示；打开飞书链接用 `Amber.open(url)`；`Amber.me()` 拿访问者名字。需要的应用还没有，就按上面「提交成新应用」写一个（给页面用的数据，表格用 ```table，复杂结构多输出一个 ```json 块）
 3. 目录里放 `amber.json`：`{"apps": ["应用名", ...]}`，写明页面会调用哪些应用（只能是这个人自己在这个会话里的应用，或全局应用）
-4. 发布：`amber page publish ./目录 --name <小写字母数字和->` 加 `--user <邮箱>`。第一次发布、或者 amber.json 里的应用变了，用户要在飞书卡片上点「确认发布」；只改页面内容就直接生效，告诉用户刷新页面
+4. 发布：`amber page publish ./目录 --name <小写字母数字和->` 加 `--user <邮箱>`。第一次发布、或者 amber.json 里的应用变了，用户要在飞书卡片上点「确认发布」；只改页面内容就直接生效，告诉用户刷新页面。确认卡片上会附页面首屏截图（截图时不会调用应用），所以让首屏不用操作就能看出这个页面是做什么的
 5. 限制：页面不能联网、不能从 CDN 加载库（要用的库放进目录，或用 Amber 提供的 `/vendor/vega*.min.js`、`/vendor/marked.min.js`、`/vendor/purify.min.js`），最多 200 个文件、10MB。谁能打开由用户在网站上设置（默认只有他自己）
 
 ## 安装

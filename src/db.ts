@@ -374,6 +374,9 @@ export class Store {
     this.db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS pages_chat_name ON pages(chat_id, name) WHERE status != 'deleted'`);
     const runCols = (this.db.prepare(`PRAGMA table_info(runs)`).all() as { name: string }[]).map(c => c.name);
     if (!runCols.includes('schedule_id')) this.db.exec('ALTER TABLE runs ADD COLUMN schedule_id TEXT');
+    // Where a login link lands (a page app it was sent for); fixed server side, never taken from the URL.
+    const loginCols = (this.db.prepare(`PRAGMA table_info(web_logins)`).all() as { name: string }[]).map(c => c.name);
+    if (!loginCols.includes('next')) this.db.exec('ALTER TABLE web_logins ADD COLUMN next TEXT');
   }
 
   /** D28: commands used to hold a list of steps. One-step commands become a single script (same code,
@@ -726,8 +729,8 @@ export class Store {
 
   // ---------- website login (D34)
 
-  insertWebLogin(tokenHash: string, unionId: string, openId: string | null): void {
-    this.db.prepare('INSERT INTO web_logins (token_hash, union_id, open_id, created_at) VALUES (?,?,?,?)').run(tokenHash, unionId, openId, Date.now());
+  insertWebLogin(tokenHash: string, unionId: string, openId: string | null, next: string | null = null): void {
+    this.db.prepare('INSERT INTO web_logins (token_hash, union_id, open_id, created_at, next) VALUES (?,?,?,?,?)').run(tokenHash, unionId, openId, Date.now(), next);
   }
 
   setWebLoginMessage(tokenHash: string, messageId: string): void {
@@ -735,11 +738,11 @@ export class Store {
   }
 
   /** Marks a login link used; returns it only if it was unused and younger than maxAgeMs. */
-  consumeWebLogin(tokenHash: string, maxAgeMs: number): { unionId: string; openId: string | null; messageId: string | null } | undefined {
+  consumeWebLogin(tokenHash: string, maxAgeMs: number): { unionId: string; openId: string | null; messageId: string | null; next: string | null } | undefined {
     const r = this.db.prepare('UPDATE web_logins SET used_at = ? WHERE token_hash = ? AND used_at IS NULL AND created_at > ?').run(Date.now(), tokenHash, Date.now() - maxAgeMs);
     if (Number(r.changes) !== 1) return undefined;
-    const x = this.db.prepare('SELECT union_id, open_id, message_id FROM web_logins WHERE token_hash = ?').get(tokenHash) as Record<string, string | null>;
-    return { unionId: String(x.union_id), openId: x.open_id, messageId: x.message_id };
+    const x = this.db.prepare('SELECT union_id, open_id, message_id, next FROM web_logins WHERE token_hash = ?').get(tokenHash) as Record<string, string | null>;
+    return { unionId: String(x.union_id), openId: x.open_id, messageId: x.message_id, next: x.next };
   }
 
   recentWebLogins(unionId: string, windowMs: number): number {
