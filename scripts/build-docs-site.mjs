@@ -2,7 +2,7 @@
 // (web/docs.html, rendered in the browser). Published at https://xu4wang.github.io/amber-manual/docs/
 // by .github/workflows/docs-site.yml.
 // usage: node scripts/build-docs-site.mjs <out-dir>   writes <out>/docs/*.html, <out>/vendor/*, <out>/logo.svg
-import { readFileSync, writeFileSync, mkdirSync, copyFileSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync, copyFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 const ROOT = join(import.meta.dirname, '..');
 const OUT = process.argv[2];
@@ -36,4 +36,6 @@ const [first, firstTitle] = DOCS[0];
 writeFileSync(join(OUT, 'docs', 'index.html'), `<!doctype html><meta charset="utf-8"><meta http-equiv="refresh" content="0; url=${first}.html"><title>Amber 文档</title><a href="${first}.html">${firstTitle}</a>\n`);
 for (const f of ['marked.min.js', 'purify.min.js', 'highlight.min.js']) copyFileSync(join(ROOT, 'web/vendor', f), join(OUT, 'vendor', f));
 copyFileSync(join(ROOT, 'web/logo.svg'), join(OUT, 'logo.svg'));
+mkdirSync(join(OUT, 'docs', 'assets'), { recursive: true });
+for (const f of readdirSync(join(ROOT, 'docs/assets'))) if (f.endsWith('.svg')) copyFileSync(join(ROOT, 'docs/assets', f), join(OUT, 'docs', 'assets', f));
 console.log(`docs site: ${DOCS.length} pages -> ${OUT}`);
