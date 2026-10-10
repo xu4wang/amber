@@ -241,6 +241,16 @@ details.node details.node { margin-left: 13px; padding-left: 0; border-left: 2px
 .field-main { flex: 1 1 320px; min-width: 0; }
 .field-main input { width: 100%; }
 .field-main .note { margin: 6px 0 0; }
+.audit-filter { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 16px; }
+.audit-filter select, .audit-filter input { height: 40px; padding: 0 12px; border: 1px solid var(--line); background: var(--bg); color: var(--ink); font: inherit; border-radius: 4px; }
+.audit-filter input { flex: 1 1 260px; }
+table.audit { width: 100%; font-size: 13px; }
+table.audit td { vertical-align: top; }
+table.audit th { white-space: nowrap; }
+table.audit .nowrap { white-space: nowrap; }
+table.audit .mono { font-family: ui-monospace, Menlo, monospace; font-size: 11px; }
+.audit-detail { word-break: break-all; color: var(--body-ink); }
+.audit-detail .kv-k { color: var(--muted); }
 .footer-preview { padding: 10px 14px; background: var(--bg); border: 1px dashed var(--line-2); color: var(--muted); font-size: 13px; }
 .footer-preview a { color: var(--accent-ink); }
 
@@ -476,21 +486,29 @@ function renderTree() {
       return `<div class="leaf" data-key="${esc(key)}" data-search="${esc((a.name + ' ' + (a.description || '')).toLowerCase())}"><span class="name">${esc(a.name)}</span>${a.status === 'delisted' ? '<span class="chip warn">已下架</span>' : `<span class="sub">v${esc(a.version)}</span>`}</div>`;
     }).join('') || '<div class="empty-leaf">还没有上架的应用</div>');
   }
-  if (o.isAdmin && o.executors) {
-    const ST = { pending: '待批准', approved: '已批准', rejected: '已拒绝', revoked: '已撤销' };
-    const pending = o.executors.filter(e => e.status === 'pending').length;
-    html += node('executors', `执行端（管理员）${pending ? '<span class="chip warn">待批准</span>' : ''}<span class="count">${o.executors.length}</span>`, o.executors.map(e => {
-      const key = 'e:' + e.id;
-      ITEMS.set(key, { kind: 'exe', e });
-      const state = e.status === 'approved' ? (e.online ? '在线' : '离线') : ST[e.status] || e.status;
-      return `<div class="leaf" data-key="${esc(key)}" data-search="${esc(e.name)}"><span class="dot ${e.status === 'approved' ? (e.online ? 'ok' : 'failed') : 'running'}"></span><span class="name">${esc(e.name)}</span>${e.status === 'pending' ? '<span class="chip warn">待批准</span>' : `<span class="sub">${esc(state)}</span>`}</div>`;
-    }).join('') || '<div class="empty-leaf">还没有执行端登记</div>');
-  }
-  if (o.isAdmin && SETTINGS && SETTINGS.ok) {
-    ITEMS.set('set:card-footer', { kind: 'set' });
-    ITEMS.set('set:run-limits', { kind: 'set-limits' });
-    ITEMS.set('set:allow-hosts', { kind: 'set-hosts' });
-    html += node('settings', '系统设置（管理员）', '<div class="leaf" data-key="set:run-limits" data-search="运行限制 时限 并发"><span class="name">运行限制</span></div><div class="leaf" data-key="set:allow-hosts" data-search="网络白名单 代理 域名"><span class="name">网络白名单</span></div><div class="leaf" data-key="set:card-footer" data-search="卡片页脚 footer"><span class="name">卡片页脚</span></div>');
+  // 系统管理 (admins): executors, settings and the audit log under one menu.
+  if (o.isAdmin) {
+    let admin = '';
+    if (o.executors) {
+      const ST = { pending: '待批准', approved: '已批准', rejected: '已拒绝', revoked: '已撤销' };
+      const pending = o.executors.filter(e => e.status === 'pending').length;
+      admin += node('executors', `执行端${pending ? '<span class="chip warn">待批准</span>' : ''}<span class="count">${o.executors.length}</span>`, o.executors.map(e => {
+        const key = 'e:' + e.id;
+        ITEMS.set(key, { kind: 'exe', e });
+        const state = e.status === 'approved' ? (e.online ? '在线' : '离线') : ST[e.status] || e.status;
+        return `<div class="leaf" data-key="${esc(key)}" data-search="${esc(e.name)}"><span class="dot ${e.status === 'approved' ? (e.online ? 'ok' : 'failed') : 'running'}"></span><span class="name">${esc(e.name)}</span>${e.status === 'pending' ? '<span class="chip warn">待批准</span>' : `<span class="sub">${esc(state)}</span>`}</div>`;
+      }).join('') || '<div class="empty-leaf">还没有执行端登记</div>');
+    }
+    if (SETTINGS && SETTINGS.ok) {
+      ITEMS.set('set:card-footer', { kind: 'set' });
+      ITEMS.set('set:run-limits', { kind: 'set-limits' });
+      ITEMS.set('set:allow-hosts', { kind: 'set-hosts' });
+      admin += node('settings', '系统设置', '<div class="leaf" data-key="set:run-limits" data-search="运行限制 时限 并发"><span class="name">运行限制</span></div><div class="leaf" data-key="set:allow-hosts" data-search="网络白名单 代理 域名"><span class="name">网络白名单</span></div><div class="leaf" data-key="set:card-footer" data-search="卡片页脚 footer"><span class="name">卡片页脚</span></div>');
+    }
+    ITEMS.set('audit', { kind: 'audit' });
+    admin += '<div class="leaf" data-key="audit" data-search="审计日志 audit"><span class="name">审计日志</span></div>';
+    const pendingAll = (o.executors || []).some(e => e.status === 'pending');
+    html += node('admin', `系统管理${pendingAll ? '<span class="chip warn">待批准</span>' : ''}`, admin);
   }
   html += node('runs', `最近运行<span class="count">${RUNS.length}</span>`, RUNS.map(r => {
     const key = 'r:' + r.id;
@@ -530,6 +548,7 @@ function select(key, push = true) {
   else if (it.kind === 'set') footerPane();
   else if (it.kind === 'set-limits') limitsPane();
   else if (it.kind === 'set-hosts') hostsPane();
+  else if (it.kind === 'audit') auditPane();
   else runPane(it);
 }
 
@@ -713,7 +732,7 @@ function limitsPane() {
       ${row('maxTimeoutSec', '最长时限', L.maxTimeoutSec, B.timeout, '秒', `应用最多能申请这么久，超过的提交时就会被拒绝；已上线的应用超过的，运行时按这个截断（初始 ${fmtDur(D.maxTimeoutSec)}）。现在：${esc(fmtDur(L.maxTimeoutSec))}`)}
       <h3 style="margin-top:24px">同时运行</h3>
       ${row('maxConcurrentLocal', 'Amber 本机', L.maxConcurrentLocal, B.concurrency, '个', `没有写执行位置（env）的应用都在 Amber 这台机器上跑（初始 ${D.maxConcurrentLocal}）。正在运行：${R.local || 0}`)}
-      ${row('maxConcurrentExecutor', '执行端（默认）', L.maxConcurrentExecutor, B.concurrency, '个', `执行端没有单独设置时用这个；可以在左侧「执行端（管理员）」里按台设置（初始 ${D.maxConcurrentExecutor}）。执行端那台机器自己也可以设上限，取两者中小的。${exeLines ? `<br>单独设置过的：<ul class="paths">${exeLines}</ul>` : ''}`)}
+      ${row('maxConcurrentExecutor', '执行端（默认）', L.maxConcurrentExecutor, B.concurrency, '个', `执行端没有单独设置时用这个；可以在左侧「系统管理 → 执行端」里按台设置（初始 ${D.maxConcurrentExecutor}）。执行端那台机器自己也可以设上限，取两者中小的。${exeLines ? `<br>单独设置过的：<ul class="paths">${exeLines}</ul>` : ''}`)}
       ${row('maxConcurrentPerUser', '每人', L.maxConcurrentPerUser, B.concurrency, '个', `一个人同时最多运行几个，防止一个人占满名额（初始 ${D.maxConcurrentPerUser}）`)}
       <div class="actions"><button class="btn primary" type="submit">保存</button> <button class="btn" type="button" data-limits="default">恢复初始值</button></div>
     </form>`;
@@ -755,6 +774,54 @@ function hostsPane() {
   };
   form.addEventListener('submit', ev => { ev.preventDefault(); save({ global: lines(form.global.value), local: lines(form.local.value) }); });
   form.querySelector('[data-hosts=default]').addEventListener('click', () => save({ global: D }));
+}
+
+// The audit log (admins): who did what, newest first. Filter by category or text; 50 at a time.
+const AUDIT_LABEL = {
+  'run.start': '开始执行', 'run.ok': '执行成功', 'run.failed': '执行失败', 'agent.run': 'agent 直接执行', 'identity.issue': '签发身份凭证', 'secret.use': '使用密钥',
+  'request.create': '发起确认请求', 'draft.submit': '提交草稿', 'draft.claim': '认领并提交审核', 'draft.drop': '丢弃草稿', 'review.feishu_started': '发起飞书审批',
+  'review.feishu_closed': '飞书审批结束', 'review.approve': '审核通过', 'review.reject': '审核驳回', 'command.active': '应用生效', 'command.replace': '新版本替换旧版本',
+  'command.retire': '下线应用', 'operator.retire': '下线应用', 'operator.add_active': '添加应用', 'scope.promote': '设为全局', 'scope.demote': '取消全局',
+  'command.clone_offer': '发起复制', 'command.clone': '复制应用', 'command.reassign_offer': '发起重新分配', 'command.reassign': '重新分配',
+  'app.listing_request': '申请上架', 'app.listed': '已上架', 'app.delist': '下架', 'app.relist': '重新上架', 'app.install': '安装', 'app.upgrade': '升级', 'app.version': 'Store 新版本', 'app.maintainer': '更换维护人',
+  'schedule.create': '创建定时任务', 'schedule.pause': '暂停定时任务', 'schedule.resume': '恢复定时任务', 'schedule.delete': '删除定时任务', 'schedule.takeover': '接手定时任务', 'schedule.rebind': '换绑定时任务',
+  'executor.register': '执行端申请登记', 'executor.approve': '批准执行端', 'executor.reject': '拒绝执行端', 'executor.revoke': '撤销执行端', 'executor.follow': '执行端环境自动更新', 'executor.dispatch': '派发任务到执行端', 'executor.relay': '执行端转发服务请求',
+  'web.executor_decide': '网站上处理执行端', 'web.executor_limit': '修改执行端并发上限', 'web.run_limits': '修改运行限制', 'web.allow_hosts': '修改网络白名单', 'web.card_footer': '修改卡片页脚',
+  'config.set': '设置配置项', 'secret.set': '设置密钥', 'secret.drop_all': '删除全部密钥',
+  'web.login': '登录网站', 'web.logout': '退出网站', 'web.login_link': '发送登录链接', 'web.selftest_link': '自检登录链接',
+  'app.dev_install': '开发模式安装', 'app.listing_approve': '上架审核通过', 'app.listing_reject': '上架审核驳回', 'app.listing_rejected': '上架被驳回', 'app.listing_check_failed': '上架审批状态查询失败',
+  'command.clone_decline': '拒绝接收复制', 'command.reassign_request': '发起重新分配', 'command.reassign_decline': '拒绝接收重新分配',
+  'config.delete': '删除配置项', 'config.drop_all': '删除全部配置项', 'secret.delete': '删除密钥', 'request.cancel': '取消确认请求',
+  'review.feishu_check_failed': '飞书审批状态查询失败', 'schedule.missed': '定时任务错过（Amber 未运行）', 'web.logout_all': '退出所有网站登录',
+  'startup.seed': '首次启动写入默认设置', 'startup.interrupted_runs': '重启时标记中断的执行', 'startup.unrunnable': '发现不能执行的应用',
+};
+let AUDIT = { rows: [], cat: '', q: '', done: false, categories: [] };
+async function auditPane(more = false) {
+  if (!more) AUDIT = { ...AUDIT, rows: [], done: false };
+  const params = new URLSearchParams({ cat: AUDIT.cat, q: AUDIT.q });
+  if (more && AUDIT.rows.length) params.set('before', AUDIT.rows[AUDIT.rows.length - 1].id);
+  const r = await fetch('/web/api/audit?' + params).then(x => x.json()).catch(() => ({ ok: false }));
+  if (!r.ok) { document.getElementById('pane').innerHTML = `${backBtn}<p class="note">审计日志读取失败</p>`; return; }
+  AUDIT.categories = r.categories;
+  AUDIT.rows = AUDIT.rows.concat(r.rows);
+  AUDIT.done = r.rows.length < 50;
+  const detail = d => { try { const o = JSON.parse(d); return Object.entries(o).map(([k, v]) => `<span class="kv-k">${esc(k)}</span> ${esc(typeof v === 'string' ? v : JSON.stringify(v))}`).join('　'); } catch { return esc(d); } };
+  const rows = AUDIT.rows.map(x => `<tr><td class="nowrap">${fmtTime(x.at)}</td><td class="nowrap">${x.actor ? esc(x.actorName || x.actor) : '<span class="note">系统</span>'}</td>
+    <td class="nowrap">${esc(AUDIT_LABEL[x.action] || x.action)}<br><span class="note mono">${esc(x.action)}</span></td><td class="audit-detail">${detail(x.detail)}</td></tr>`).join('');
+  document.getElementById('pane').innerHTML = `${backBtn}
+    <div class="pane-head"><h1>审计日志</h1></div>
+    <div class="where">系统管理 · 管理员</div>
+    <p class="desc">谁在什么时候做了什么：认领审核、执行、上下线、设置修改、执行端、登录等，最新的在前面。</p>
+    <form class="audit-filter" id="audit-form">
+      <select name="cat"><option value="">全部类别</option>${AUDIT.categories.map(c => `<option value="${esc(c.key)}"${c.key === AUDIT.cat ? ' selected' : ''}>${esc(c.label)}</option>`).join('')}</select>
+      <input name="q" placeholder="搜索：应用 id、名字、操作……" value="${esc(AUDIT.q)}">
+      <button class="btn small" type="submit">查询</button>
+    </form>
+    <div class="output"><table class="audit"><thead><tr><th>时间</th><th>操作人</th><th>操作</th><th>详情</th></tr></thead><tbody>${rows || '<tr><td colspan="4" class="note">没有记录</td></tr>'}</tbody></table>
+    ${AUDIT.done ? '' : '<div class="actions"><button class="btn small" id="audit-more">加载更多</button></div>'}</div>`;
+  const form = document.getElementById('audit-form');
+  form.addEventListener('submit', ev => { ev.preventDefault(); AUDIT.cat = form.cat.value; AUDIT.q = form.q.value.trim(); auditPane(); });
+  document.getElementById('audit-more')?.addEventListener('click', () => auditPane(true));
 }
 
 function exeLimitBlock(e) {
