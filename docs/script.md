@@ -9,7 +9,7 @@
 ```json
 {
   "params": {"city": "北京", "repo": "group/project"},
-  "caller": {"unionId": "on_…", "chatId": "oc_…", "channel": "bot|agent|schedule", "city": "北京"},
+  "caller": {"unionId": "on_…", "chatId": "oc_…", "channel": "bot|web|agent|schedule|page", "city": "北京"},
   "runId": "…",
   "services": {"data-mcp": {"tokens": ["…", "…"], "tcpPort": 8765}},
   "secrets": {"API_TOKEN": "…"}

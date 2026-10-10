@@ -200,7 +200,9 @@ export async function runCommand(store: Store, cmd: CommandRow, rawArgs: Record<
     const runId = store.startRun({ commandId: cmd.id, specHash: cmd.specHash, channel: opts.trial ? `${caller.channel}.trial` : caller.channel, callerUnionId: caller.unionId, chatId: caller.chatId, args });
     store.audit(caller.unionId, 'run.start', { runId, commandId: cmd.id, name: cmd.name, channel: caller.channel, chatId: caller.chatId });
     const services: Record<string, { tokens: string[]; tcpPort?: number; unixSocket?: string }> = {};
-    const channel = opts.trial ? `${caller.channel}.trial` : caller.channel;
+    // Services see the documented channels only (docs/identity.md): a page call is a website call.
+    const claim = caller.channel === 'page' ? 'web' : caller.channel;
+    const channel = opts.trial ? `${claim}.trial` : claim;
     for (const [name, use] of Object.entries(script.services ?? {})) {
       const d = serviceDef(name);
       if (!d || !facts.signer) continue;

@@ -30,7 +30,7 @@ test('pages: file lists, amber.json and output blocks', () => {
 });
 
 test('pages: publish with confirmation, access, calls as the viewer, signed files on their own origin', async () => {
-  const env = await makeEnv();
+  const env = await makeEnv({ services: { demo: { audience: 'demo', tcpPort: 9 } } });
   const { fake, alice, bob, carol } = env;   // bob owns the page; carol and alice are other members
   fake.chats.get(GROUP)!.members.add(carol.unionId);
   const web = `http://127.0.0.1:${env.webPort}`, pages = `http://localhost:${env.webPort}`;
@@ -43,12 +43,15 @@ test('pages: publish with confirmation, access, calls as the viewer, signed file
     await activate(env, { chatId: GROUP, chatType: 'group', name: '写文档', params: [], script: script('print("写好了")'), options: { confirm: true } }, bob);
     secretVault()!.set({ chatId: GROUP, name: '带密钥' }, 'API_TOKEN', 'bob-token', bob.unionId);
     await activate(env, { chatId: GROUP, chatType: 'group', name: '带密钥', params: [], script: script('print("用了密钥")', { secrets: ['API_TOKEN'] }) }, bob);
+    // Shows the channel in its identity token: services only know the documented ones, so a page call says "web".
+    const claim = 'import json,sys,base64\ninp=json.load(sys.stdin)\np=inp["services"]["demo"]["tokens"][0].split(".")[1]\nprint("claim=" + json.loads(base64.urlsafe_b64decode(p + "==="))["channel"])';
+    await activate(env, { chatId: GROUP, chatType: 'group', name: '查服务', params: [], script: script(claim, { services: { demo: { calls: 1 } } }) }, bob);
     await activate(env, { chatId: GROUP, chatType: 'group', name: '没绑定', params: [], script: script('print(1)') }, bob);
 
     // 1. Publish: a new page waits for the owner's confirmation.
     const index = '<!doctype html><script src="/sdk/amber-page.js"></script><h1>报表</h1>';
     assert.ok(!existsSync(join(env.cfg.dataDir, 'pages', 'x')));
-    const r1 = await publish([file('index.html', index), file('amber.json', '{"apps":["查数","写文档","带密钥"]}'), file('js/app.js', 'console.log(1)')]);
+    const r1 = await publish([file('index.html', index), file('amber.json', '{"apps":["查数","写文档","带密钥","查服务"]}'), file('js/app.js', 'console.log(1)')]);
     assert.equal(r1.body.status, 'awaiting', JSON.stringify(r1.body));
     const id = r1.body.pageId;
     const card = fake.sent.at(-1)!;
@@ -60,7 +63,7 @@ test('pages: publish with confirmation, access, calls as the viewer, signed file
     assert.match(JSON.stringify(ok), new RegExp(`/p/${id}/`), 'the card opens the page');
     const p = env.amber.store.getPage(id)!;
     assert.equal(p.status, 'active');
-    assert.deepEqual(p.apps.map(a => a.name), ['查数', '写文档', '带密钥']);
+    assert.deepEqual(p.apps.map(a => a.name), ['查数', '写文档', '带密钥', '查服务']);
     assert.equal(p.access, 'owner', 'only the owner by default');
     // Someone else's name clashes.
     const clash = await env.api('POST', '/v1/pages', { chatId: GROUP, chatType: 'group', user: carol.email, name: 'report', files: [file('index.html', 'x')] });
@@ -69,19 +72,19 @@ test('pages: publish with confirmation, access, calls as the viewer, signed file
 
     // 2. A content-only update takes effect at once; a new app needs confirming again.
     const sentBefore = fake.sent.length;
-    const r2 = await publish([file('index.html', index + '<p>v2</p>'), file('amber.json', '{"apps":["带密钥","查数","写文档"]}')]);
+    const r2 = await publish([file('index.html', index + '<p>v2</p>'), file('amber.json', '{"apps":["带密钥","查数","写文档","查服务"]}')]);
     assert.equal(r2.body.status, 'updated');
     assert.equal(fake.sent.length, sentBefore, 'no card for a content update');
-    const r3 = await publish([file('index.html', index), file('amber.json', '{"apps":["查数","写文档","带密钥","没绑定"]}')]);
+    const r3 = await publish([file('index.html', index), file('amber.json', '{"apps":["查数","写文档","带密钥","查服务","没绑定"]}')]);
     assert.equal(r3.body.status, 'awaiting');
-    assert.deepEqual(env.amber.store.getPage(id)!.apps.length, 3, 'until confirmed, the old apps stay');
+    assert.deepEqual(env.amber.store.getPage(id)!.apps.length, 4, 'until confirmed, the old apps stay');
     const c3 = fake.sent.at(-1)!;
     // Uploaded again before anyone clicked: the older card no longer approves anything.
-    await publish([file('index.html', index + '<p>其他</p>'), file('amber.json', '{"apps":["查数","写文档","带密钥","没绑定"]}')]);
+    await publish([file('index.html', index + '<p>其他</p>'), file('amber.json', '{"apps":["查数","写文档","带密钥","查服务","没绑定"]}')]);
     const c3b = fake.sent.at(-1)!;
     assert.notEqual(c3b.id, c3.id);
     assert.match(JSON.stringify(await env.click(bob, c3.id, button(c3.card, 'pg_ok')!)), /新的版本/);
-    assert.deepEqual(env.amber.store.getPage(id)!.apps.length, 3);
+    assert.deepEqual(env.amber.store.getPage(id)!.apps.length, 4);
     await env.click(bob, c3b.id, button(c3b.card, 'pg_no')!);
     assert.equal(env.amber.store.getPage(id)!.status, 'active', 'canceling an update keeps the page');
     assert.equal(env.amber.store.getPage(id)!.pending, null);
@@ -117,6 +120,9 @@ test('pages: publish with confirmation, access, calls as the viewer, signed file
     assert.equal((await call(bobC, '带密钥')).body.ok, true, 'the owner may');
     assert.equal((await call(carolC, '写文档')).body.error, 'needs_confirm');
     assert.equal((await call(carolC, '写文档', { confirm: true })).body.ok, true);
+    const sv = await call(carolC, '查服务');
+    assert.match(sv.body.markdown, /claim=web/, JSON.stringify(sv.body));
+    assert.equal(env.amber.store.getRun(sv.body.runId)!.channel, 'page', 'Amber\'s own record still says page');
     // An app that changed hands is no longer the page owner's to lend.
     const bound = env.amber.store.getPage(id)!.apps.find(a => a.name === '查数')!;
     env.amber.store.setMeta(bound.commandId, { ownerUnionId: alice.unionId });

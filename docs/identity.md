@@ -62,7 +62,7 @@ payload {
   "rev": "075b025f…",         应用定义哈希（审核通过的那一版）
   "run": "85df3e7f",          本次执行 id
   "chat": "oc_…",             应用所属的群或私聊
-  "channel": "bot",           bot / web / agent / schedule；试运行时加 .trial，例如 bot.trial
+  "channel": "bot",           bot / web / agent / schedule；试运行时加 .trial，例如 bot.trial；页面应用里的调用是 web
   "call_index": 1,            这是本次执行的第几张凭证（从 1 开始）
   "call_count": 2,            本次执行对这个服务一共签了几张，等于脚本声明的 calls
   "iat": 1791389686, "exp": 1791389986,
