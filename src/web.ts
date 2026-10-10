@@ -123,12 +123,13 @@ export function startWeb(port: number, store: Store, deps: WebDeps): import('nod
   const page = readFileSync(join(import.meta.dirname, '..', 'web', 'index.html'), 'utf8').replace('__FEISHU_CHAT_LINK__', deps.feishuChatLink);
   const logo = readFileSync(join(import.meta.dirname, '..', 'web', 'logo.svg'));
   // Documentation (docs/*.md), readable without logging in. Rendered in the browser.
-  const DOCS: [string, string][] = [['usage', '使用指南'], ['sharing', '应用的分享'], ['cli-and-skill', 'amber 命令行与 skill'], ['executor', '执行端'], ['environment-format', '运行环境定义格式'], ['identity', '可信身份'], ['identity-example', '可信身份：完整示例'], ['install', '安装与部署'], ['feishu-setup', '飞书应用配置']];
+  // [file, title, nav group "section/subgroup"]; an empty group keeps the page out of the nav (old links still work).
+  const DOCS: [string, string, string][] = [['quickstart', '快速上手', '使用手册/业务开发人员'], ['chat', 'Amber 机器人对话', '使用手册/业务开发人员'], ['with-agent', '和自己的 agent 协作', '使用手册/业务开发人员'], ['web', '网站操作', '使用手册/业务开发人员'], ['scenarios', '主要场景的实现方式', '使用手册/业务开发人员'], ['sharing', '应用的分享', '使用手册/业务开发人员'], ['faq', '常见问题', '使用手册/业务开发人员'], ['review', '审核指南', '使用手册/审核人员'], ['admin', '管理员手册', '使用手册/系统管理员'], ['install', '安装与部署', '安装运维'], ['feishu-setup', '飞书应用配置', '安装运维'], ['executor', '执行端与运行环境', '安装运维'], ['concepts', '概念模型', '概念模型与开发参考'], ['script', '脚本约定', '概念模型与开发参考'], ['cli-and-skill', 'agent 接入：命令行、skill 与接口', '概念模型与开发参考'], ['identity', '可信身份', '概念模型与开发参考'], ['identity-example', '可信身份：完整示例', '概念模型与开发参考'], ['environment-format', '运行环境定义格式', '概念模型与开发参考'], ['usage', '使用指南（已拆分）', '']];
   const docTemplate = readFileSync(join(import.meta.dirname, '..', 'web', 'docs.html'), 'utf8');
   const docPages = new Map<string, string>();
   for (const [name, title] of DOCS) {
     const md = readFileSync(join(import.meta.dirname, '..', 'docs', `${name}.md`), 'utf8');
-    const nav = DOCS.map(([n, t]) => ({ name: n, title: t, current: n === name }));
+    const nav = DOCS.map(([n, t, g]) => ({ name: n, title: t, group: g, current: n === name }));
     // JSON inside <script>: escape "<" so the document can never close the script tag.
     const data = JSON.stringify({ md, nav }).replace(/</g, '\\u003c');
     docPages.set(name, docTemplate.replace('__TITLE__', `${title} · Amber`).replace('__DOC_DATA__', data));

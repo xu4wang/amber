@@ -12,7 +12,7 @@ mkdirSync(join(OUT, 'vendor'), { recursive: true });
 
 // The same list and titles the website uses (src/web.ts).
 const web = readFileSync(join(ROOT, 'src/web.ts'), 'utf8');
-const DOCS = JSON.parse(/const DOCS: \[string, string\]\[\] = (\[.*?\]);/.exec(web)[1].replace(/'/g, '"'));
+const DOCS = JSON.parse(/const DOCS: \[string, string, string\]\[\] = (\[.*?\]);/.exec(web)[1].replace(/'/g, '"'));
 
 // The website serves the docs under /docs/<name> next to the app; here they are plain files.
 let tpl = readFileSync(join(ROOT, 'web/docs.html'), 'utf8');
@@ -27,7 +27,7 @@ swap('<a href="/docs/${esc(n.name)}"', '<a href="${esc(n.name)}.html"');
 
 for (const [name, title] of DOCS) {
   const md = readFileSync(join(ROOT, 'docs', `${name}.md`), 'utf8');
-  const nav = DOCS.map(([n, t]) => ({ name: n, title: t, current: n === name }));
+  const nav = DOCS.map(([n, t, g]) => ({ name: n, title: t, group: g, current: n === name }));
   // JSON inside <script>: escape "<" so the document can never close the script tag.
   const data = JSON.stringify({ md, nav }).replace(/</g, '\\u003c');
   writeFileSync(join(OUT, 'docs', name + '.html'), tpl.replace('__TITLE__', `${title} · Amber`).replace('__DOC_DATA__', data));

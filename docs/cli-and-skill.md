@@ -1,4 +1,4 @@
-# amber 命令行与 skill
+# agent 接入：命令行、skill 与接口
 
 日常使用时，人只跟自己的 agent（botmux、Claude Code、cc-connect 等）说话，agent 通过 `amber` 命令行调用 Amber。`amber` 是一个单文件脚本（[`client/amber`](../client/amber)），只依赖 Python 3 标准库。
 
@@ -122,7 +122,7 @@ $ amber wait 4f0c…
 
 ## 提交新应用
 
-草稿格式和脚本约定见 [skills/amber/SKILL.md](../skills/amber/SKILL.md#把跑通的操作提交成新应用)。每次都一样的值用配置项（参数加 `"scope": "config"`），由人在网站上设置；需要 token、密码的应用在 `script.secrets` 里声明密钥名字；值由人在私聊或网站上填写，agent 拿不到（见[使用指南](usage.md)的常见问题）。
+草稿格式和脚本约定见[脚本约定](script.md)（agent 用的版本在 [skills/amber/SKILL.md](../skills/amber/SKILL.md#把跑通的操作提交成新应用)）。每次都一样的值用配置项（参数加 `"scope": "config"`），由人在网站上设置；需要 token、密码的应用在 `script.secrets` 里声明密钥名字；值由人在私聊或网站上填写，agent 拿不到（见[主要场景](scenarios.md#3-需要外部系统的-token密码)和[常见问题](faq.md)）。
 
 **修改已有应用**：在同一个会话里用同一个名字提交草稿，就是这个应用的新版本。认领卡和审核文档会附上和当前版本的代码差异；新版本只能由原创建人认领；同一个应用同时只能有一个版本在认领或审核中。审核通过后旧版本自动下线，挂在旧版本上的定时任务暂停，并私聊创建人确认换绑。提交后，由人在认领卡上试运行、提交审核，审核人在飞书审批里同意后应用生效。agent 不能认领或审核。
 

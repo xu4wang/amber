@@ -43,13 +43,17 @@ Amber 是**琥珀**。琥珀把一瞬间的东西封存起来，过很多年取�
 
 | 文档 | 内容 |
 |---|---|
-| [使用指南](docs/usage.md) | 给使用者：固化应用、认领审核、在飞书/agent/网站执行、定时任务、常见问题 |
+| [快速上手](docs/quickstart.md) | 给使用者：从一次操作到一个能反复用的应用 |
+| [Amber 机器人对话](docs/chat.md) · [和自己的 agent 协作](docs/with-agent.md) · [网站操作](docs/web.md) | 在飞书、agent、网站上执行应用和管理定时任务 |
+| [主要场景的实现方式](docs/scenarios.md) | 查数出报表、定时监控、密钥、读机器人的台账、@ 人或机器人、写飞书文档、配置项 |
 | [应用的分享](docs/sharing.md) | 应用默认只有创建人能用；四种分享方式（复制给同群的人、上架到 Store、全局应用、重新分配）的区别和怎么选 |
-| [网站](docs/usage.md#在网站上) | 不只在飞书里：冻结后的应用也能在网站上执行，并查看自己每次执行的记录（时间、从哪个入口、参数、耗时、成功与否、出错原因）和历史结果；还能看审核通过的代码、管理定时任务 |
+| [常见问题](docs/faq.md) | 使用中的常见疑问 |
+| [审核指南](docs/review.md) · [管理员手册](docs/admin.md) | 给审核人和管理员 |
+| [概念模型](docs/concepts.md) · [脚本约定](docs/script.md) | 给开发人员：对象之间的关系、脚本的输入输出与沙箱 |
 | [视频手册](https://xu4wang.github.io/amber-manual/) | 给使用者：按章节观看的操作演示，每章 1 分钟左右 |
 | [安装与部署](docs/install.md) | 环境要求、配置文件、launchd 常驻、nginx、运维 |
 | [飞书应用配置](docs/feishu-setup.md) | 权限清单、长连接事件、审批定义、知识库、发布检查 |
-| [amber 命令行与 skill](docs/cli-and-skill.md) | 安装、命令、三档行为、定时任务、接口 |
+| [agent 接入：命令行、skill 与接口](docs/cli-and-skill.md) | 安装、命令、三档行为、定时任务、接口 |
 | [运行环境定义格式](docs/environment-format.md) | 运行环境的 JSON 格式规范（amber-env/1）：字段、路径与规则优先级、强制拒绝、校验清单、映射到 Seatbelt / bwrap。独立于 Amber，其他 agent 平台和沙箱可以照着移植 |
 | [执行端](docs/executor.md) | 数据在别的机器上时（比如机器人建的台账）：在那台机器装执行端、登记运行环境（可从 botmux 机器人导出），管理员批准后，应用就在那个环境里执行 |
 | [可信身份：完整示例](docs/identity-example.md) | 用 Python 写一个信任 Amber 凭证的服务，并让固化应用以执行人身份调用它 |

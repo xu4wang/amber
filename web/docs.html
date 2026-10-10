@@ -69,6 +69,8 @@ header .brand { font-weight: 500; font-size: 15px; letter-spacing: 1.4px; text-t
 header .back, header .gh { font-size: 12px; font-weight: 600; letter-spacing: 0.65px; text-transform: uppercase; }
 header .back:hover, header .gh:hover { color: var(--ink); }
 nav { top: 65px; max-height: calc(100vh - 65px); padding: 32px 12px; }
+nav .section { font-size: 13px; font-weight: 600; color: var(--ink); margin: 28px 10px 4px; padding-bottom: 6px; border-bottom: 1px solid var(--line); }
+nav .section:first-child { margin-top: 4px; }
 nav .group { font-size: 11px; font-weight: 600; letter-spacing: 1.1px; text-transform: uppercase; color: var(--muted-2); margin: 20px 10px 6px; }
 nav a { border-radius: 0; border-left: 2px solid transparent; color: var(--muted); }
 nav a:hover { background: none; color: var(--ink); }
@@ -129,9 +131,16 @@ if (typeof hljs === 'object') doc.querySelectorAll('pre code').forEach(c => {
 });
 
 const cur = DATA.nav.find(n => n.current);
-document.getElementById('nav').innerHTML =
-  '<div class="group">使用</div>' + DATA.nav.slice(0, 2).map(n => link(n)).join('') +
-  '<div class="group">进阶</div>' + DATA.nav.slice(2).map(n => link(n)).join('');
+// Nav groups are "section/subgroup"; a page without a group stays out of the nav.
+let navHtml = '', lastSection = null, lastSub = null;
+for (const n of DATA.nav) {
+  if (!n.group) continue;
+  const [section, sub] = n.group.split('/');
+  if (section !== lastSection) { navHtml += `<div class="section">${esc(section)}</div>`; lastSection = section; lastSub = null; }
+  if (sub && sub !== lastSub) { navHtml += `<div class="group">${esc(sub)}</div>`; lastSub = sub; }
+  navHtml += link(n);
+}
+document.getElementById('nav').innerHTML = navHtml;
 function link(n) {
   const a = `<a href="/docs/${esc(n.name)}" class="${n.current ? 'cur' : ''}">${esc(n.title)}</a>`;
   return n.current && toc.length ? a + '<div class="toc">' + toc.map(h => `<a href="#${esc(h.id)}">${esc(h.textContent)}</a>`).join('') + '</div>' : a;
