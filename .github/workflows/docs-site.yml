@@ -9,6 +9,7 @@ on:
     paths:
       - 'docs/**'
       - 'web/docs.html'
+      - 'web/landing.html'
       - 'web/vendor/**'
       - 'web/logo.svg'
       - 'src/web.ts'
