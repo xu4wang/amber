@@ -42,13 +42,12 @@ header .back:hover { color: var(--accent-ink); }
 header .gh { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: 14px; text-decoration: none; margin-left: 16px; }
 header .gh:hover { color: var(--accent-ink); }
 header .gh svg { width: 18px; height: 18px; fill: currentColor; }
-.layout { display: grid; grid-template-columns: 220px minmax(0, 1fr); max-width: 1180px; margin: 0 auto; }
+.layout { display: grid; grid-template-columns: 220px minmax(0, 1fr) 200px; max-width: 1400px; margin: 0 auto; }
 nav { padding: 24px 12px; border-right: 1px solid var(--line); font-size: 14px; position: sticky; top: 49px; align-self: start; max-height: calc(100vh - 49px); overflow: auto; }
 nav .group { color: var(--muted); font-size: 12px; margin: 14px 8px 4px; }
 nav a { display: block; padding: 5px 10px; border-radius: 6px; color: var(--ink); text-decoration: none; }
 nav a:hover { background: var(--accent-soft); }
 nav a.cur { background: var(--accent-soft); color: var(--accent-ink); font-weight: 600; }
-nav .toc a { padding-left: 20px; color: var(--muted); font-size: 13px; }
 article { padding: 24px 40px 80px; min-width: 0; }
 article h1 { font-size: 28px; margin: 8px 0 16px; }
 article h2 { font-size: 21px; margin: 36px 0 12px; padding-top: 8px; border-top: 1px solid var(--line); }
@@ -71,7 +70,6 @@ article blockquote { margin: 12px 0; padding: 4px 16px; border-left: 3px solid v
 @media (max-width: 860px) {
   .layout { grid-template-columns: 1fr; }
   nav { position: static; max-height: none; border-right: none; border-bottom: 1px solid var(--line); padding: 12px; }
-  nav .toc { display: none; }
   article { padding: 16px 16px 60px; }
 }
 
@@ -87,8 +85,6 @@ nav .group { font-size: 11px; font-weight: 600; letter-spacing: 1.1px; text-tran
 nav a { border-radius: 0; border-left: 2px solid transparent; color: var(--muted); }
 nav a:hover { background: none; color: var(--ink); }
 nav a.cur { background: none; color: var(--ink); font-weight: 600; border-left-color: var(--accent); }
-nav .toc a { color: var(--muted-2); }
-nav .toc a:hover { color: var(--ink); }
 article { padding: 48px 56px 128px; color: var(--body-ink); }
 article h1 { font-size: 56px; font-weight: 500; letter-spacing: -1.12px; line-height: 1.1; color: var(--ink); margin: 8px 0 32px; }
 article h2 { font-size: 26px; font-weight: 500; letter-spacing: 0.2px; color: var(--ink); border-top: 1px solid var(--line); margin: 64px 0 16px; padding-top: 32px; }
@@ -122,7 +118,24 @@ nav details.sec[open] > summary::after { transform: rotate(45deg); }
 nav details.sec > summary:hover::after { border-color: var(--ink); }
 nav details.sec > summary:focus-visible { outline: 1px solid var(--accent); outline-offset: 2px; }
 nav details.sec .group:first-of-type { margin-top: 12px; }
-body.nav-hidden .layout { grid-template-columns: minmax(0, 1fr); max-width: 980px; }
+body.nav-hidden .layout { grid-template-columns: minmax(0, 1fr) 200px; max-width: 1180px; }
+/* This page's sections, on the right. */
+aside#toc { position: sticky; top: 65px; align-self: start; max-height: calc(100vh - 65px); overflow: auto; padding: 48px 16px 32px 0; font-size: 13px; }
+aside#toc .toc-title { font-size: 11px; font-weight: 600; letter-spacing: 1.1px; color: var(--muted-2); margin: 0 0 10px 12px; }
+aside#toc a { display: block; padding: 4px 0 4px 12px; border-left: 2px solid var(--line); color: var(--muted); text-decoration: none; line-height: 1.5; }
+aside#toc a:hover { color: var(--ink); }
+aside#toc a.on { color: var(--ink); border-left-color: var(--accent); }
+body.no-toc .layout { grid-template-columns: 220px minmax(0, 1fr); max-width: 1180px; }
+body.no-toc.nav-hidden .layout { grid-template-columns: minmax(0, 1fr); max-width: 980px; }
+body.no-toc aside#toc { display: none; }
+@media (max-width: 1180px) {
+  .layout, body.no-toc .layout { grid-template-columns: 220px minmax(0, 1fr); max-width: 1180px; }
+  body.nav-hidden .layout { grid-template-columns: minmax(0, 1fr); max-width: 980px; }
+  aside#toc { display: none; }
+}
+@media (max-width: 860px) {
+  .layout, body.no-toc .layout, body.nav-hidden .layout, body.no-toc.nav-hidden .layout { grid-template-columns: minmax(0, 1fr); }
+}
 body.nav-hidden nav { display: none; }
 @media (max-width: 860px) {
   /* On a phone the menu starts hidden; the button opens it above the page. */
@@ -154,6 +167,7 @@ body.nav-hidden nav { display: none; }
 <div class="layout">
   <nav id="nav"></nav>
   <article id="doc"></article>
+  <aside id="toc" aria-label="本页目录"></aside>
 </div>
 <script>
 const DATA = __DOC_DATA__;
@@ -232,7 +246,7 @@ nav.addEventListener('click', e => { if (phone.matches && e.target.closest('a'))
 sync();
 function link(n) {
   const a = `<a href="/docs/${esc(n.name)}" class="${n.current ? 'cur' : ''}">${esc(n.title)}</a>`;
-  return n.current && toc.length ? a + '<div class="toc">' + toc.map(h => `<a href="#${esc(h.id)}">${esc(h.textContent)}</a>`).join('') + '</div>' : a;
+  return a;
 }
 // Light / dark: light unless this browser chose dark. Pages that draw with JS listen for "amber-theme".
 document.getElementById('themebtn').addEventListener('click', () => {
@@ -241,6 +255,20 @@ document.getElementById('themebtn').addEventListener('click', () => {
   try { localStorage.setItem('amber-theme', dark ? 'dark' : 'light'); } catch {}
   document.dispatchEvent(new Event('amber-theme'));
 });
+// This page's sections, in a column on the right; the one being read is highlighted.
+const tocEl = document.getElementById('toc');
+if (toc.length > 1) {
+  tocEl.innerHTML = '<div class="toc-title">本页目录</div>' + toc.map(h => `<a href="#${esc(h.id)}">${esc(h.textContent)}</a>`).join('');
+  const links = [...tocEl.querySelectorAll('a')];
+  const spy = () => {
+    let i = 0;
+    toc.forEach((h, k) => { if (h.getBoundingClientRect().top < 120) i = k; });
+    if (innerHeight + scrollY >= document.documentElement.scrollHeight - 4) i = toc.length - 1;
+    links.forEach((a, k) => a.classList.toggle('on', k === i));
+  };
+  addEventListener('scroll', spy, { passive: true });
+  spy();
+} else document.body.classList.add('no-toc');
 if (location.hash) { const t = document.getElementById(decodeURIComponent(location.hash.slice(1))); if (t) t.scrollIntoView(); }
 </script>
 </body>
