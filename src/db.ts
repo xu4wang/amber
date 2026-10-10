@@ -173,6 +173,7 @@ export class Store {
         action TEXT NOT NULL,
         detail TEXT NOT NULL
       );
+      CREATE INDEX IF NOT EXISTS audit_actor ON audit(actor_union_id);
     `);
     let cols = (this.db.prepare(`PRAGMA table_info(commands)`).all() as { name: string }[]).map(c => c.name);
     if (cols.includes('steps_json')) this.migrateStepsToScript();
@@ -914,6 +915,18 @@ export class Store {
   setSetting(k: string, v: string | null): void {
     if (v === null) this.db.prepare('DELETE FROM settings WHERE k = ?').run(k);
     else this.db.prepare('INSERT INTO settings (k, v) VALUES (?, ?) ON CONFLICT (k) DO UPDATE SET v = excluded.v').run(k, v);
+  }
+
+  /** Newest first. `before`: continue below this id. `prefixes`: actions starting with any of these. `q`: text in
+   *  the action or the detail. `actor`: one person's union_id. */
+  listAudit(o: { before?: number; limit?: number; prefixes?: string[]; q?: string; actor?: string } = {}): { id: number; at: number; actor: string | null; action: string; detail: string }[] {
+    const where: string[] = [], args: (string | number)[] = [];
+    if (o.before) { where.push('rowid < ?'); args.push(o.before); }
+    if (o.prefixes?.length) { where.push('(' + o.prefixes.map(() => "action LIKE ? ESCAPE '\\'").join(' OR ') + ')'); args.push(...o.prefixes.map(p => p.replace(/[\\%_]/g, c => '\\' + c) + '%')); }
+    if (o.q) { where.push("(action LIKE ? ESCAPE '\\' OR detail LIKE ? ESCAPE '\\')"); const q = '%' + o.q.replace(/[\\%_]/g, c => '\\' + c) + '%'; args.push(q, q); }
+    if (o.actor) { where.push('actor_union_id = ?'); args.push(o.actor); }
+    const sql = `SELECT rowid AS id, at, actor_union_id AS actor, action, detail FROM audit ${where.length ? 'WHERE ' + where.join(' AND ') : ''} ORDER BY rowid DESC LIMIT ?`;
+    return (this.db.prepare(sql).all(...args, Math.min(Math.max(o.limit ?? 50, 1), 200)) as any[]).map(r => ({ id: Number(r.id), at: Number(r.at), actor: r.actor ?? null, action: String(r.action), detail: String(r.detail) }));
   }
 
   audit(actorUnionId: string | null, action: string, detail: Record<string, unknown>): void {

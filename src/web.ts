@@ -65,6 +65,17 @@ export interface WebDeps {
 interface WebJob { owner: string; done?: Record<string, unknown>; endedAt?: number }
 const JOB_KEEP_MS = 30 * 60_000;
 
+/** Groups of audit actions for the filter on the audit page (by action name prefix). */
+const AUDIT_CATEGORIES: Record<string, { label: string; prefixes: string[] }> = {
+  run: { label: '执行', prefixes: ['run.', 'agent.run', 'identity.', 'secret.use', 'request.'] },
+  app: { label: '应用与审核', prefixes: ['draft.', 'review.', 'command.', 'operator.', 'scope.', 'app.'] },
+  schedule: { label: '定时任务', prefixes: ['schedule.'] },
+  executor: { label: '执行端', prefixes: ['executor.', 'web.executor'] },
+  settings: { label: '设置、配置项与密钥', prefixes: ['web.card_footer', 'web.run_limits', 'web.allow_hosts', 'config.', 'secret.set', 'secret.delete', 'secret.drop'] },
+  login: { label: '登录', prefixes: ['web.login', 'web.logout', 'web.selftest'] },
+  system: { label: '系统', prefixes: ['startup.', 'migrate.'] },
+};
+
 const pick = (o: Record<string, unknown>, keys: string[]) => Object.fromEntries(keys.filter(k => o[k] !== undefined).map(k => [k, o[k]]));
 
 function readJson(req: IncomingMessage): Promise<any> {
@@ -203,6 +214,17 @@ export function startWeb(port: number, store: Store, deps: WebDeps): import('nod
           return json(res, 200, { ok: true, name: (await deps.nameOf(who.unionId)) ?? '', unionId: who.unionId });
         }
         if (req.method === 'GET' && url.pathname === '/web/api/overview') return json(res, 200, { ok: true, ...(await overview(store, deps, who.unionId)), timezones: timezones() });
+        if (req.method === 'GET' && url.pathname === '/web/api/audit') {
+          // The audit log (admins only): newest first, filtered by category, text or person; 50 at a time.
+          if (!deps.isAdmin(who.unionId)) return json(res, 404, { ok: false, error: 'not_found' });
+          const cat = url.searchParams.get('cat') ?? '';
+          const prefixes = AUDIT_CATEGORIES[cat]?.prefixes;
+          const rows = store.listAudit({ before: Number(url.searchParams.get('before')) || undefined, limit: 50, prefixes, q: (url.searchParams.get('q') ?? '').trim().slice(0, 100) || undefined, actor: url.searchParams.get('actor') || undefined });
+          const names = new Map<string, string>();
+          for (const u of new Set(rows.map(r => r.actor).filter(Boolean) as string[])) names.set(u, (await deps.nameOf(u).catch(() => undefined)) ?? u);
+          return json(res, 200, { ok: true, categories: Object.entries(AUDIT_CATEGORIES).map(([k, v]) => ({ key: k, label: v.label })),
+            rows: rows.map(r => ({ ...r, actorName: r.actor ? names.get(r.actor) : null, detail: r.detail.length > 2000 ? r.detail.slice(0, 2000) + '…' : r.detail })) });
+        }
         if (req.method === 'GET' && url.pathname === '/web/api/settings') {
           // Site-wide settings: admins only.
           if (!deps.isAdmin(who.unionId)) return json(res, 404, { ok: false, error: 'not_found' });
