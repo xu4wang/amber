@@ -192,6 +192,11 @@ details.node details.node > summary { font-size: 13px; font-weight: 500; color: 
 .leaf:hover { background: var(--hover); }
 .leaf.sel { background: var(--hover); color: var(--ink); border-left-color: var(--accent); }
 .leaf .chip { margin-left: 4px; }
+/* Tree levels: what a folder holds sits one step to the right of the folder's name, on a guide line. */
+details.node > .leaf, details.node > .empty-leaf { margin-left: 13px; border-left: 2px solid var(--line); }
+details.node > .leaf.sel { border-left-color: var(--accent); }
+details.node > .empty-leaf { padding: 6px 8px 6px 20px; }
+details.node details.node { margin-left: 13px; padding-left: 0; border-left: 2px solid var(--line); }
 .pane-head h1 { font-size: 36px; font-weight: 500; letter-spacing: -0.36px; line-height: 1.2; }
 .where { font-size: 11px; font-weight: 600; letter-spacing: 1.1px; text-transform: uppercase; color: var(--muted-2); margin-top: 8px; }
 .desc { color: var(--muted); font-size: 16px; margin: 12px 0 32px; }
