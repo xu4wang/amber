@@ -69,8 +69,6 @@ header .brand { font-weight: 500; font-size: 15px; letter-spacing: 1.4px; text-t
 header .back, header .gh { font-size: 12px; font-weight: 600; letter-spacing: 0.65px; text-transform: uppercase; }
 header .back:hover, header .gh:hover { color: var(--ink); }
 nav { top: 65px; max-height: calc(100vh - 65px); padding: 32px 12px; }
-nav .section { font-size: 13px; font-weight: 600; color: var(--ink); margin: 28px 10px 4px; padding-bottom: 6px; border-bottom: 1px solid var(--line); }
-nav .section:first-child { margin-top: 4px; }
 nav .group { font-size: 11px; font-weight: 600; letter-spacing: 1.1px; text-transform: uppercase; color: var(--muted-2); margin: 20px 10px 6px; }
 nav a { border-radius: 0; border-left: 2px solid transparent; color: var(--muted); }
 nav a:hover { background: none; color: var(--ink); }
@@ -94,10 +92,36 @@ article blockquote { border-left: 2px solid var(--accent); background: var(--car
 article hr { border: none; border-top: 1px solid var(--line); }
 article img { display: block; max-width: 100%; height: auto; margin: 24px 0; }
 @media (max-width: 860px) { article { padding: 24px 16px 64px; } article h1 { font-size: 32px; } }
+
+/* ---- Collapsible menu: sections fold, and the whole menu can be hidden ---- */
+.navbtn { display: inline-flex; align-items: center; justify-content: center; width: 36px; height: 36px; margin-left: -8px; padding: 0; background: none; border: 1px solid transparent; color: var(--muted); cursor: pointer; }
+.navbtn:hover, .navbtn:focus-visible { color: var(--ink); border-color: var(--line); outline: none; }
+.navbtn svg { width: 20px; height: 20px; stroke: currentColor; stroke-width: 1.6; fill: none; }
+nav details.sec { margin: 0; }
+nav details.sec + details.sec { margin-top: 12px; }
+nav details.sec > summary { list-style: none; cursor: pointer; display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 13px; font-weight: 600; color: var(--ink); margin: 4px 10px 4px; padding: 6px 0; border-bottom: 1px solid var(--line); user-select: none; }
+nav details.sec > summary::-webkit-details-marker { display: none; }
+nav details.sec > summary::after { content: ""; width: 7px; height: 7px; border-right: 1.5px solid var(--muted); border-bottom: 1.5px solid var(--muted); transform: rotate(-45deg); transition: transform .15s; margin-right: 4px; }
+nav details.sec[open] > summary::after { transform: rotate(45deg); }
+nav details.sec > summary:hover::after { border-color: var(--ink); }
+nav details.sec > summary:focus-visible { outline: 1px solid var(--accent); outline-offset: 2px; }
+nav details.sec .group:first-of-type { margin-top: 12px; }
+body.nav-hidden .layout { grid-template-columns: minmax(0, 1fr); max-width: 980px; }
+body.nav-hidden nav { display: none; }
+@media (max-width: 860px) {
+  /* On a phone the menu starts hidden; the button opens it above the page. */
+  body:not(.nav-open) nav { display: none; }
+  body.nav-hidden.nav-open nav { display: block; }
+  header { gap: 8px; padding: 0 12px; }
+  header > span { display: none; }
+  header .back, header .gh { white-space: nowrap; }
+  header .gh { margin-left: 12px; }
+}
 </style>
 </head>
 <body>
 <header>
+  <button class="navbtn" id="navbtn" type="button" aria-controls="nav" aria-expanded="true" title="收起 / 展开目录"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3 5h14M3 10h14M3 15h14"/></svg></button>
   <img src="/logo.svg" alt="">
   <a class="brand" href="/">Amber</a><span style="color:var(--muted)">文档</span>
   <a class="back" href="/">← 返回网站</a>
@@ -133,15 +157,47 @@ if (typeof hljs === 'object') doc.querySelectorAll('pre code').forEach(c => {
 
 const cur = DATA.nav.find(n => n.current);
 // Nav groups are "section/subgroup"; a page without a group stays out of the nav.
+// Each section folds; what the reader folded is remembered in this browser, and the section of the
+// current page always starts open.
+const store = { get(k) { try { return JSON.parse(localStorage.getItem(k)); } catch { return null; } }, set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} } };
+const folded = store.get('amber-docs-folded') || {};
+const curSection = cur && cur.group ? cur.group.split('/')[0] : null;
 let navHtml = '', lastSection = null, lastSub = null;
 for (const n of DATA.nav) {
   if (!n.group) continue;
   const [section, sub] = n.group.split('/');
-  if (section !== lastSection) { navHtml += `<div class="section">${esc(section)}</div>`; lastSection = section; lastSub = null; }
+  if (section !== lastSection) {
+    if (lastSection !== null) navHtml += '</details>';
+    const open = section === curSection || !folded[section];
+    navHtml += `<details class="sec" data-sec="${esc(section)}"${open ? ' open' : ''}><summary>${esc(section)}</summary>`;
+    lastSection = section; lastSub = null;
+  }
   if (sub && sub !== lastSub) { navHtml += `<div class="group">${esc(sub)}</div>`; lastSub = sub; }
   navHtml += link(n);
 }
-document.getElementById('nav').innerHTML = navHtml;
+if (lastSection !== null) navHtml += '</details>';
+const nav = document.getElementById('nav');
+nav.innerHTML = navHtml;
+nav.querySelectorAll('details.sec').forEach(d => d.addEventListener('toggle', () => {
+  const f = store.get('amber-docs-folded') || {};
+  if (d.open) delete f[d.dataset.sec]; else f[d.dataset.sec] = true;
+  store.set('amber-docs-folded', f);
+}));
+
+// The whole menu: hidden or shown on a wide screen (remembered), opened on demand on a phone.
+const btn = document.getElementById('navbtn');
+const phone = matchMedia('(max-width: 860px)');
+if (store.get('amber-docs-nav-hidden')) document.body.classList.add('nav-hidden');
+const shown = () => phone.matches ? document.body.classList.contains('nav-open') : !document.body.classList.contains('nav-hidden');
+const sync = () => btn.setAttribute('aria-expanded', String(shown()));
+btn.addEventListener('click', () => {
+  if (phone.matches) document.body.classList.toggle('nav-open');
+  else { document.body.classList.toggle('nav-hidden'); store.set('amber-docs-nav-hidden', document.body.classList.contains('nav-hidden')); }
+  sync();
+});
+phone.addEventListener('change', sync);
+nav.addEventListener('click', e => { if (phone.matches && e.target.closest('a')) document.body.classList.remove('nav-open'); });
+sync();
 function link(n) {
   const a = `<a href="/docs/${esc(n.name)}" class="${n.current ? 'cur' : ''}">${esc(n.title)}</a>`;
   return n.current && toc.length ? a + '<div class="toc">' + toc.map(h => `<a href="#${esc(h.id)}">${esc(h.textContent)}</a>`).join('') + '</div>' : a;
