@@ -35,7 +35,7 @@ await check('公钥：/v1/keys', async () => {
   return `kid ${r.body.keys[0].kid}`;
 });
 await check('网站首页与文档', async () => {
-  for (const p of ['/', '/docs', '/docs/usage', '/docs/identity-example', '/logo.svg']) {
+  for (const p of ['/', '/docs', '/docs/usage', '/docs/identity-example', '/docs/assets/lifecycle.svg', '/logo.svg']) {
     const r = await fetch(web + p);
     must(r.status === 200, `${p} → ${r.status}`);
   }

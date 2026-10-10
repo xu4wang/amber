@@ -86,12 +86,12 @@ AMBER_LARK_APP_SECRET=xxxxxxxxxxxxxxxx
 
 | 字段 | 说明 |
 |---|---|
-| `admins` | 管理员，填邮箱或 union_id。管理员可以把应用设为全局或改回本地、查看和下线任何应用、把创建人已离群的应用重新分配、管理任何定时任务（暂停、恢复、删除）、管理 Amber Store；**不能**执行别人的应用，也**不能**跳过审核。和审核人的区别见[使用指南](usage.md#创建人管理员审核人) |
+| `admins` | 管理员，填邮箱或 union_id。管理员可以把应用设为全局或改回本地、查看和下线任何应用、把创建人已离群的应用重新分配、管理任何定时任务（暂停、恢复、删除）、管理 Amber Store；**不能**执行别人的应用，也**不能**跳过审核。和审核人的区别见[管理员手册](admin.md) |
 | `reviewers` | 审核人，填邮箱或 union_id。**所有人都同意**应用才生效（飞书会签审批）。只要有一个人查不到，Amber 就拒绝发起审核，不会悄悄少一个人 |
 | `machines` | 允许访问接口的机器，格式是 IP → 机器名。机器名只记在审计日志里，不给用户看：用户只知道是自己的 agent 提交或发起的（卡片上显示 agent 的 `--label`） |
 | `approval` | 飞书审批配置，取值方法见 [feishu-setup.md](feishu-setup.md#4-审批定义)。不配就退回到用卡片按钮审核 |
 | `wiki` | 放审核文档的知识库位置。要和 `approval` 一起配置 |
-| `services` | 脚本可以调用的本机服务，Amber 会为它们签发执行身份凭证，见 [identity.md](identity.md)。`"executor": true` 表示允许在执行端上运行的应用调用它：请求由执行端转给 Amber，Amber 核对后转给这个服务（见 [执行端](executor.md#调用-amber-上登记的服务)）；默认不允许 |
+| `services` | 脚本可以调用的本机服务，Amber 会为它们签发执行身份凭证，见 [identity.md](identity.md)。例子里的 `data-mcp` 是企业内部的数仓应用，Amber 把它作为可信服务访问。`"executor": true` 表示允许在执行端上运行的应用调用它：请求由执行端转给 Amber，Amber 核对后转给这个服务（见 [执行端](executor.md#调用-amber-上登记的服务)）；默认不允许 |
 | `webBaseUrl` | **必填**。网站的外部地址，用来生成登录链接、做跨站请求检查，并通过 `/v1/info` 告诉 agent（不填只会是 localhost，登录链接在别的电脑上打不开） |
 | `timezones` | 可选。定时任务可选的时区（IANA 名称加显示名），**第一个是默认时区**；网站下拉框、卡片上的时间说明都用它。不配就只用 Amber 服务器所在的时区，显示为「服务器时间」 |
 | `dataDir` | 可选，数据目录，默认是 `~/.config/amber/data` |

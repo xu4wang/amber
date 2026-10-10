@@ -80,6 +80,8 @@ payload {
 }
 ```
 
+> 例子里的 data-mcp 是企业内部的数仓应用，Amber 把它作为可信服务访问，见下面「已接入的服务：data-mcp」。
+
 `tcpPort` 也可以换成 `"unixSocket": "/path/to/service.sock"`。应用脚本声明 `"services": {"data-mcp": {"calls": 2}}` 后（`calls` = 每次执行最多调用几次，1–20 的整数，随代码一起审核、计入版本哈希），运行时会从标准输入收到：
 
 ```json
@@ -152,7 +154,7 @@ def verify_amber(token, audience):
 
 ### 3.6 已接入的服务：data-mcp
 
-data-mcp（只读查数服务）已经按上面的规则接入。它的 Amber 入口是一个单独的进程，只监听 `127.0.0.1`，默认端口 8766，部署时以 `config.json` 里 `services.data-mcp` 登记的端口为准，脚本一律读输入里的 `tcpPort`。
+data-mcp 是企业内部的数仓应用（只读查数），Amber 把它作为可信服务、按上面的规则接入。它的 Amber 入口是一个单独的进程，只监听 `127.0.0.1`，默认端口 8766，部署时以 `config.json` 里 `services.data-mcp` 登记的端口为准，脚本一律读输入里的 `tcpPort`。
 
 **请求**：只有一个接口，一次请求里先校验 SQL、再执行，所以每次查询只消耗一张凭证，应用声明 `"services": {"data-mcp": {"calls": 1}}` 即可；要查几次就声明几次。
 
