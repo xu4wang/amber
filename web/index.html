@@ -14,9 +14,9 @@
 <script src="/vendor/highlight.min.js"></script>
 <style>
 :root {
-  /* Ferrari-inspired: near-black canvas, one scarce red accent, white type at weight 500, sharp corners. */
+  /* Cinematic dark: near-black canvas, one scarce Amber accent (the logo's #F2A23A), white type at weight 500, sharp corners. */
   --bg: #181818; --panel: #181818; --card: #303030; --ink: #ffffff; --muted: #969696; --muted-2: #666666; --line: #303030;
-  --accent: #da291c; --accent-press: #b01e0a; --accent-soft: rgba(218, 41, 28, 0.16); --ok: #03904a; --warn: #f13a2c; --info: #4c98b9;
+  --accent: #f2a23a; --accent-press: #b8620e; --accent-soft: rgba(242, 162, 58, 0.16); --on-accent: #181818; --ok: #03904a; --warn: #f13a2c; --info: #4c98b9;
   --chip: #303030; --hover: #222222; --code-bg: #111111;
   --hl-kw: #ff7b72; --hl-str: #a5d6a7; --hl-num: #ffb74d; --hl-cmt: #7d7d7d; --hl-fn: #90caf9; --hl-meta: #e5c07b;
   --font: Inter, -apple-system, BlinkMacSystemFont, "PingFang SC", "Noto Sans SC", system-ui, sans-serif;
@@ -156,19 +156,19 @@ header .who, header .doclink { font-size: 12px; font-weight: 600; letter-spacing
 header .doclink:hover { color: var(--ink); }
 button, .btn { border-radius: 0; border: 1px solid var(--ink); background: transparent; color: var(--ink); font-size: 12px; font-weight: 700; letter-spacing: 1.4px; text-transform: uppercase; padding: 10px 24px; line-height: 1.2; }
 button:hover, .btn:hover { background: var(--hover); }
-.btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
-.btn.primary:active { background: var(--accent-press); border-color: var(--accent-press); }
-.btn.primary:hover { background: var(--accent-press); }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+.btn.primary:active { background: var(--accent-press); border-color: var(--accent-press); color: #fff; }
+.btn.primary:hover { background: #ffb34d; border-color: #ffb34d; }
 .btn.danger { background: transparent; border-color: var(--warn); color: var(--warn); }
 .btn.small { padding: 6px 14px; font-size: 11px; letter-spacing: 1.1px; }
 .chip { background: var(--card); color: var(--ink); font-size: 11px; font-weight: 600; letter-spacing: 1.1px; padding: 2px 10px; }
-.chip.accent { background: var(--accent); color: #fff; }
+.chip.accent { background: var(--accent); color: var(--on-accent); }
 .chip.warn { background: transparent; color: var(--warn); border: 1px solid var(--warn); }
 .note { color: var(--muted); }
 #tree { background: var(--panel); padding: 16px 8px 32px; }
 #pane { padding: 48px 56px 96px; }
 .search, .field input, .field select { border-radius: 4px; border: 1px solid var(--line); background: var(--bg); color: var(--ink); padding: 10px 14px; }
-.search:focus, .field input:focus, .field select:focus { outline: 2px solid #f6e500; outline-offset: 1px; }
+.search:focus, .field input:focus, .field select:focus { outline: 2px solid #ffd27a; outline-offset: 1px; }
 details.node > summary { border-radius: 0; font-size: 11px; font-weight: 600; letter-spacing: 1.1px; text-transform: uppercase; color: var(--muted); padding: 10px 8px 6px; }
 details.node > summary:hover { background: none; color: var(--ink); }
 .leaf { border-radius: 0; border-left: 2px solid transparent; padding: 7px 8px 7px 20px; }
@@ -323,14 +323,14 @@ function renderOutput(el, md) {
   });
 }
 
-// Charts on the dark canvas: grey labels and hairlines, Rosso Corsa first in the palette.
+// Charts on the dark canvas: grey labels and hairlines, Amber first in the palette.
 const CHART_CONFIG = {
   background: 'transparent', font: 'Inter, -apple-system, "PingFang SC", sans-serif',
   title: { color: '#ffffff', fontWeight: 500 }, view: { stroke: null },
   axis: { labelColor: '#969696', titleColor: '#969696', domainColor: '#444444', gridColor: '#303030', tickColor: '#444444' },
   legend: { labelColor: '#969696', titleColor: '#969696' },
-  text: { color: '#ffffff' }, mark: { color: '#da291c' },
-  range: { category: ['#da291c', '#ffffff', '#969696', '#4c98b9', '#666666', '#b01e0a', '#ebebeb', '#03904a'] },
+  text: { color: '#ffffff' }, mark: { color: '#f2a23a' },
+  range: { category: ['#f2a23a', '#ffffff', '#969696', '#4c98b9', '#666666', '#b8620e', '#ffd27a', '#03904a'] },
 };
 
 function showOutput(el, r, meta) {
