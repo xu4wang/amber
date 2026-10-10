@@ -7,7 +7,7 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
-const SHARED = ['exec-proto', 'sandbox-policy', 'sandbox-run'];
+const SHARED = ['exec-proto', 'sandbox-policy', 'sandbox-run', 'egress-proxy'];
 const check = process.argv.includes('--check');
 let stale = [];
 for (const name of SHARED) {

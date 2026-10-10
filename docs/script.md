@@ -42,7 +42,7 @@
 |---|---|
 | 当前目录 | 本次运行的临时目录，也是 `HOME` 和 `TMPDIR`，结束后删除 |
 | 可读 | 系统目录和常见语言工具链（Homebrew、nvm、pyenv 等），外部命令能用；`$HOME` 下的其他文件不可见 |
-| 联网 | 不联网。需要时在 `script` 里写 `"network": true`，审核时会重点看 |
+| 网络 | 不能直连。经代理可以访问网络白名单：管理员设置的「所有环境」名单（初始是飞书），加上执行端环境的 `allowHosts` 或 Amber 本机的额外名单，脚本拿到的 `HTTPS_PROXY` 已经设好，lark-cli、curl、Python 都会自动用。要直连任何地址才写 `"network": true`，审核时会重点看 |
 | Python | 系统 Python 3.9，只有标准库 |
 | 时限 | 不写 `timeoutMs` 时用管理员设的默认时限（初始 60 秒）；可以写 `timeoutMs`（毫秒），最多到管理员设的最长时限（初始 10 分钟），超过的提交时就会被拒绝 |
 | 大小 | 代码最多 64KB，输出最多 256KB |
@@ -81,7 +81,7 @@ Content-Type: application/json
 - 返回 200 时看 `status`：`success` 才算成功，数据在 `rows`（以列名为键的对象数组）、`columns`、`row_count`、`truncated`；`validation_error` 等失败也是 200，原因在 `error_code` 或 `issues[].code`。
 - 401 是凭证无效，409 是凭证已用过，429 是定时执行限流。
 - 试运行最多返回 20 行；`truncated` 为 true 时在输出里说明。
-- 声明了数据服务的应用不能访问外网。
+- 声明了数据服务的应用不能直连网络（不能写 `network: true`）；经代理访问白名单地址不受影响。
 
 服务方怎么验证凭证见[可信身份](identity.md#36-已接入的服务data-mcp)。
 

@@ -72,6 +72,8 @@ export interface ExecutorEnv {
   access?: { readOnly?: string[]; readWrite?: string[]; deny?: string[] };
   /** Extra environment variables for scripts, e.g. LARKSUITE_CLI_CONFIG_DIR for a bot's lark-cli identity. */
   vars?: Record<string, string>;
+  /** Hosts scripts may reach through the local proxy (no direct network). "*.a.com" = any subdomain; ":port" (default 443). */
+  allowHosts?: string[];
   /** Where the definition came from, e.g. "botmux:cli_xxx". Shown to admins. */
   source?: string;
   /** HOME is the user's real home (as in the bot's own sessions) instead of the run dir. */
@@ -902,6 +904,11 @@ export class Store {
   getSetting(k: string): string | undefined {
     const r = this.db.prepare('SELECT v FROM settings WHERE k = ?').get(k) as { v: string } | undefined;
     return r?.v;
+  }
+
+  /** Writes only when the key is not there yet (atomic); true when it wrote. */
+  setSettingIfAbsent(k: string, v: string): boolean {
+    return Number(this.db.prepare('INSERT OR IGNORE INTO settings (k, v) VALUES (?, ?)').run(k, v).changes) > 0;
   }
 
   setSetting(k: string, v: string | null): void {

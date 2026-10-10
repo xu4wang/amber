@@ -501,8 +501,9 @@ function executorLines(e: ExecutorRow): string {
       ...(a.readOnly?.length ? ['- 只读：', ...lines(a.readOnly)] : []),
       ...(a.deny?.length ? ['- 禁止：', ...lines(a.deny, false)] : []),
       ...(vars.length ? ['- 环境变量：', ...vars.map(([n, val]) => `　　- \`${sanitizeMarkdown(n, 64)}=${sanitizeMarkdown(val, 200)}\``)] : []),
+      ...(v.allowHosts?.length ? ['- 网络白名单（不能直连，经代理只能访问这些地址）：', ...v.allowHosts.map(h => `　　- \`${sanitizeMarkdown(h, 100)}\``)] : []),
       ...(v.realHome ? ['- HOME：用户主目录（能访问的仍只有上面这些路径）'] : []),
-      ...(v.follow ? [`- 定义文件：\`${sanitizeMarkdown(v.follow, 300)}\`（之后它的路径、环境变量、Python 有变化会自动生效，并通知管理员）`] : []),
+      ...(v.follow ? [`- 定义文件：\`${sanitizeMarkdown(v.follow, 300)}\`（之后它的路径、网络白名单、环境变量、Python 有变化会自动生效，并通知管理员）`] : []),
       ...(cred.size ? ['<font color="red">⚠️ 标记的是凭证路径（含凭证路径）：这个环境里的应用能使用这些凭证</font>'] : []),
     ];
   });
@@ -548,6 +549,8 @@ export function executorFollowCard(e: ExecutorRow, changes: FollowChange[]): obj
     }
     for (const [n, o, nv] of c.vars) lines.push(`- 环境变量 \`${sanitizeMarkdown(n, 64)}\`：${o === null ? '（新增）' : `\`${sanitizeMarkdown(o, 200)}\``} → ${nv === null ? '（去掉）' : `\`${sanitizeMarkdown(nv, 200)}\``}`);
     if (c.python) lines.push(`- Python：\`${sanitizeMarkdown(c.python[0] ?? '默认', 200)}\` → \`${sanitizeMarkdown(c.python[1] ?? '默认', 200)}\``);
+    for (const h of c.hosts?.added ?? []) lines.push(`- 网络白名单新增：\`${sanitizeMarkdown(h, 100)}\` <font color="red">⚠️ 这个环境里的应用可以把数据发到这个地址</font>`);
+    for (const h of c.hosts?.removed ?? []) lines.push(`- 网络白名单去掉：\`${sanitizeMarkdown(h, 100)}\``);
   }
   return shell(`Amber · 执行端环境已自动更新：${e.name}`, 'blue', [
     { tag: 'markdown', content: `执行端 **${e.name}**（${sanitizeMarkdown(e.machine, 60)}）环境文件夹里的定义文件变了，已按新内容生效（这类变化不需要再批准）：\n\n${lines.join('\n')}\n\n有问题可以直接撤销这个执行端，撤销后立即停止派任务。已经启动的脚本仍按原来的权限跑到结束或超时。` },

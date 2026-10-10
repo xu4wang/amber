@@ -27,7 +27,7 @@ function docMarkdown(c: CommandRow, opts: DocOpts): string {
     : '无参数。';
   const s = c.script;
   const how = '沙盒脚本';
-  const net = s.network ? '，可访问外网' : s.services && Object.keys(s.services).length ? `，以执行人身份调用：${describeServices(s)}（不能访问外网）` : '，不联网';
+  const net = s.network ? '，可访问外网' : s.services && Object.keys(s.services).length ? `，以执行人身份调用：${describeServices(s)}（不能直连网络，经代理只能访问执行位置的网络白名单）` : '，不能直连网络（经代理只能访问执行位置的网络白名单）';
   const interp = (s.interpreter ? `\n\n**解释器**：${s.interpreter}` : '') + (s.env ? `\n\n**执行位置**：${executorHub()?.describe(s.env) ?? s.env}。脚本在那台机器上执行，能访问的就是这个环境的路径（由管理员批准，应用不能自己加）。` : '');
   const sec = s.secrets?.length ? `\n\n**使用的密钥**：${describeSecrets(c)}。审核时请确认代码只把密钥用在该用的地方，不会打印或发往别处。` : '';
   const time = s.timeoutMs === undefined ? '最长运行时间用默认值（管理员设定）' : `最长运行 ${fmtDuration(Math.round(s.timeoutMs / 1000))}`;

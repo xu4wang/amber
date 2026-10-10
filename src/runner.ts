@@ -53,8 +53,8 @@ export function serviceDef(name: string): ServiceDef | undefined { return SERVIC
 export const MAX_CODE_BYTES = 64 * 1024;
 const PYTHON = process.env.AMBER_PYTHON ?? '/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/bin/python3.9';
 
-function profile(script: Script, runDir: string): string {
-  const tcpPorts: number[] = [], unixSockets: string[] = [];
+function profile(script: Script, runDir: string, localPorts: number[] = []): string {
+  const tcpPorts: number[] = [...localPorts], unixSockets: string[] = [];
   for (const name of serviceNames(script)) {
     const d = SERVICES[name];
     if (d?.tcpPort) tcpPorts.push(d.tcpPort);
@@ -123,10 +123,13 @@ export function validateScript(s: unknown): Script {
   throw new Error('脚本类型只能是 script');
 }
 
-export async function runScript(script: Script, input: ScriptInput): Promise<ScriptResult> {
+/** `egress`: Amber's own network allow list (admin, on the website) — the hosts a script without full internet
+ *  access may still reach, through a local proxy. Scripts with "network": true reach everything anyway. */
+export async function runScript(script: Script, input: ScriptInput, opts: { egress?: string[] } = {}): Promise<ScriptResult> {
   // Only sandboxed scripts exist; anything else never runs.
   if (script.kind !== 'script') return { ok: false, content: '', error: '脚本类型只能是 script' };
   // Remote commands are dispatched by the engine; never run one here without its environment.
   if (script.env) return { ok: false, content: '', error: '这个应用要在执行端上运行' };
-  return runSandboxed({ code: script.code, python: script.interpreter ? normalizePath(script.interpreter) : PYTHON, profileFor: dir => profile(script, dir), input, timeoutMs: script.timeoutMs });
+  return runSandboxed({ code: script.code, python: script.interpreter ? normalizePath(script.interpreter) : PYTHON, profileFor: (dir, ports) => profile(script, dir, ports), input, timeoutMs: script.timeoutMs,
+    ...(!script.network && opts.egress?.length ? { egress: opts.egress } : {}) });
 }

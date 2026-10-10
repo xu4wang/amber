@@ -18,8 +18,7 @@ import type { AppStore } from './apps.ts';
 import { showFingerprint } from './exec-proto.ts';
 import { describeRule, formatAt, defaultTz, timezones } from './schedule-rule.ts';
 import { CARD_FOOTER_KEY, CARD_FOOTER_MAX, DEFAULT_CARD_FOOTER, cleanFooter } from './cards.ts';
-import { getLimits, saveLimits, timeoutLabel, DEFAULT_LIMITS, TIMEOUT_BOUNDS, CONCURRENCY_BOUNDS } from './limits.ts';
-import { SLOTS } from './engine.ts';
+import { getLimits, saveLimits, timeoutLabel, DEFAULT_LIMITS, TIMEOUT_BOUNDS, CONCURRENCY_BOUNDS, getLocalAllowHosts, getGlobalAllowHosts, saveAllowHosts, checkAllowHosts, FEISHU_HOSTS, SLOTS } from './limits.ts';
 
 export const LOGIN_TTL_MS = 5 * 60_000;
 const SESSION_TTL_MS = 7 * 24 * 3600_000;
@@ -209,7 +208,7 @@ export function startWeb(port: number, store: Store, deps: WebDeps): import('nod
           if (!deps.isAdmin(who.unionId)) return json(res, 404, { ok: false, error: 'not_found' });
           const v = store.getSetting(CARD_FOOTER_KEY);
           return json(res, 200, { ok: true, cardFooter: v ?? null, defaultCardFooter: DEFAULT_CARD_FOOTER, max: CARD_FOOTER_MAX,
-            limits: getLimits(store), defaultLimits: DEFAULT_LIMITS, bounds: { timeout: TIMEOUT_BOUNDS, concurrency: CONCURRENCY_BOUNDS }, running: SLOTS.snapshot() });
+            limits: getLimits(store), defaultLimits: DEFAULT_LIMITS, bounds: { timeout: TIMEOUT_BOUNDS, concurrency: CONCURRENCY_BOUNDS }, running: SLOTS.snapshot(), localAllowHosts: getLocalAllowHosts(store), globalAllowHosts: getGlobalAllowHosts(store), defaultGlobalAllowHosts: FEISHU_HOSTS });
         }
         for (const [id, j] of jobs) if (j.endedAt && Date.now() - j.endedAt > JOB_KEEP_MS) jobs.delete(id);
         const jm = req.method === 'GET' ? /^\/web\/api\/run-jobs\/([0-9a-f]{24})$/.exec(url.pathname) : null;
@@ -386,6 +385,16 @@ export function startWeb(port: number, store: Store, deps: WebDeps): import('nod
           const c = await deps.apps.install(m[1], { unionId: who.unionId, openId: who.openId ?? undefined }, String(body.target ?? ''), body.name === undefined ? undefined : String(body.name), { dev: body.dev === true });
           return json(res, 200, { ok: true, commandId: c.id, name: c.name, scope: c.scopeType === 'p2p' ? 'p2p' : `group:${c.chatId}`,
             needs: { config: configParams(c.params).filter(p => p.required && p.default === undefined).map(p => p.label ?? p.name), secrets: c.script.secrets ?? [] } });
+        }
+        if (url.pathname === '/web/api/settings/allow-hosts') {
+          // Network allow lists: global (every environment) and Amber's own machine. Admins only.
+          if (!deps.isAdmin(who.unionId)) throw new AmberError('forbidden', '只有管理员可以修改网络白名单');
+          const before = { global: getGlobalAllowHosts(store), local: getLocalAllowHosts(store) };
+          // Both checked before either is saved.
+          const g = checkAllowHosts('global', body.global ?? before.global), l = checkAllowHosts('local', body.local ?? before.local);
+          const after = { global: saveAllowHosts(store, 'global', g), local: saveAllowHosts(store, 'local', l) };
+          store.audit(who.unionId, 'web.allow_hosts', { before, after });
+          return json(res, 200, { ok: true, ...after });
         }
         if (url.pathname === '/web/api/settings/run-limits') {
           // Run time and how many runs at once (Amber's machine, executors by default, per person). Admins only.

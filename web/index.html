@@ -489,7 +489,8 @@ function renderTree() {
   if (o.isAdmin && SETTINGS && SETTINGS.ok) {
     ITEMS.set('set:card-footer', { kind: 'set' });
     ITEMS.set('set:run-limits', { kind: 'set-limits' });
-    html += node('settings', '系统设置（管理员）', '<div class="leaf" data-key="set:run-limits" data-search="运行限制 时限 并发"><span class="name">运行限制</span></div><div class="leaf" data-key="set:card-footer" data-search="卡片页脚 footer"><span class="name">卡片页脚</span></div>');
+    ITEMS.set('set:allow-hosts', { kind: 'set-hosts' });
+    html += node('settings', '系统设置（管理员）', '<div class="leaf" data-key="set:run-limits" data-search="运行限制 时限 并发"><span class="name">运行限制</span></div><div class="leaf" data-key="set:allow-hosts" data-search="网络白名单 代理 域名"><span class="name">网络白名单</span></div><div class="leaf" data-key="set:card-footer" data-search="卡片页脚 footer"><span class="name">卡片页脚</span></div>');
   }
   html += node('runs', `最近运行<span class="count">${RUNS.length}</span>`, RUNS.map(r => {
     const key = 'r:' + r.id;
@@ -528,6 +529,7 @@ function select(key, push = true) {
   else if (it.kind === 'app') appPane(it);
   else if (it.kind === 'set') footerPane();
   else if (it.kind === 'set-limits') limitsPane();
+  else if (it.kind === 'set-hosts') hostsPane();
   else runPane(it);
 }
 
@@ -726,6 +728,35 @@ function limitsPane() {
   form.querySelector('[data-limits=default]').addEventListener('click', () => { if (confirm('把运行时间和同时运行的上限都恢复成初始值？（各执行端单独的设置保留）')) save({ ...D, executors: undefined }); });
 }
 
+// Network allow lists: the global one (every environment; Feishu by default, so lark-cli works everywhere) and
+// Amber's own machine. Scripts cannot connect directly; through the local proxy they reach only these hosts.
+function hostsPane() {
+  const G = SETTINGS.globalAllowHosts || [], L = SETTINGS.localAllowHosts || [], D = SETTINGS.defaultGlobalAllowHosts || [];
+  const box = (name, list, ph) => `<textarea name="${name}" rows="6" style="width:100%;font:inherit;padding:10px 12px;border:1px solid var(--line);background:var(--bg);color:var(--ink)" placeholder="${ph}">${esc(list.join('\n'))}</textarea>`;
+  document.getElementById('pane').innerHTML = `${backBtn}
+    <div class="pane-head"><h1>网络白名单</h1></div>
+    <div class="where">系统设置 · 管理员</div>
+    <p class="desc">应用不能直连网络，只能通过代理访问白名单里的地址。声明了「可以访问外网」的应用不受这个限制。</p>
+    <form class="box" id="hosts-form">
+      <div class="field"><label>所有环境</label><div class="field-main">${box('global', G, '每行一个')}
+        <p class="note">执行端上的每个环境和 Amber 本机都放行这些地址。Amber 第一次启动时写入的是飞书的域名（${esc(D.join('、'))}），所以 lark-cli 在哪里都能用。</p></div></div>
+      <div class="field"><label>只在 Amber 本机</label><div class="field-main">${box('local', L, '每行一个，留空就是不额外放行')}
+        <p class="note">没写执行位置的应用额外放行的地址。执行端上的环境另外看各自定义里的 allowHosts。</p></div></div>
+      <p class="note">每行一个：精确域名，或者 <code>*.域名</code>（所有子域名，不含它本身）。默认只放行 443 端口，别的端口写成 <code>域名:端口</code>。不支持 IP 地址。</p>
+      <div class="actions"><button class="btn primary" type="submit">保存</button> <button class="btn" type="button" data-hosts="default">「所有环境」恢复成飞书</button></div>
+    </form>`;
+  const form = document.getElementById('hosts-form');
+  const lines = t => t.split('\n').map(s => s.trim()).filter(Boolean);
+  const save = async body => {
+    const r = await post('/web/api/settings/allow-hosts', body).catch(e => ({ ok: false, message: e.message }));
+    if (!r.ok) return alert(r.message || '保存失败');
+    SETTINGS.globalAllowHosts = r.global; SETTINGS.localAllowHosts = r.local;
+    hostsPane();
+  };
+  form.addEventListener('submit', ev => { ev.preventDefault(); save({ global: lines(form.global.value), local: lines(form.local.value) }); });
+  form.querySelector('[data-hosts=default]').addEventListener('click', () => save({ global: D }));
+}
+
 function exeLimitBlock(e) {
   if (!SETTINGS || !SETTINGS.limits) return '';
   const L = SETTINGS.limits, own = (L.executors || {})[e.name], running = (SETTINGS.running || {})['exe:' + e.name] || 0;
@@ -749,6 +780,7 @@ function exePane({ e }) {
       ${v.access.readOnly?.length ? `<dt>只读</dt><dd>${pathList(v.access.readOnly, cred)}</dd>` : ''}
       ${v.access.deny?.length ? `<dt>禁止</dt><dd>${pathList(v.access.deny, new Set())}</dd>` : ''}
       ${vars.length ? `<dt>环境变量</dt><dd><ul class="paths">${vars.map(([n, x]) => `<li><code>${esc(n)}=${esc(x)}</code></li>`).join('')}</ul></dd>` : ''}
+      ${v.allowHosts?.length ? `<dt>网络白名单</dt><dd><ul class="paths">${v.allowHosts.map(h => `<li><code>${esc(h)}</code></li>`).join('')}</ul><span class="note">不能直连网络，经代理只能访问这些地址</span></dd>` : ''}
       ${v.realHome ? '<dt>HOME</dt><dd>用户主目录（能访问的仍只有上面这些路径）</dd>' : ''}
       ${v.follow ? `<dt>定义文件</dt><dd><code>${esc(v.follow)}</code><br><span class="note">它的路径、环境变量、Python 变了会自动生效，并通知管理员</span></dd>` : ''}
     </dl>${cred.size ? '<p class="note cred">⚠️ 标记的是凭证路径：这个环境里的应用能使用这些凭证。</p>' : ''}</div>`;
