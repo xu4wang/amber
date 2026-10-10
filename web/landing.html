@@ -51,6 +51,13 @@
 .lp-idbox p { margin-bottom: 10px; }
 .lp-idbox b { color: var(--accent-ink); }
 .lp-legend { position: relative; padding-left: 18px; color: var(--muted); font-size: 13px; margin: 0 !important; }
+.lp-probs .lp-use b { color: var(--warn); }
+.lp-probs { margin-bottom: 16px; }
+.lp-probs3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+@media (max-width: 760px) { .lp-probs3 { grid-template-columns: 1fr; } }
+.lp-band .lp-use, .lp-band .lp-card { background: var(--bg); }
+.lp-pillar { display: block; text-decoration: none; color: inherit; border-top: 3px solid var(--accent); }
+.lp-pillar:hover h3 { color: var(--accent-ink); }
 .lp-legend i { top: 8px; left: 0; right: auto; }
 .lp-grid2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
 @media (max-width: 680px) { .lp-grid2 { grid-template-columns: 1fr; } }
@@ -79,8 +86,8 @@
     <section class="lp-hero"><div class="lp-wrap lp-hero-in">
       <div>
         <div class="lp-kicker">AMBER</div>
-        <h1>AI 做对一次的事，<br>变成<em>随时能用、每次都对</em>的按钮</h1>
-        <p class="lp-lead">查数据、写文档、盯异常、调公司的系统……你在飞书里让 AI 机器人做的事，只要做对过一次，Amber 就能把它固定成一个按钮：以后谁按，都按同样的方式、以自己的身份做成。</p>
+        <h1>AI 跑通的事，<br>封存成<em>人人可用、次次可信</em>的按钮</h1>
+        <p class="lp-lead">Amber 解决两件事：一群人共用 AI 时，谁按按钮就以谁的身份去做，说得清是谁做的；做对过一次的事固定下来，以后不再让大模型每次现想，几秒出结果、不再花大模型的钱、每次都按审过的做法。</p>
         <div class="lp-hero-meta"><span class="lp-slogan">AI 跑通的，Amber 封存。</span></div>
       </div>
 <!--web-->
@@ -102,18 +109,46 @@
     </div></section>
 
     <section><div class="lp-wrap">
-      <div class="lp-kicker">打个比方</div>
-      <h2>从「每次凭感觉做菜」到「照着签过字的菜谱做」</h2>
+      <div class="lp-kicker">Amber 解决的两件事</div>
+      <h2>一群人放心地用 AI，而且用得又快又稳</h2>
+      <div class="lp-grid2 lp-pillars">
+        <a class="lp-card lp-pillar" href="#lp-who"><div class="lp-num">第一件</div><h3>多人共用 AI：说得清是谁在做</h3><p>一个群共用一个机器人、把调好的工具给同事用时，谁按就以谁的身份去做：能看什么、能动什么跟他本人一样，每一次都记在他名下。</p></a>
+        <a class="lp-card lp-pillar" href="#lp-fix"><div class="lp-num">第二件</div><h3>固定下来：不慢、不贵、每次都对</h3><p>做对过一次的事审核后锁定。以后执行直接照做，不再让大模型每次现想：几秒出结果，不再花大模型的钱，做法每次一样。</p></a>
+      </div>
+    </div></section>
+
+    <section id="lp-who"><div class="lp-wrap">
+      <div class="lp-kicker">第一件事 · 多人共用 AI 时</div>
+      <h2>一个人用 AI 很顺手，一群人一起用，麻烦就来了</h2>
+      <div class="lp-uses lp-probs lp-probs3">
+        <div class="lp-use"><b>权限被借用</b><span>机器人只有一套权限。专员通过它，就能查到只有经理才能看的数据</span></div>
+        <div class="lp-use"><b>说不清是谁做的</b><span>记录里只有「机器人」，不知道是群里哪个人让它做的</span></div>
+        <div class="lp-use"><b>谁都能让它改</b><span>机器人存下来的做法，群里任何人一句话都可能让它改掉，或者把它带偏</span></div>
+      </div>
+      <div class="lp-idbox">
+        <h3>Amber 的规则很简单：<b>谁按按钮，就以谁的身份去做</b></h3>
+        <p>每个人按下按钮时，能看什么、能动什么，都跟他本人一样；用到某个人的账号或密码时，只有这个人自己能用。按钮的做法审核后锁定，群里谁也改不了。每一次都记在按的人名下，说得清是谁做的。</p>
+      </div>
+    </div></section>
+
+    <section id="lp-fix" class="lp-band"><div class="lp-wrap">
+      <div class="lp-kicker">第二件事 · 不再每次让大模型现想</div>
+      <h2>每次都让大模型现想一遍：慢、贵、不可靠</h2>
+      <div class="lp-uses lp-probs lp-probs3">
+        <div class="lp-use"><b>慢</b><span>同一件事，每次都要等大模型重新理解、重新想，几十秒甚至更久</span></div>
+        <div class="lp-use"><b>贵</b><span>每做一次都要花一次大模型的钱；定时任务天天跑，天天花</span></div>
+        <div class="lp-use"><b>不可靠</b><span>每次现想，做法可能变：今天对了，明天口径不一样，你还不一定发现</span></div>
+      </div>
       <div class="lp-vs">
-        <div class="lp-card"><span class="lp-tag bad">只靠 AI 机器人</span><h3>聪明的新厨师，每次凭感觉</h3><p>今天的红烧肉很好吃，明天再让他做，盐放多少、火候怎样，他又重新想一遍。味道可能变了，而有时你根本没发现。</p></div>
+        <div class="lp-card"><span class="lp-tag bad">只靠 AI 机器人</span><h3>聪明的新厨师，每次凭感觉</h3><p>今天的红烧肉很好吃，明天再让他做，盐放多少、火候怎样，他又重新想一遍。慢，费料，味道还可能变了，而有时你根本没发现。</p></div>
         <div class="lp-arrow">→</div>
-        <div class="lp-card on"><span class="lp-tag">用上 Amber</span><h3>写成菜谱，主厨尝过签字</h3><p>把做对的那次写成菜谱，请主厨尝过、签字，锁进柜子。以后谁要这道菜，都照这份菜谱做，味道每次一样。要改菜谱，得重新尝、重新签。</p></div>
+        <div class="lp-card on"><span class="lp-tag">用上 Amber</span><h3>写成菜谱，主厨尝过签字</h3><p>把做对的那次写成菜谱，请主厨尝过、签字，锁进柜子。以后照菜谱直接做：快，省料，味道每次一样。要改菜谱，得重新尝、重新签。</p></div>
       </div>
     </div></section>
 
     <section><div class="lp-wrap">
       <div class="lp-kicker">能做成按钮的事</div>
-      <h2>机器人做过的事，大多都可以</h2>
+      <h2>不只是查数据：机器人做过的事，大多都可以</h2>
       <div class="lp-uses">
         <div class="lp-use id"><b>查数据、出报表</b><span>按执行人自己的数据权限出数</span></div>
         <div class="lp-use"><b>写飞书文档、表格</b><span>把结果整理好写进去</span></div>
@@ -124,32 +159,27 @@
         <div class="lp-use"><b>做成能点的网页</b><span>选条件、点按钮，结果实时出来</span></div>
         <div class="lp-use"><b>生成图表和汇总</b><span>把一堆数字整理成一眼能看懂的样子</span></div>
       </div>
-      <div class="lp-idbox">
-        <h3>其中最需要 Amber 的，是「要知道是谁在做」的事</h3>
-        <p>查数据就是最典型的一种：同一个查询，经理和专员能看到的范围本来就不一样。直接让机器人做，它分不清是谁在问，要么查不到，要么谁都能借它的权限查。</p>
-        <p>Amber 的规则很简单：<b>谁按按钮，就以谁的身份去做</b>。能看什么、能动什么，跟他本人一样；用到某个人的账号或密码时，只有这个人自己能用，别人拿不到。每一次都有记录，说得清是谁做的。</p>
-        <p class="lp-legend"><i></i>上面带这个标记的，都是需要身份的事</p>
-      </div>
+      <p class="lp-legend"><i></i>带这个标记的，是最需要分清「谁在做」的事：同一个按钮，不同的人按，能看到的、能动的都不一样</p>
     </div></section>
 
     <section><div class="lp-wrap">
       <div class="lp-kicker">对你有什么好处</div>
       <h2>四件你会在意的事</h2>
       <div class="lp-grid2">
-        <div class="lp-card"><div class="lp-num">01</div><h3>每次都按同样的方式做</h3><p>同一个按钮，今天按、下个月按，做法都一样：数字是同一个口径，文档是同一个格式，检查是同一套规则。</p></div>
-        <div class="lp-card"><div class="lp-num">02</div><h3>快，而且省事</h3><p>不用每次跟机器人解释半天。在飞书里说一句或点一下，几秒出结果。也可以设成每天早上自动发到群里，有异常才提醒你。</p></div>
-        <div class="lp-card"><div class="lp-num">03</div><h3>能直接给同事用</h3><p>你做好的按钮，复制一份给同事就能用，不用他再从头教一遍机器人。还能做成网页，大家选条件、点按钮就行。</p></div>
-        <div class="lp-card"><div class="lp-num">04</div><h3>不会越权，出了事说得清</h3><p>谁按就以谁的身份做，借不了别人的权限。每个按钮上线前都有专人检查过它会做什么，谁在什么时候做了什么都有记录。</p></div>
+        <div class="lp-card"><div class="lp-num">01 · 多人共用</div><h3>各用各的权限</h3><p>大家共用同一个按钮，每个人只能看到、只能动自己有权限的部分，借不了别人的权限，也借不了机器人的权限。</p></div>
+        <div class="lp-card"><div class="lp-num">02 · 多人共用</div><h3>出了事说得清</h3><p>每个按钮上线前都有专人检查过它会做什么；谁在什么时候按了哪个按钮、做了什么，都有记录。</p></div>
+        <div class="lp-card"><div class="lp-num">03 · 固定下来</div><h3>每次都按同样的方式做</h3><p>同一个按钮，谁按、什么时候按，做法都一样：大家手里的数字是同一个口径，文档是同一个格式。</p></div>
+        <div class="lp-card"><div class="lp-num">04 · 固定下来</div><h3>快，而且省钱</h3><p>执行时不经过大模型：几秒出结果，不花大模型的钱。每天定时发到群里也一样，有异常才提醒。</p></div>
       </div>
     </div></section>
 
-    <section class="lp-band"><div class="lp-wrap">
+    <section><div class="lp-wrap">
       <div class="lp-kicker">一个小例子</div>
-      <h2>小K的周一早上</h2>
+      <h2>小K和小李共用一个群机器人</h2>
       <p class="lp-sub">以每周看一次数据为例；写周报、盯异常、给系统提单，道理一样。</p>
       <div class="lp-grid2">
-        <div><h3 class="bad">以前</h3><ul><li>每周一问机器人「上周各区域新增了多少客户」</li><li>每次都要等一会儿，有时还要来回解释口径</li><li>偶尔两次问出来的数字对不上，不知道该信哪个</li><li>同组的小李想看，只能自己再问一遍</li></ul></div>
-        <div><h3 class="good">现在</h3><ul><li>第一次做对后，跟机器人说「存进 Amber」，审核通过</li><li>每周一 9 点，结果自动发到群里，口径永远一致</li><li>想看别的时间段，点一下、换个天数就行</li><li>小李也装了一份，看到的是他自己权限内的数据</li></ul></div>
+        <div><h3 class="bad">以前</h3><ul><li>小K和小李每周一都问群里的机器人「上周各区域新增了多少客户」</li><li>每次都要等机器人想半天；两人问法稍有不同，各算一遍，数字对不上</li><li>小李只负责华东，却通过机器人看到了全国的明细</li><li>出了问题，记录里只有「机器人查过」，不知道是谁查的</li></ul></div>
+        <div><h3 class="good">现在</h3><ul><li>小K第一次做对后，跟机器人说「存进 Amber」，审核通过</li><li>两人用的是同一个按钮，几秒出结果，口径永远一致</li><li>小李按的时候，只看到华东；小K按，看到他自己权限内的范围</li><li>谁在什么时候按的，都有记录；每周一 9 点还会自动发到群里</li></ul></div>
       </div>
     </div></section>
 
@@ -165,10 +195,10 @@
 
     <section><div class="lp-wrap">
       <div class="lp-kicker">什么时候用</div>
-      <h2>临时问题问机器人，常做的事放进 Amber</h2>
+      <h2>临时的、只给自己用的，直接问机器人；常做的、涉及多人的，放进 Amber</h2>
       <div class="lp-grid2">
-        <div class="lp-card"><h3>直接问机器人就好</h3><ul><li>一次性的、临时想知道的问题</li><li>还在摸索、需求每次都不一样</li><li>只有自己看、不碰敏感数据</li></ul></div>
-        <div class="lp-card on"><h3>适合放进 Amber</h3><ul><li>经常要做、每周每天都要看</li><li>要给同事或整个群用</li><li>要定时自动跑、有异常才提醒</li><li>要知道是谁在做：按各自的权限查数据、用各自的账号办事</li><li>会写数据、发消息、改系统，需要先有人把关</li></ul></div>
+        <div class="lp-card"><h3>直接问机器人就好</h3><ul><li>只有你自己用自己的机器人</li><li>一次性的、临时想知道的问题</li><li>还在摸索、需求每次都不一样</li></ul></div>
+        <div class="lp-card on"><h3>适合放进 Amber</h3><ul><li>涉及多人：一个群共用一个机器人，或者要给同事用、做成页面给大家看</li><li>每个人能看的数据范围不一样</li><li>经常要做、要定时跑：不想每次等大模型、花大模型的钱</li><li>结果必须每次一致，或者会写数据、发消息、改系统，需要先有人把关</li></ul></div>
       </div>
     </div></section>
 
@@ -184,7 +214,8 @@
       <details class="lp-faq"><summary>我要学编程吗？</summary><p>不用。跟以前一样跟机器人说话，最后多说一句「存进 Amber」。代码由机器人写，检查由审核人负责。</p></details>
       <details class="lp-faq"><summary>为什么要审核？会不会很慢？</summary><p>审核一次，以后无限次用。就像新菜谱上菜单前，主厨要先尝一次。审核在飞书审批里完成，通过后马上就能用。</p></details>
       <details class="lp-faq"><summary>和直接问机器人有什么区别？</summary><p>问机器人是「每次现想」，Amber 是「照做对的那次去做」。所以结果更稳定、更快，而且能放心交给别人用。</p></details>
-      <details class="lp-faq"><summary>同事用我的按钮，是用谁的身份？</summary><p>用他自己的。查数据只能看到他有权限看的；按钮要用到你的账号或密码时，只有你自己能用，同事拿不到。</p></details>
+      <details class="lp-faq"><summary>同事用我做的按钮，是用谁的身份？</summary><p>用他自己的。查数据只能看到他有权限看的；按钮要用到你的账号或密码时，只有你自己能用，同事拿不到。</p></details>
+      <details class="lp-faq"><summary>我只用自己的机器人，也需要 Amber 吗？</summary><p>临时的事直接问机器人就好。但经常要做的事，放进 Amber 以后就不用每次等大模型、花大模型的钱，结果每次一样；要给同事用、要定时发给大家、或者会改数据时，更值得放进来。</p></details>
       <details class="lp-faq"><summary>除了查数据，还能做什么？</summary><p>机器人做过的事大多可以：写飞书文档、定时检查、调用公司其他系统、通知同事或机器人、做成能点的网页等。查数据只是最常见、也最需要分清身份的一种。</p></details>
     </div></section>
 
