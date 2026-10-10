@@ -299,7 +299,11 @@ table.audit .mono { font-family: ui-monospace, Menlo, monospace; font-size: 11px
 .lp-hero h1 { color: #fff; font-size: clamp(30px, 4.6vw, 46px); font-weight: 700; line-height: 1.3; margin: 0; letter-spacing: 0; }
 .lp-hero h1 em { font-style: normal; color: var(--accent); }
 .lp-lead { font-size: 18px; color: #cfc8bd; margin-top: 18px !important; }
-.lp-slogan { display: inline-block; margin-top: 24px; padding: 6px 14px; border: 1px solid #3a342c; color: #f2c27a; font-size: 14px; }
+.lp-hero-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 20px; margin-top: 24px; }
+.lp-slogan { display: inline-block; padding: 6px 14px; border: 1px solid #3a342c; color: #f2c27a; font-size: 14px; }
+.lp-gh { display: inline-flex; align-items: center; gap: 8px; color: #cfc8bd; font-size: 14px; text-decoration: none; }
+.lp-gh:hover { color: #fff; }
+.lp-ghbtn { display: inline-flex !important; align-items: center; gap: 8px; }
 .lp-login { background: var(--panel); color: var(--body-ink); padding: 24px 26px; }
 .lp-login ol { margin: 4px 0 18px; }
 .lp-login .btn { display: block; text-align: center; padding: 10px 14px; }
@@ -389,7 +393,7 @@ function loginView() {
         <div class="lp-kicker">AMBER</div>
         <h1>AI 做对一次的事，<br>变成<em>随时能用、每次都对</em>的按钮</h1>
         <p class="lp-lead">查数据、写文档、盯异常、调公司的系统……你在飞书里让 AI 机器人做的事，只要做对过一次，Amber 就能把它固定成一个按钮：以后谁按，都按同样的方式、以自己的身份做成。</p>
-        <div class="lp-slogan">AI 跑通的，Amber 封存。</div>
+        <div class="lp-hero-meta"><span class="lp-slogan">AI 跑通的，Amber 封存。</span><a class="lp-gh" href="https://github.com/xu4wang/amber" target="_blank" rel="noopener"><svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg> 开源项目：github.com/xu4wang/amber</a></div>
       </div>
       ${loginCard}
     </div></section>
@@ -479,7 +483,7 @@ function loginView() {
 
     <section class="lp-cta"><div class="lp-wrap lp-cta-in">
       <div><h2>开始用 Amber</h2><p>在飞书里私聊 Amber 发「登录」，或者先看看文档。</p></div>
-      <div class="lp-cta-btns"><a class="btn primary" href="${esc(FEISHU)}">打开 Amber 私聊</a><a class="btn" href="/docs" target="_blank" rel="noopener">阅读文档</a></div>
+      <div class="lp-cta-btns"><a class="btn primary" href="${esc(FEISHU)}">打开 Amber 私聊</a><a class="btn" href="/docs" target="_blank" rel="noopener">阅读文档</a><a class="btn lp-ghbtn" href="https://github.com/xu4wang/amber" target="_blank" rel="noopener"><svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg> GitHub</a></div>
     </div></section>
   </div>`;
 }
