@@ -15,6 +15,7 @@
 //   result    the executor posts the output (already masked), Amber masks again, records and shows it.
 // An offline executor fails the run immediately; a job that is not picked up or answered in time
 // fails too. Nothing is queued for later.
+import { CONCURRENCY_BOUNDS } from './limits.ts';
 import { createHash, randomUUID } from 'node:crypto';
 import type { Store, ExecutorRow, ExecutorEnv } from './db.ts';
 import type { Signer } from './identity.ts';
@@ -35,8 +36,9 @@ const MAX_ENVS = 20;
 const MAX_ACCESS_PATHS = 100;
 const MAX_PENDING = 10;
 const MAX_NONCES = 50_000;
-/** Jobs waiting for or running on one executor; more fail at once instead of piling up. */
-export const MAX_JOBS_PER_EXECUTOR = 20;
+/** Jobs waiting for or running on one executor; more fail at once instead of piling up. A backstop only: the run
+ *  limits (limits.ts, set by an admin, at most CONCURRENCY_BOUNDS.max per executor) decide how many runs an executor gets; this must never be lower, or the configured limit would not be reachable. */
+export const MAX_JOBS_PER_EXECUTOR = CONCURRENCY_BOUNDS.max;
 const RELAY_MAX_REQUEST = 512 * 1024;
 const RELAY_MAX_RESPONSE = 4 * 1024 * 1024;
 const RELAY_TIMEOUT_MS = 60_000;
@@ -354,10 +356,11 @@ export class ExecutorHub {
     if (!this.online(e)) return { ok: false, content: '', error: `执行端 ${p.executor} 离线（最后在线：${e.lastSeen ? new Date(e.lastSeen).toISOString() : '从未'}），这次没有执行` };
     if ([...this.jobs.values()].filter(j => j.executorId === e.id).length >= this.maxJobs) return { ok: false, content: '', error: `执行端 ${p.executor} 正在处理的任务太多，这次没有执行，请稍后再试` };
     const jobId = randomUUID();
-    const timeoutMs = (script.timeoutMs ?? 30000) + RESULT_GRACE_MS;
+    // script.timeoutMs is already the effective limit for this run (engine.ts); the executor is told it too.
+    const timeoutMs = (script.timeoutMs ?? 60000) + RESULT_GRACE_MS;
     // Services: only the tokens travel; the executor gives the script a local port and relays the calls here.
     const remoteInput = input.services ? { ...input, services: Object.fromEntries(Object.entries(input.services).map(([n, s]) => [n, { tokens: s.tokens }])) } : input;
-    const envelope = this.signer.sealJob(e.id, e.boxPub, jobId, this.pickupMs * 2, { jobId, runId: input.runId, env: p.env, spec, specHash, input: remoteInput });
+    const envelope = this.signer.sealJob(e.id, e.boxPub, jobId, this.pickupMs * 2, { jobId, runId: input.runId, env: p.env, spec, specHash, input: remoteInput, timeoutMs: script.timeoutMs });
     this.store.audit(input.caller.unionId, 'executor.dispatch', { runId: input.runId, executor: e.id, name: e.name, env: p.env, jobId });
     return await new Promise<ScriptResult>(resolve => {
       const calls = Object.fromEntries(Object.entries(script.services ?? {}).map(([n, u]) => [n, u.calls]));

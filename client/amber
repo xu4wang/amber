@@ -245,7 +245,8 @@ def main(argv):
     if cmd == "run":
         if len(pos) < 2:
             raise Usage()
-        r = call("POST", "/v1/runs", dict(ctx, command=pos[1], args=args))
+        # A direct run waits for the result; runs may take up to the admin's maximum (at most 30 minutes).
+        r = call("POST", "/v1/runs", dict(ctx, command=pos[1], args=args), timeout=1900)
         if r.get("mode") == "direct":
             if r.get("status") != "ok":
                 r["ok"] = False

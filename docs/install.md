@@ -191,7 +191,7 @@ server {
         proxy_pass http://127.0.0.1:7341;
         proxy_set_header X-Amber-Client-IP $remote_addr;   # Amber 根据它识别是哪台机器
         proxy_set_header Host $host;
-        proxy_read_timeout 150s;                            # 脚本最长可以跑 120 秒
+        proxy_read_timeout 1900s;                           # agent 直接执行会一直等结果；要比「最长时限」长（上限 30 分钟）
     }
 
     # 网站
@@ -199,7 +199,7 @@ server {
         proxy_pass http://127.0.0.1:7342;
         proxy_set_header X-Amber-Client-IP $remote_addr;
         proxy_set_header Host $host;
-        proxy_read_timeout 150s;
+        proxy_read_timeout 150s;                            # 网站上的长任务改成轮询结果，不用更长
     }
 
     # 前端库可以由 nginx 直接提供（Amber 自己也能提供，这里只是少走一层）

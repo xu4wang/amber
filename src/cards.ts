@@ -548,7 +548,7 @@ export function executorFollowCard(e: ExecutorRow, changes: FollowChange[]): obj
     if (c.python) lines.push(`- Python：\`${sanitizeMarkdown(c.python[0] ?? '默认', 200)}\` → \`${sanitizeMarkdown(c.python[1] ?? '默认', 200)}\``);
   }
   return shell(`Amber · 执行端环境已自动更新：${e.name}`, 'blue', [
-    { tag: 'markdown', content: `执行端 **${e.name}**（${sanitizeMarkdown(e.machine, 60)}）环境文件夹里的定义文件变了，已按新内容生效（这类变化不需要再批准）：\n\n${lines.join('\n')}\n\n有问题可以直接撤销这个执行端，撤销后立即停止派任务。已经启动的脚本仍按原来的权限跑到结束或超时（不超过 120 秒）。` },
+    { tag: 'markdown', content: `执行端 **${e.name}**（${sanitizeMarkdown(e.machine, 60)}）环境文件夹里的定义文件变了，已按新内容生效（这类变化不需要再批准）：\n\n${lines.join('\n')}\n\n有问题可以直接撤销这个执行端，撤销后立即停止派任务。已经启动的脚本仍按原来的权限跑到结束或超时。` },
     buttonRow([btn('撤销执行端', { a: 'exe_rv', e: e.id }, 'danger')]),
   ]);
 }

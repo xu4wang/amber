@@ -37,7 +37,10 @@ const DIR = process.env.AMBER_EXECUTOR_DIR ?? join(homedir(), '.config', 'amber-
 const ENV_DIR = join(DIR, 'envs');
 const P = { envCache: join(DIR, 'envs.last-good.json'), config: join(DIR, 'config.json'), sign: join(DIR, 'sign-key.pem'), box: join(DIR, 'box-key.pem'), amber: join(DIR, 'amber-key.json'), seen: join(DIR, 'seen-jobs.json') };
 const DEFAULT_PYTHON = '/usr/bin/python3';
-const MAX_PARALLEL = 4;
+/** Jobs at once on this machine, unless config.json sets maxParallel (1–64). Amber also caps each executor;
+ *  whichever is lower applies (a job over this one is refused here and fails at once). */
+const MAX_PARALLEL_DEFAULT = 4;
+const maxParallel = cfg => { const n = Number(cfg?.maxParallel); return Number.isInteger(n) && n >= 1 && n <= 64 ? n : MAX_PARALLEL_DEFAULT; };
 const FOLLOW_MS = Number(process.env.AMBER_EXECUTOR_FOLLOW_MS) || 300_000;
 const LABEL = 'com.amber.executor';
 
@@ -134,7 +137,8 @@ export function prepare(cfg, payload) {
   if (hardDenyRoots().some(r => python === r || python.startsWith(r + '/'))) throw new Error('解释器在受保护的目录里');
   if (!/\/python(3(\.\d+)?)?$/.test(python)) throw new Error('解释器要是 Python（以 python、python3 或 python3.x 结尾）');
   const vars = checkVars(env.vars);
-  const timeoutMs = Math.min(Math.max(Number(s.timeoutMs) || 30000, 1000), 120000);
+  // Amber sends the limit for this run (the admin's run limits applied); older Amber did not, so fall back to the app's own.
+  const timeoutMs = Math.min(Math.max(Number(payload.timeoutMs ?? s.timeoutMs) || 30000, 1000), 1_800_000);
   return { code: s.code, python, timeoutMs, workdir, vars, realHome: env.realHome === true, profileFor: (dir, tcpPorts = []) => compileToSeatbelt(buildPolicy({ runDir: dir, access }), { all: !!s.network, tcpPorts }) };
 }
 
@@ -230,7 +234,7 @@ export async function startRelays(cfg, me, amberPub, jobId, services) {
 /** Refuses a job because this executor is full; only for jobs really addressed to it. */
 export async function handleBusy(cfg, me, amberPub, envelope) {
   try { openJob(amberPub, me.id, me.box, envelope); } catch { return; }
-  await call(cfg, me, '/v1/executor/result', { jobId: envelope.jobId, ok: false, error: `执行端繁忙（同时最多执行 ${MAX_PARALLEL} 个任务），这次没有执行` }).catch(() => {});
+  await call(cfg, me, '/v1/executor/result', { jobId: envelope.jobId, ok: false, error: `执行端繁忙（同时最多执行 ${maxParallel(cfg)} 个任务），这次没有执行` }).catch(() => {});
 }
 
 async function runLoop() {
@@ -245,7 +249,7 @@ async function runLoop() {
   const take = r => {
     for (const job of r?.jobs ?? []) {
       // Full: answer at once so the run fails now, not after the result timeout.
-      if (running >= MAX_PARALLEL) { log('busy, job refused', job.jobId); handleBusy(cfg, me, amberPub, job); continue; }
+      if (running >= maxParallel(cfg)) { log('busy, job refused', job.jobId); handleBusy(cfg, me, amberPub, job); continue; }
       running++;
       handle(cfg, me, amberPub, job).finally(() => { running--; });
     }
