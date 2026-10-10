@@ -44,7 +44,7 @@
 | 可读 | 系统目录和常见语言工具链（Homebrew、nvm、pyenv 等），外部命令能用；`$HOME` 下的其他文件不可见 |
 | 联网 | 不联网。需要时在 `script` 里写 `"network": true`，审核时会重点看 |
 | Python | 系统 Python 3.9，只有标准库 |
-| 超时 | 30 秒，`timeoutMs` 最多 120000 |
+| 时限 | 不写 `timeoutMs` 时用管理员设的默认时限（初始 60 秒）；可以写 `timeoutMs`（毫秒），最多到管理员设的最长时限（初始 10 分钟），超过的提交时就会被拒绝 |
 | 大小 | 代码最多 64KB，输出最多 256KB |
 
 ### 用第三方包
@@ -99,7 +99,7 @@ Content-Type: application/json
     {"name": "days", "label": "天数", "type": "integer", "default": "7", "min": 1, "max": 90},
     {"name": "repo", "label": "仓库", "type": "string", "scope": "config"}
   ],
-  "script": {"kind": "script", "lang": "python", "network": false, "timeoutMs": 30000, "code": "…"},
+  "script": {"kind": "script", "lang": "python", "network": false, "timeoutMs": 60000, "code": "…"},
   "options": {"confirm": false, "schedulable": true}
 }
 ```

@@ -2,6 +2,7 @@
 // install their own copy of it into a group they are in, or into their private chat with Amber, without another
 // approval. An installation is an ordinary command owned by the installer, on a line of its own, so its secrets,
 // configuration and schedules are the installer's. The command it was listed from is the app's original.
+import { getLimits, timeoutLabel } from './limits.ts';
 import { randomUUID } from 'node:crypto';
 import type { Store, CommandRow, AppRow, ListingRow } from './db.ts';
 import { computeSpecHash } from './db.ts';
@@ -380,6 +381,6 @@ export class AppStore {
   /** The code of an app's newest version (anyone may read what they would install). */
   source(app: AppRow): object {
     const { cmd, version, docUrl } = this.latest(app);
-    return { name: app.name, version, specHash: cmd.specHash, docUrl, code: cmd.script.code, lang: cmd.script.lang, timeoutMs: cmd.script.timeoutMs ?? 30000, params: cmd.params, options: cmd.options };
+    return { name: app.name, version, specHash: cmd.specHash, docUrl, code: cmd.script.code, lang: cmd.script.lang, timeoutMs: cmd.script.timeoutMs ?? null, timeoutLabel: timeoutLabel(cmd.script.timeoutMs, getLimits(this.store)), params: cmd.params, options: cmd.options };
   }
 }

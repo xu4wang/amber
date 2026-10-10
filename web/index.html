@@ -488,7 +488,8 @@ function renderTree() {
   }
   if (o.isAdmin && SETTINGS && SETTINGS.ok) {
     ITEMS.set('set:card-footer', { kind: 'set' });
-    html += node('settings', '系统设置（管理员）', '<div class="leaf" data-key="set:card-footer" data-search="卡片页脚 footer"><span class="name">卡片页脚</span></div>');
+    ITEMS.set('set:run-limits', { kind: 'set-limits' });
+    html += node('settings', '系统设置（管理员）', '<div class="leaf" data-key="set:run-limits" data-search="运行限制 时限 并发"><span class="name">运行限制</span></div><div class="leaf" data-key="set:card-footer" data-search="卡片页脚 footer"><span class="name">卡片页脚</span></div>');
   }
   html += node('runs', `最近运行<span class="count">${RUNS.length}</span>`, RUNS.map(r => {
     const key = 'r:' + r.id;
@@ -526,6 +527,7 @@ function select(key, push = true) {
   else if (it.kind === 'exe') exePane(it);
   else if (it.kind === 'app') appPane(it);
   else if (it.kind === 'set') footerPane();
+  else if (it.kind === 'set-limits') limitsPane();
   else runPane(it);
 }
 
@@ -664,7 +666,7 @@ function appPane({ a }) {
     if (!el) return;
     if (!x.ok) { el.textContent = x.message || '读取失败'; return; }
     el.className = '';
-    el.innerHTML = codeBlock(x.code, x.lang) + `<p class="note">版本 <code>${esc(x.specHash.slice(0, 12))}</code> · 超时 ${esc(x.timeoutMs / 1000)} 秒</p>`;
+    el.innerHTML = codeBlock(x.code, x.lang) + `<p class="note">版本 <code>${esc(x.specHash.slice(0, 12))}</code> · 最长运行 ${esc(x.timeoutLabel)}</p>`;
   }).catch(() => {});
 }
 
@@ -688,6 +690,49 @@ function footerPane() {
     const v = e.target.value.trim();
     document.getElementById('footer-preview').innerHTML = v ? footerHtml(v) : footerHtml(S.defaultCardFooter) + ' <span class="note">（留空保存＝恢复默认）</span>';
   });
+}
+
+const fmtDur = sec => { const m = Math.floor(sec / 60), s = sec % 60; return m === 0 ? `${s} 秒` : s === 0 ? `${m} 分钟` : `${m} 分 ${s} 秒`; };
+// How long a run may take and how many may run at once: Amber's own machine, each executor (default here,
+// or its own on the executor's page), and per person. Over a limit, a run is refused at once, not queued.
+function limitsPane() {
+  const L = SETTINGS.limits, D = SETTINGS.defaultLimits, B = SETTINGS.bounds, R = SETTINGS.running || {};
+  const row = (name, label, v, b, unit, note) => `<div class="field"><label>${esc(label)}</label><div class="field-main">
+    <input type="number" name="${name}" min="${b.min}" max="${b.max}" step="1" value="${esc(v)}" style="max-width:160px"> <span class="note">${esc(unit)}</span>
+    <p class="note">${note}</p></div></div>`;
+  const exeLines = Object.entries(L.executors || {}).map(([n, v]) => `<li><code>${esc(n)}</code>：${esc(v)} 个</li>`).join('');
+  document.getElementById('pane').innerHTML = `${backBtn}
+    <div class="pane-head"><h1>运行限制</h1></div>
+    <div class="where">系统设置 · 管理员</div>
+    <p class="desc">应用每次运行最长能跑多久，以及同时能有多少个在跑。超过上限的执行会直接提示「稍后再试」，不排队。</p>
+    <form class="box" id="limits-form">
+      <h3>运行时间</h3>
+      ${row('defaultTimeoutSec', '默认时限', L.defaultTimeoutSec, B.timeout, '秒', `应用没有自己写时限时用这个（初始 ${fmtDur(D.defaultTimeoutSec)}）。现在：${esc(fmtDur(L.defaultTimeoutSec))}`)}
+      ${row('maxTimeoutSec', '最长时限', L.maxTimeoutSec, B.timeout, '秒', `应用最多能申请这么久，超过的提交时就会被拒绝；已上线的应用超过的，运行时按这个截断（初始 ${fmtDur(D.maxTimeoutSec)}）。现在：${esc(fmtDur(L.maxTimeoutSec))}`)}
+      <h3 style="margin-top:24px">同时运行</h3>
+      ${row('maxConcurrentLocal', 'Amber 本机', L.maxConcurrentLocal, B.concurrency, '个', `没有写执行位置（env）的应用都在 Amber 这台机器上跑（初始 ${D.maxConcurrentLocal}）。正在运行：${R.local || 0}`)}
+      ${row('maxConcurrentExecutor', '执行端（默认）', L.maxConcurrentExecutor, B.concurrency, '个', `执行端没有单独设置时用这个；可以在左侧「执行端（管理员）」里按台设置（初始 ${D.maxConcurrentExecutor}）。执行端那台机器自己也可以设上限，取两者中小的。${exeLines ? `<br>单独设置过的：<ul class="paths">${exeLines}</ul>` : ''}`)}
+      ${row('maxConcurrentPerUser', '每人', L.maxConcurrentPerUser, B.concurrency, '个', `一个人同时最多运行几个，防止一个人占满名额（初始 ${D.maxConcurrentPerUser}）`)}
+      <div class="actions"><button class="btn primary" type="submit">保存</button> <button class="btn" type="button" data-limits="default">恢复初始值</button></div>
+    </form>`;
+  const form = document.getElementById('limits-form');
+  const save = async values => {
+    const r = await post('/web/api/settings/run-limits', values).catch(e => ({ ok: false, message: e.message }));
+    if (!r.ok) return alert(r.message || '保存失败');
+    SETTINGS.limits = r.limits;
+    limitsPane();
+  };
+  form.addEventListener('submit', ev => { ev.preventDefault(); save(Object.fromEntries([...form.querySelectorAll('input[name]')].map(i => [i.name, Number(i.value)]))); });
+  form.querySelector('[data-limits=default]').addEventListener('click', () => { if (confirm('把运行时间和同时运行的上限都恢复成初始值？（各执行端单独的设置保留）')) save({ ...D, executors: undefined }); });
+}
+
+function exeLimitBlock(e) {
+  if (!SETTINGS || !SETTINGS.limits) return '';
+  const L = SETTINGS.limits, own = (L.executors || {})[e.name], running = (SETTINGS.running || {})['exe:' + e.name] || 0;
+  return `<div class="field" style="margin-top:16px"><label>同时运行上限</label><div class="field-main">
+    <input type="number" id="exe-limit" min="${SETTINGS.bounds.concurrency.min}" max="${SETTINGS.bounds.concurrency.max}" step="1" value="${esc(own ?? '')}" placeholder="默认 ${esc(L.maxConcurrentExecutor)}" style="max-width:160px">
+    <button class="btn small" data-exe-limit="save">保存</button> <button class="btn small" data-exe-limit="default">用默认</button>
+    <p class="note">现在：${own ? `${own} 个（单独设置）` : `${L.maxConcurrentExecutor} 个（默认）`}，正在运行 ${running} 个。那台机器自己的配置（maxParallel）也会限制，取两者中小的。</p></div></div>`;
 }
 
 function exePane({ e }) {
@@ -717,6 +762,7 @@ function exePane({ e }) {
       <dt>最后在线</dt><dd>${e.lastSeen ? fmtTime(e.lastSeen) : '从未'}</dd>
       ${e.decidedBy ? `<dt>处理</dt><dd>${esc(e.decidedBy)} · ${fmtTime(e.decidedAt)}</dd>` : ''}
     </dl>
+    ${exeLimitBlock(e)}
     ${envs}
     ${e.status === 'pending' ? `<p class="note">批准前请先和安装的人核对公钥指纹（执行端安装时会打印出来）。批准后，声明了 <code>env: "${esc(e.name)}/环境名"</code> 并通过审核的应用会在这台机器上按各自的沙箱策略执行。</p>
       <div class="actions"><button class="btn primary" data-exe="approve">批准</button> <button class="btn" data-exe="reject">拒绝</button></div>` : ''}
@@ -759,7 +805,7 @@ async function loadSource() {
   const net = sc.network ? '可访问外网' : Object.keys(sc.services).length ? `以执行人身份调用：${Object.entries(sc.services).map(([n, u]) => `${n}（每次执行最多 ${u.calls} 次调用）`).join('、')}（不能访问外网）` : '不联网';
   el.className = '';
   el.innerHTML = `<dl class="kv">
-      <dt>运行方式</dt><dd>${esc(how)}，${esc(net)}，超时 ${sc.timeoutMs / 1000} 秒</dd>${sc.interpreter ? `
+      <dt>运行方式</dt><dd>${esc(how)}，${esc(net)}，最长运行 ${esc(sc.timeoutLabel)}</dd>${sc.interpreter ? `
       <dt>解释器</dt><dd>${esc(sc.interpreter)}</dd>` : ''}${sc.env ? `
       <dt>执行位置</dt><dd>执行端 ${esc(sc.env)}</dd>` : ''}${(sc.secrets || []).length ? `
       <dt>密钥</dt><dd>${esc(sc.secrets.join('、'))}（值不在代码里，运行时由 Amber 交给脚本）</dd>` : ''}
@@ -796,6 +842,19 @@ async function reload(keepKey) {
 }
 
 document.addEventListener('click', async ev => {
+  const limBtn = ev.target.closest('[data-exe-limit]');
+  if (limBtn) {
+    const it = ITEMS.get(SEL);
+    if (!it || it.kind !== 'exe') return;
+    const v = document.getElementById('exe-limit').value.trim();
+    const value = limBtn.dataset.exeLimit === 'default' || !v ? null : Number(v);
+    const r = await post(`/web/api/executors/${it.e.id}/limit`, { value }).catch(e => ({ ok: false, message: e.message }));
+    if (!r.ok) return alert(r.message || '保存失败');
+    SETTINGS.limits.executors = { ...SETTINGS.limits.executors };
+    if (r.limit === null) delete SETTINGS.limits.executors[it.e.name]; else SETTINGS.limits.executors[it.e.name] = r.limit;
+    exePane(it);
+    return;
+  }
   const footerBtn = ev.target.closest('[data-footer]');
   if (footerBtn) {
     const op = footerBtn.dataset.footer;
@@ -860,7 +919,15 @@ document.addEventListener('click', async ev => {
         const out = document.getElementById('out');
         out.className = 'output wait';
         out.textContent = '执行中……';
-        const r = await post('/web/api/run', { scope, commandId: c.id, args: formArgs(form), confirm: c.options.confirm });
+        const t0 = Date.now();
+        let r = await post('/web/api/run', { scope, commandId: c.id, args: formArgs(form), confirm: c.options.confirm });
+        // A long run comes back as a job: ask for it every few seconds until it ends.
+        const job = r.ok && r.pending ? r.job : null;
+        while (job && r.ok && r.pending) {
+          if (SEL === key) document.getElementById('out').textContent = `执行中……已运行 ${Math.round((Date.now() - t0) / 1000)} 秒`;
+          await new Promise(ok => setTimeout(ok, 3000));
+          r = await fetch('/web/api/run-jobs/' + job).then(x => x.json()).catch(() => ({ ok: true, pending: true }));
+        }
         const meta = r.ok ? `以你的身份执行 · ${(r.elapsedMs / 1000).toFixed(1)} 秒 · run ${esc(r.runId)} · ${fmtTime(Date.now())}` : '';
         LAST.set(key, { r, meta });
         if (SEL === key) showOutput(document.getElementById('out'), r, meta);

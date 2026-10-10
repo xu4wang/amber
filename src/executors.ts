@@ -354,10 +354,11 @@ export class ExecutorHub {
     if (!this.online(e)) return { ok: false, content: '', error: `执行端 ${p.executor} 离线（最后在线：${e.lastSeen ? new Date(e.lastSeen).toISOString() : '从未'}），这次没有执行` };
     if ([...this.jobs.values()].filter(j => j.executorId === e.id).length >= this.maxJobs) return { ok: false, content: '', error: `执行端 ${p.executor} 正在处理的任务太多，这次没有执行，请稍后再试` };
     const jobId = randomUUID();
-    const timeoutMs = (script.timeoutMs ?? 30000) + RESULT_GRACE_MS;
+    // script.timeoutMs is already the effective limit for this run (engine.ts); the executor is told it too.
+    const timeoutMs = (script.timeoutMs ?? 60000) + RESULT_GRACE_MS;
     // Services: only the tokens travel; the executor gives the script a local port and relays the calls here.
     const remoteInput = input.services ? { ...input, services: Object.fromEntries(Object.entries(input.services).map(([n, s]) => [n, { tokens: s.tokens }])) } : input;
-    const envelope = this.signer.sealJob(e.id, e.boxPub, jobId, this.pickupMs * 2, { jobId, runId: input.runId, env: p.env, spec, specHash, input: remoteInput });
+    const envelope = this.signer.sealJob(e.id, e.boxPub, jobId, this.pickupMs * 2, { jobId, runId: input.runId, env: p.env, spec, specHash, input: remoteInput, timeoutMs: script.timeoutMs });
     this.store.audit(input.caller.unionId, 'executor.dispatch', { runId: input.runId, executor: e.id, name: e.name, env: p.env, jobId });
     return await new Promise<ScriptResult>(resolve => {
       const calls = Object.fromEntries(Object.entries(script.services ?? {}).map(([n, u]) => [n, u.calls]));

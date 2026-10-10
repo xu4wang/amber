@@ -18,6 +18,8 @@ import type { AppStore } from './apps.ts';
 import { showFingerprint } from './exec-proto.ts';
 import { describeRule, formatAt, defaultTz, timezones } from './schedule-rule.ts';
 import { CARD_FOOTER_KEY, CARD_FOOTER_MAX, DEFAULT_CARD_FOOTER, cleanFooter } from './cards.ts';
+import { getLimits, saveLimits, timeoutLabel, DEFAULT_LIMITS, TIMEOUT_BOUNDS, CONCURRENCY_BOUNDS } from './limits.ts';
+import { SLOTS } from './engine.ts';
 
 export const LOGIN_TTL_MS = 5 * 60_000;
 const SESSION_TTL_MS = 7 * 24 * 3600_000;
@@ -56,7 +58,15 @@ export interface WebDeps {
   hub?: ExecutorHub;
   /** Origin of the site, e.g. http://amber.example.com — POSTs from anywhere else are refused. */
   origin: string;
+  /** How long a website run is waited for before the page is told to poll for it (default 20 s). */
+  runWaitMs?: number;
 }
+
+/** A website run still going after runWaitMs: the page asks for it by job id. Kept 30 minutes after it ends. */
+interface WebJob { owner: string; done?: Record<string, unknown>; endedAt?: number }
+const JOB_KEEP_MS = 30 * 60_000;
+
+const pick = (o: Record<string, unknown>, keys: string[]) => Object.fromEntries(keys.filter(k => o[k] !== undefined).map(k => [k, o[k]]));
 
 function readJson(req: IncomingMessage): Promise<any> {
   return new Promise((resolve, reject) => {
@@ -132,6 +142,7 @@ export function startWeb(port: number, store: Store, deps: WebDeps): import('nod
     if (/^[a-z0-9-]+\.svg$/.test(f) || f === 'amber-why.gif') docAssets.set(`/docs/assets/${f}`, { type: f.endsWith('.svg') ? 'image/svg+xml' : 'image/gif', body: readFileSync(join(import.meta.dirname, '..', 'docs', 'assets', f)) });
   }
   const docTemplate = readFileSync(join(import.meta.dirname, '..', 'web', 'docs.html'), 'utf8');
+  const jobs = new Map<string, WebJob>();
   const docPages = new Map<string, string>();
   for (const [name, title] of DOCS) {
     const md = readFileSync(join(import.meta.dirname, '..', 'docs', `${name}.md`), 'utf8');
@@ -197,7 +208,17 @@ export function startWeb(port: number, store: Store, deps: WebDeps): import('nod
           // Site-wide settings: admins only.
           if (!deps.isAdmin(who.unionId)) return json(res, 404, { ok: false, error: 'not_found' });
           const v = store.getSetting(CARD_FOOTER_KEY);
-          return json(res, 200, { ok: true, cardFooter: v ?? null, defaultCardFooter: DEFAULT_CARD_FOOTER, max: CARD_FOOTER_MAX });
+          return json(res, 200, { ok: true, cardFooter: v ?? null, defaultCardFooter: DEFAULT_CARD_FOOTER, max: CARD_FOOTER_MAX,
+            limits: getLimits(store), defaultLimits: DEFAULT_LIMITS, bounds: { timeout: TIMEOUT_BOUNDS, concurrency: CONCURRENCY_BOUNDS }, running: SLOTS.snapshot() });
+        }
+        for (const [id, j] of jobs) if (j.endedAt && Date.now() - j.endedAt > JOB_KEEP_MS) jobs.delete(id);
+        const jm = req.method === 'GET' ? /^\/web\/api\/run-jobs\/([0-9a-f]{24})$/.exec(url.pathname) : null;
+        if (jm) {
+          const j = jobs.get(jm[1]);
+          if (!j || j.owner !== who.unionId) return json(res, 404, { ok: false, error: 'not_found', message: '没有这个执行（可能已经过期）' });
+          if (!j.done) return json(res, 200, { ok: true, pending: true });
+          jobs.delete(jm[1]);   // handed over once; the run itself stays in 最近运行
+          return json(res, 200, j.done);
         }
         if (req.method === 'GET' && url.pathname === '/web/api/store') {
           // Amber Store (#4): listed apps (plus your own delisted ones), and where you can install.
@@ -245,7 +266,7 @@ export function startWeb(port: number, store: Store, deps: WebDeps): import('nod
           const c = t.cmd;
           const review = store.getReview(c.id);
           return json(res, 200, { ok: true, id: c.id, name: c.name, specHash: c.specHash, createdAt: c.createdAt,
-            script: { kind: c.script.kind, lang: c.script.lang, network: !!c.script.network, services: c.script.services ?? {}, secrets: c.script.secrets ?? [], interpreter: c.script.interpreter ?? null, env: c.script.env ?? null, timeoutMs: c.script.timeoutMs ?? 30000, code: c.script.code },
+            script: { kind: c.script.kind, lang: c.script.lang, network: !!c.script.network, services: c.script.services ?? {}, secrets: c.script.secrets ?? [], interpreter: c.script.interpreter ?? null, env: c.script.env ?? null, timeoutMs: c.script.timeoutMs ?? null, timeoutLabel: timeoutLabel(c.script.timeoutMs, getLimits(store)), code: c.script.code },
             params: c.params, options: c.options, reviewDocUrl: review.docUrl ?? null,
             history: store.versionsOf(c.id).map(v => ({ id: v.id, specHash: v.specHash, createdAt: v.createdAt, reviewDocUrl: store.getReview(v.id).docUrl ?? null })) });
         }
@@ -263,9 +284,18 @@ export function startWeb(port: number, store: Store, deps: WebDeps): import('nod
           if (t.cmd.options.confirm && body.confirm !== true) throw new AmberError('needs_confirm', '这个应用需要确认后执行');
           const args: Record<string, string> = {};
           for (const [k, v] of Object.entries(body.args ?? {})) if (v !== null && v !== undefined) args[k] = String(v).slice(0, 2000);
-          const r = await runCommand(store, t.cmd, args, { ...person, chatId: t.chatId, chatType: t.chatType },
+          const run = runCommand(store, t.cmd, args, { ...person, chatId: t.chatId, chatType: t.chatType },
             { city: () => deps.cityOf(who.unionId), signer: deps.signer }, { viaForm: true });
-          return json(res, 200, { ok: r.ok, runId: r.runId, markdown: r.markdown, error: r.error, elapsedMs: r.elapsedMs });
+          const view = (r: Awaited<typeof run>) => ({ ok: r.ok, runId: r.runId, markdown: r.markdown, error: r.error, elapsedMs: r.elapsedMs });
+          // A run can take minutes (run limits); one still going after a short wait is handed to the page as a job to poll.
+          const quick = await Promise.race([run.then(r => ({ r }), e => ({ e })), new Promise<null>(ok => setTimeout(() => ok(null), deps.runWaitMs ?? (Number(process.env.AMBER_WEB_RUN_WAIT_MS) || 20_000)))]);
+          if (quick) { if ('e' in quick) throw quick.e; return json(res, 200, view(quick.r)); }
+          const id = randomBytes(12).toString('hex');
+          const job: WebJob = { owner: who.unionId };
+          jobs.set(id, job);
+          run.then(r => { job.done = view(r); }, e => { job.done = { ok: false, error: e instanceof AmberError ? e.code : 'internal', message: e instanceof AmberError ? e.message : '执行失败' }; })
+            .finally(() => { job.endedAt = Date.now(); });
+          return json(res, 200, { ok: true, pending: true, job: id });
         }
         if (url.pathname === '/web/api/schedules') {
           const t = await target(store, deps, who.unionId, String(body.scope ?? ''), String(body.commandId ?? ''));
@@ -356,6 +386,26 @@ export function startWeb(port: number, store: Store, deps: WebDeps): import('nod
           const c = await deps.apps.install(m[1], { unionId: who.unionId, openId: who.openId ?? undefined }, String(body.target ?? ''), body.name === undefined ? undefined : String(body.name), { dev: body.dev === true });
           return json(res, 200, { ok: true, commandId: c.id, name: c.name, scope: c.scopeType === 'p2p' ? 'p2p' : `group:${c.chatId}`,
             needs: { config: configParams(c.params).filter(p => p.required && p.default === undefined).map(p => p.label ?? p.name), secrets: c.script.secrets ?? [] } });
+        }
+        if (url.pathname === '/web/api/settings/run-limits') {
+          // Run time and how many runs at once (Amber's machine, executors by default, per person). Admins only.
+          if (!deps.isAdmin(who.unionId)) throw new AmberError('forbidden', '只有管理员可以修改运行限制');
+          const before = getLimits(store);
+          const after = saveLimits(store, { ...before, ...pick(body, ['defaultTimeoutSec', 'maxTimeoutSec', 'maxConcurrentLocal', 'maxConcurrentExecutor', 'maxConcurrentPerUser']) });
+          store.audit(who.unionId, 'web.run_limits', { before, after });
+          return json(res, 200, { ok: true, limits: after });
+        }
+        if ((m = /^\/web\/api\/executors\/([0-9a-f]{16})\/limit$/.exec(url.pathname))) {
+          // One executor's own cap on runs at once; null = back to the executors' default.
+          if (!deps.isAdmin(who.unionId) || !deps.hub) throw new AmberError('forbidden', '只有管理员可以修改执行端的并发上限');
+          const e = store.listExecutors().find(x => x.id === m![1]);
+          if (!e) throw new AmberError('not_found', '没有这个执行端');
+          const before = getLimits(store);
+          const executors = { ...before.executors };
+          if (body.value === null) delete executors[e.name]; else executors[e.name] = Number(body.value);
+          const after = saveLimits(store, { ...before, executors });
+          store.audit(who.unionId, 'web.executor_limit', { executor: e.id, name: e.name, before: before.executors[e.name] ?? null, after: after.executors[e.name] ?? null });
+          return json(res, 200, { ok: true, limit: after.executors[e.name] ?? null, default: after.maxConcurrentExecutor });
         }
         if (url.pathname === '/web/api/settings/card-footer') {
           // The line at the bottom of every card. null = back to the default (the project link); "" = no footer.

@@ -4,6 +4,10 @@ import { runScript, serviceDef, validateScript } from './runner.ts';
 import type { Signer } from './identity.ts';
 import { redact, type SecretVault } from './secrets.ts';
 import type { ExecutorHub } from './executors.ts';
+import { getLimits, effectiveTimeoutMs, RunSlots } from './limits.ts';
+
+/** Runs going on now, counted per machine and per person (see limits.ts). */
+export const SLOTS = new RunSlots();
 
 let HUB: ExecutorHub | undefined;
 /** Where commands with script.env are sent (D50); set once at startup. */
@@ -187,35 +191,42 @@ export async function runCommand(store: Store, cmd: CommandRow, rawArgs: Record<
     secrets = got.values;
   }
   const city = facts.city ? await facts.city() : undefined;
-  const started = Date.now();
-  const runId = store.startRun({ commandId: cmd.id, specHash: cmd.specHash, channel: opts.trial ? `${caller.channel}.trial` : caller.channel, callerUnionId: caller.unionId, chatId: caller.chatId, args });
-  store.audit(caller.unionId, 'run.start', { runId, commandId: cmd.id, name: cmd.name, channel: caller.channel, chatId: caller.chatId });
-  const services: Record<string, { tokens: string[]; tcpPort?: number; unixSocket?: string }> = {};
-  const channel = opts.trial ? `${caller.channel}.trial` : caller.channel;
-  for (const [name, use] of Object.entries(script.services ?? {})) {
-    const d = serviceDef(name);
-    if (!d || !facts.signer) continue;
-    // One single-use token per declared call (D41); no refills while the script runs.
-    const tokens = Array.from({ length: use.calls }, (_, i) => facts.signer!.issue({ aud: d.audience, sub: caller.unionId, cmd: cmd.id, rev: cmd.specHash, run: runId, chat: caller.chatId, channel, callIndex: i + 1, callCount: use.calls }));
-    store.audit(caller.unionId, 'identity.issue', { runId, service: name, aud: d.audience, count: use.calls });
-    services[name] = { tokens, ...(d.tcpPort ? { tcpPort: d.tcpPort } : {}), ...(d.unixSocket ? { unixSocket: d.unixSocket } : {}) };
-  }
-  const input = { params: { ...args, ...config }, caller: { unionId: caller.unionId, chatId: caller.chatId, channel: caller.channel, city }, runId, ...(Object.keys(services).length ? { services } : {}), ...(secrets ? { secrets } : {}) };
-  // script.env (D50): on the executor that holds the data, never here.
-  const raw = script.env
-    ? (HUB ? await HUB.run(script, { name: cmd.name, params: cmd.params, script: cmd.script, options: cmd.options }, cmd.specHash, input) : { ok: false, content: '', error: '执行端服务不可用' })
-    : await runScript(script, input);
-  // A secret that ends up in the output or the error message is masked before it is stored or shown.
-  const r = secrets ? { ...raw, content: redact(raw.content, secrets), ...(raw.error ? { error: redact(raw.error, secrets) } : {}) } : raw;
-  if (secrets) store.audit(caller.unionId, 'secret.use', { runId, commandId: cmd.id, names: Object.keys(secrets) });
-  if (!r.ok) {
-    store.finishRun(runId, 'failed', null, r.error ?? 'failed');
-    store.audit(caller.unionId, 'run.failed', { runId, error: r.error });
-    return { runId, ok: false, blocks: [], markdown: '', error: r.error, elapsedMs: Date.now() - started, args };
-  }
-  const blocks: Block[] = [{ kind: 'markdown', text: r.content.trim() }];
-  const markdown = blocks.map(b => b.text).join('\n\n');
-  store.finishRun(runId, 'ok', markdown, null);
-  store.audit(caller.unionId, 'run.ok', { runId });
-  return { runId, ok: true, blocks, markdown, elapsedMs: Date.now() - started, args };
+  // Run limits (admin, on the website): refused at once when its machine or this person is at the cap; the run
+  // may take what the app asked for (or the default), never more than the maximum now in force.
+  const limits = getLimits(store);
+  const release = SLOTS.acquire(caller.unionId, script.env, limits);
+  try {
+    script = { ...script, timeoutMs: effectiveTimeoutMs(script.timeoutMs, limits) };
+    const started = Date.now();
+    const runId = store.startRun({ commandId: cmd.id, specHash: cmd.specHash, channel: opts.trial ? `${caller.channel}.trial` : caller.channel, callerUnionId: caller.unionId, chatId: caller.chatId, args });
+    store.audit(caller.unionId, 'run.start', { runId, commandId: cmd.id, name: cmd.name, channel: caller.channel, chatId: caller.chatId });
+    const services: Record<string, { tokens: string[]; tcpPort?: number; unixSocket?: string }> = {};
+    const channel = opts.trial ? `${caller.channel}.trial` : caller.channel;
+    for (const [name, use] of Object.entries(script.services ?? {})) {
+      const d = serviceDef(name);
+      if (!d || !facts.signer) continue;
+      // One single-use token per declared call (D41); no refills while the script runs.
+      const tokens = Array.from({ length: use.calls }, (_, i) => facts.signer!.issue({ aud: d.audience, sub: caller.unionId, cmd: cmd.id, rev: cmd.specHash, run: runId, chat: caller.chatId, channel, callIndex: i + 1, callCount: use.calls, ttlSec: Math.ceil(script.timeoutMs! / 1000) + 60 }));
+      store.audit(caller.unionId, 'identity.issue', { runId, service: name, aud: d.audience, count: use.calls });
+      services[name] = { tokens, ...(d.tcpPort ? { tcpPort: d.tcpPort } : {}), ...(d.unixSocket ? { unixSocket: d.unixSocket } : {}) };
+    }
+    const input = { params: { ...args, ...config }, caller: { unionId: caller.unionId, chatId: caller.chatId, channel: caller.channel, city }, runId, ...(Object.keys(services).length ? { services } : {}), ...(secrets ? { secrets } : {}) };
+    // script.env (D50): on the executor that holds the data, never here.
+    const raw = script.env
+      ? (HUB ? await HUB.run(script, { name: cmd.name, params: cmd.params, script: cmd.script, options: cmd.options }, cmd.specHash, input) : { ok: false, content: '', error: '执行端服务不可用' })
+      : await runScript(script, input);
+    // A secret that ends up in the output or the error message is masked before it is stored or shown.
+    const r = secrets ? { ...raw, content: redact(raw.content, secrets), ...(raw.error ? { error: redact(raw.error, secrets) } : {}) } : raw;
+    if (secrets) store.audit(caller.unionId, 'secret.use', { runId, commandId: cmd.id, names: Object.keys(secrets) });
+    if (!r.ok) {
+      store.finishRun(runId, 'failed', null, r.error ?? 'failed');
+      store.audit(caller.unionId, 'run.failed', { runId, error: r.error });
+      return { runId, ok: false, blocks: [], markdown: '', error: r.error, elapsedMs: Date.now() - started, args };
+    }
+    const blocks: Block[] = [{ kind: 'markdown', text: r.content.trim() }];
+    const markdown = blocks.map(b => b.text).join('\n\n');
+    store.finishRun(runId, 'ok', markdown, null);
+    store.audit(caller.unionId, 'run.ok', { runId });
+    return { runId, ok: true, blocks, markdown, elapsedMs: Date.now() - started, args };
+  } finally { release(); }
 }

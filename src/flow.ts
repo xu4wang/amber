@@ -9,6 +9,7 @@ import type { Store, CommandRow, ParamDef, Script, CommandOptions } from './db.t
 import { normalizeOptions } from './db.ts';
 import { computeSpecHash } from './db.ts';
 import { validateScript, describeServices } from './runner.ts';
+import { getLimits, fmtDuration, LONG_RUN_MS } from './limits.ts';
 import { describeSecrets } from './secrets.ts';
 import type { FeishuReview } from './feishu-review.ts';
 import type { Caller, CallerFacts, Block } from './engine.ts';
@@ -63,7 +64,7 @@ export function specSummary(c: CommandRow): string {
   const run = c.params.filter(p => p.scope !== 'config'), cfg = c.params.filter(p => p.scope === 'config');
   const params = run.length ? run.map(desc).join('、') : '无';
   const s = c.script;
-  const how = `${scriptLabel(s.kind)}${s.network ? '，可访问外网' : ''}${s.services && Object.keys(s.services).length ? `，以执行人身份调用：${describeServices(s)}（不能访问外网）` : ''}`;
+  const how = `${scriptLabel(s.kind)}${s.network ? '，可访问外网' : ''}${s.services && Object.keys(s.services).length ? `，以执行人身份调用：${describeServices(s)}（不能访问外网）` : ''}${s.timeoutMs !== undefined && s.timeoutMs > LONG_RUN_MS ? `，⚠️ 每次最长运行 ${fmtDuration(Math.round(s.timeoutMs / 1000))}` : ''}`;
   return [
     `**名称**：${sanitizeMarkdown(c.name, 40)}`,
     `**说明**：${sanitizeMarkdown(c.description || '（无）', 200)}`,
@@ -271,6 +272,9 @@ export class Flow {
     if (!d.name || d.name.length > 40 || /\s/.test(d.name)) throw new AmberError('bad_name', '名称不能为空、不能有空格、最多 40 个字');
     if ((d as any).steps !== undefined) throw new AmberError('bad_script', '应用不再有「步骤」：请提交一段 script（参数 + 一段脚本）');
     try { d.script = validateScript(d.script); } catch (e) { throw new AmberError('bad_script', (e as Error).message); }
+    // An app may ask for at most the maximum run time the admin set (it would be cut short anyway).
+    const lim = getLimits(this.store);
+    if (d.script.timeoutMs !== undefined && d.script.timeoutMs > lim.maxTimeoutSec * 1000) throw new AmberError('bad_script', `timeoutMs 最多 ${lim.maxTimeoutSec * 1000}（管理员设置的最长运行时间是 ${fmtDuration(lim.maxTimeoutSec)}）`);
     checkParams(d.params ?? []);
     // Who the agent is working for, if it says so: it decides which same-named app this is a new version of.
     let claimerId: string | undefined;

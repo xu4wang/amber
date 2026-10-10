@@ -81,7 +81,8 @@ export function validateScript(s: unknown): Script {
     if (x.lang !== 'python') throw new Error('脚本目前只支持 python');
     if (typeof x.code !== 'string' || !x.code.trim()) throw new Error('脚本缺少代码');
     if (Buffer.byteLength(x.code) > MAX_CODE_BYTES) throw new Error('代码不能超过 64KB');
-    const timeoutMs = x.timeoutMs === undefined ? undefined : Math.min(Math.max(Number(x.timeoutMs) || 0, 1000), 120000);
+    // The hard bound (limits.ts TIMEOUT_BOUNDS). What a run really gets is capped again by the admin's maximum at run time.
+    const timeoutMs = x.timeoutMs === undefined ? undefined : Math.min(Math.max(Number(x.timeoutMs) || 0, 1000), 1_800_000);
     if (Array.isArray(x.services)) throw new Error('services 要写成 {"服务名": {"calls": 次数}}，次数是每次执行最多调用几次（1–20）');
     const services: Record<string, ServiceUse> = {};
     if (x.services !== undefined) {
