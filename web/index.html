@@ -260,6 +260,26 @@ table.audit .mono { font-family: ui-monospace, Menlo, monospace; font-size: 11px
 .themebtn svg { width: 18px; height: 18px; stroke: currentColor; stroke-width: 1.6; fill: none; }
 .themebtn .i-sun, :root[data-theme="dark"] .themebtn .i-moon { display: none; }
 :root[data-theme="dark"] .themebtn .i-sun { display: inline; }
+/* Page settings: apps it calls, who may open it (option cards), chosen members. */
+.pg-apps { list-style: none; margin: 0; padding: 0; }
+.pg-apps li { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; padding: 10px 0; border-top: 1px solid var(--line-2); }
+.pg-apps li:first-child { border-top: none; padding-top: 0; }
+.pg-apps li:last-child { padding-bottom: 0; }
+.pg-apps .name { font-weight: 500; color: var(--ink); margin-right: 4px; }
+.pg-opts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin-bottom: 14px; }
+@media (max-width: 720px) { .pg-opts { grid-template-columns: 1fr; } }
+.pg-opt { display: flex; gap: 10px; align-items: flex-start; padding: 14px 16px; border: 1px solid var(--line); background: var(--bg); cursor: pointer; }
+.pg-opt:hover { border-color: var(--line-2); }
+.pg-opt:has(input:checked) { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+.pg-opt input { margin: 3px 0 0; accent-color: var(--accent); flex: none; }
+.pg-opt b { display: block; font-weight: 600; color: var(--ink); }
+.pg-opt span { display: block; font-size: 12px; color: var(--muted); margin-top: 2px; }
+.pg-members { display: flex; flex-wrap: wrap; gap: 8px; padding: 14px 16px; background: var(--bg); border: 1px dashed var(--line-2); margin-bottom: 14px; }
+.pg-members label { display: inline-flex; align-items: center; gap: 6px; padding: 4px 12px; border: 1px solid var(--line); border-radius: 999px; cursor: pointer; font-size: 13px; }
+.pg-members label:has(input:checked) { border-color: var(--accent); background: var(--accent-soft); color: var(--accent-ink); }
+.pg-members input { margin: 0; accent-color: var(--accent); }
+.pg-warn { border-left: 3px solid var(--warn); background: var(--bg); padding: 8px 12px; font-size: 13px; color: var(--body-ink); margin: 0 0 12px; }
+.pg-foot { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
 </style>
 </head>
 <body>
@@ -836,8 +856,9 @@ async function auditPane(more = false) {
 // A page app: open it (new tab), who may open it (owner), the apps it calls, delete.
 function pagePane({ pg, scope }) {
   const ACC = { owner: '仅我', group: '群里所有人', members: '指定的群成员' };
-  const appLine = a => a.missing ? `<li>${esc(a.name)} <span class="chip warn">${esc(a.missing)}</span></li>`
-    : `<li>${esc(a.name)}${a.global ? ' <span class="chip">全局应用</span>' : ''}${a.env ? ` <span class="chip warn">在执行端环境 ${esc(a.env)} 里运行</span>` : ''}${a.secrets ? ' <span class="chip warn">用到密钥：只有你自己能通过页面调用</span>' : ''}${a.confirm ? ' <span class="chip">执行前确认</span>' : ''}</li>`;
+  const ACC_DESC = { owner: '只有你自己能打开', group: '这个群里的人都能打开', members: '只有你勾选的群成员能打开' };
+  const appLine = a => a.missing ? `<li><span class="name">${esc(a.name)}</span> <span class="chip warn">${esc(a.missing)}</span></li>`
+    : `<li><span class="name">${esc(a.name)}</span>${a.global ? ' <span class="chip">全局应用</span>' : ''}${a.env ? ` <span class="chip warn">在执行端环境 ${esc(a.env)} 里运行</span>` : ''}${a.secrets ? ' <span class="chip warn">用到密钥：只有你自己能通过页面调用</span>' : ''}${a.confirm ? ' <span class="chip">执行前确认</span>' : ''}</li>`;
   const envApps = pg.apps.filter(a => a.env && !a.secrets);
   const group = scope.startsWith('group:');
   document.getElementById('pane').innerHTML = `${backBtn}
@@ -845,15 +866,15 @@ function pagePane({ pg, scope }) {
     <div class="where">${esc(scopeName(scope))} · 第 ${esc(pg.version)} 版 · 更新于 ${fmtTime(pg.updatedAt)}${pg.mine ? '' : ' · 别人分享给你的'}</div>
     <p class="desc">页面由 agent 发布，在新标签页打开。页面里查数、写飞书都通过下面这些应用，每次都以打开页面的人自己的身份执行。</p>
     <div class="actions" style="margin-bottom:24px"><a class="btn primary" href="${esc(pg.url)}" target="_blank" rel="noopener">打开页面</a></div>
-    <div class="box"><h3>页面会调用的应用</h3>${pg.apps.length ? `<ul class="paths">${pg.apps.map(appLine).join('')}</ul>` : '<p class="note">这个页面不调用任何应用。</p>'}</div>
+    <div class="box"><h3>页面会调用的应用</h3>${pg.apps.length ? `<ul class="pg-apps">${pg.apps.map(appLine).join('')}</ul>` : '<p class="note">这个页面不调用任何应用。</p>'}</div>
     ${pg.access !== undefined ? `<div class="box"><h3>谁能访问</h3>
-      ${pg.mine ? `${group ? `<div class="field"><label>访问范围</label><div class="field-main">
-        ${['owner', 'group', 'members'].map(k => `<label style="display:block;padding:2px 0;min-width:0"><input type="radio" name="pg-access" value="${k}"${pg.access === k ? ' checked' : ''}> ${ACC[k]}</label>`).join('')}
-        <div id="pg-members" style="margin-top:8px;${pg.access === 'members' ? '' : 'display:none'}"><p class="note">加载群成员……</p></div>
-        ${envApps.length ? `<p class="note">⚠️ 访问的人会在执行端环境里运行：${envApps.map(a => esc(a.name) + '（' + esc(a.env) + '）').join('、')}，能读到那个环境里的数据。</p>` : ''}
-        <p class="note">每次打开和每次调用都会检查：在名单里，并且现在还在这个群里。退群的人自动失去访问权限。</p>
-      </div></div>
-      <div class="actions"><button class="btn primary" data-pg="access">保存</button></div>` : '<p class="note">私聊里的页面只有你自己能访问。</p>'}`
+      ${pg.mine ? `${group ? `<div class="pg-opts">
+        ${['owner', 'group', 'members'].map(k => `<label class="pg-opt"><input type="radio" name="pg-access" value="${k}"${pg.access === k ? ' checked' : ''}><div><b>${ACC[k]}</b><span>${ACC_DESC[k]}</span></div></label>`).join('')}
+      </div>
+      <div id="pg-members" class="pg-members" style="${pg.access === 'members' ? '' : 'display:none'}"><p class="note">加载群成员……</p></div>
+      ${envApps.length ? `<p class="pg-warn">访问的人会在执行端环境里运行 ${envApps.map(a => `「${esc(a.name)}」（${esc(a.env)}）`).join('、')}，能读到那个环境里的数据。</p>` : ''}
+      <div class="pg-foot"><p class="note" style="margin:0">每次打开和调用都会检查：在名单里，并且现在还在这个群里。退群的人自动失去访问权限。</p>
+        <button class="btn primary" data-pg="access">保存</button></div>` : '<p class="note">私聊里的页面只有你自己能访问。</p>'}`
       : `<p>${ACC[pg.access]}${pg.access === 'members' ? `（${pg.members.length} 人）` : ''}</p>`}</div>` : ''}
     ${pg.canDelete ? `<div class="manage"><h3>删除页面</h3><p class="note">删除后链接立即失效，页面文件一起删除。应用不受影响。</p><button class="btn danger" data-pg="delete">删除这个页面</button></div>` : ''}`;
   if (pg.mine && group) {
@@ -863,7 +884,7 @@ function pagePane({ pg, scope }) {
       const r = await fetch(`/web/api/groups/${encodeURIComponent(chat)}/members`).then(x => x.json()).catch(() => ({ ok: false }));
       if (!r.ok) { box.innerHTML = '<p class="note">读不到群成员</p>'; return; }
       const sel = new Set(pg.members || []);
-      box.innerHTML = r.members.filter(u => u.unionId !== DATA.me).map(u => `<label style="display:inline-block;margin:2px 12px 2px 0;min-width:0"><input type="checkbox" name="pg-member" value="${esc(u.unionId)}"${sel.has(u.unionId) ? ' checked' : ''}> ${esc(u.name)}</label>`).join('') || '<p class="note">群里没有别人</p>';
+      box.innerHTML = r.members.filter(u => u.unionId !== DATA.me).map(u => `<label><input type="checkbox" name="pg-member" value="${esc(u.unionId)}"${sel.has(u.unionId) ? ' checked' : ''}>${esc(u.name)}</label>`).join('') || '<p class="note">群里没有别人</p>';
     };
     document.querySelectorAll('input[name=pg-access]').forEach(r => r.addEventListener('change', () => {
       const on = document.querySelector('input[name=pg-access]:checked').value === 'members';
