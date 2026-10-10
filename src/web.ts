@@ -17,6 +17,7 @@ import { envsHash, effectiveAccess, credentialPaths, type ExecutorHub } from './
 import type { AppStore } from './apps.ts';
 import { showFingerprint } from './exec-proto.ts';
 import { describeRule, formatAt, defaultTz, timezones } from './schedule-rule.ts';
+import { CARD_FOOTER_KEY, CARD_FOOTER_MAX, DEFAULT_CARD_FOOTER, cleanFooter } from './cards.ts';
 
 export const LOGIN_TTL_MS = 5 * 60_000;
 const SESSION_TTL_MS = 7 * 24 * 3600_000;
@@ -190,6 +191,12 @@ export function startWeb(port: number, store: Store, deps: WebDeps): import('nod
           return json(res, 200, { ok: true, name: (await deps.nameOf(who.unionId)) ?? '', unionId: who.unionId });
         }
         if (req.method === 'GET' && url.pathname === '/web/api/overview') return json(res, 200, { ok: true, ...(await overview(store, deps, who.unionId)), timezones: timezones() });
+        if (req.method === 'GET' && url.pathname === '/web/api/settings') {
+          // Site-wide settings: admins only.
+          if (!deps.isAdmin(who.unionId)) return json(res, 404, { ok: false, error: 'not_found' });
+          const v = store.getSetting(CARD_FOOTER_KEY);
+          return json(res, 200, { ok: true, cardFooter: v ?? null, defaultCardFooter: DEFAULT_CARD_FOOTER, max: CARD_FOOTER_MAX });
+        }
         if (req.method === 'GET' && url.pathname === '/web/api/store') {
           // Amber Store (#4): listed apps (plus your own delisted ones), and where you can install.
           if (!deps.apps) return json(res, 404, { ok: false, error: 'not_found' });
@@ -347,6 +354,15 @@ export function startWeb(port: number, store: Store, deps: WebDeps): import('nod
           const c = await deps.apps.install(m[1], { unionId: who.unionId, openId: who.openId ?? undefined }, String(body.target ?? ''), body.name === undefined ? undefined : String(body.name), { dev: body.dev === true });
           return json(res, 200, { ok: true, commandId: c.id, name: c.name, scope: c.scopeType === 'p2p' ? 'p2p' : `group:${c.chatId}`,
             needs: { config: configParams(c.params).filter(p => p.required && p.default === undefined).map(p => p.label ?? p.name), secrets: c.script.secrets ?? [] } });
+        }
+        if (url.pathname === '/web/api/settings/card-footer') {
+          // The line at the bottom of every card. null = back to the default (the project link); "" = no footer.
+          if (!deps.isAdmin(who.unionId)) throw new AmberError('forbidden', '只有管理员可以修改卡片页脚');
+          const before = store.getSetting(CARD_FOOTER_KEY) ?? null;
+          const v = body.value === null ? null : cleanFooter(String(body.value ?? ''));
+          store.setSetting(CARD_FOOTER_KEY, v);
+          store.audit(who.unionId, 'web.card_footer', { before, after: v });
+          return json(res, 200, { ok: true, cardFooter: v });
         }
         if ((m = /^\/web\/api\/executors\/([0-9a-f]{16})\/(approve|reject|revoke)$/.exec(url.pathname))) {
           if (!deps.isAdmin(who.unionId) || !deps.hub) throw new AmberError('forbidden', '只有管理员可以管理执行端');

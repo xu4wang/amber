@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import type { Store, CommandRow, ScopeType } from './db.ts';
 import type { Caller, Block } from './engine.ts';
 import { ENV_NOT_GLOBAL, visibleCommands, findVisible, findManageable, runCommand, AmberError, secretVault, lineOf, dropOrphanSettings, runParams } from './engine.ts';
-import { Mentions, reassignCard, cloneCard, listCard, formCard, runningCard, resultCard, errorCard, infoCard, retireConfirmCard, closedCard, secretFormCard, secretPickCard, executorApprovalCard, executorDecidedCard, executorListCard, executorFollowCard } from './cards.ts';
+import { cardFooter, withFooter, Mentions, reassignCard, cloneCard, listCard, formCard, runningCard, resultCard, errorCard, infoCard, retireConfirmCard, closedCard, secretFormCard, secretPickCard, executorApprovalCard, executorDecidedCard, executorListCard, executorFollowCard } from './cards.ts';
 import { ExecutorHub } from './executors.ts';
 import { AppStore } from './apps.ts';
 import type { AmberConfig } from './config.ts';
@@ -174,7 +174,7 @@ export class AmberBot {
     if (!c) throw new AmberError('not_found', '应用不存在');
     await this.checkSecretEditor(c, caller.unionId);
     if (a === 'sec_form') {
-      if (caller.chatType === 'p2p') return { card: { type: 'raw', data: this.secretCard(c) } };
+      if (caller.chatType === 'p2p') return { card: { type: 'raw', data: this.footed(this.secretCard(c)) } };
       await this.flow.send({ unionId: caller.unionId }, this.secretCard(c));
       return { toast: { type: 'info', content: '已私聊你填写密钥' } };
     }
@@ -190,7 +190,7 @@ export class AmberBot {
     if (!saved.length) throw new AmberError('empty', '没有填写任何值');
     this.store.audit(caller.unionId, 'secret.set', { commandId: c.id, chatId: c.chatId, name: c.name, secrets: saved, via: 'bot' });
     log('secrets set', c.id, saved.join(','));
-    return { card: { type: 'raw', data: this.secretCard(c, `已保存：${saved.join('、')}`) } };
+    return { card: { type: 'raw', data: this.footed(this.secretCard(c, `已保存：${saved.join('、')}`)) } };
   }
 
   /** Email → ids as seen by Amber's app. */
@@ -609,10 +609,13 @@ export class AmberBot {
     return caller.chatType === 'p2p' ? '你的私聊里' : '你在本群';
   }
 
+  /** Every card Amber sends or updates ends with the footer an admin set on the website. */
+  private footed<T>(card: T): T { return withFooter(card, cardFooter(this.store)); }
+
   private async replyCard(messageId: string, inThread: boolean, card: object): Promise<void> {
     await this.client.im.v1.message.reply({
       path: { message_id: messageId },
-      data: { msg_type: 'interactive', content: JSON.stringify(card), reply_in_thread: inThread },
+      data: { msg_type: 'interactive', content: JSON.stringify(this.footed(card)), reply_in_thread: inThread },
     });
   }
 
@@ -692,7 +695,7 @@ export class AmberBot {
     // Reply with a "running" card first, then patch it with the result.
     const sent = await this.client.im.v1.message.reply({
       path: { message_id: msg.message_id },
-      data: { msg_type: 'interactive', content: JSON.stringify(runningCard(cmd.name, caller.openId)), reply_in_thread: inThread },
+      data: { msg_type: 'interactive', content: JSON.stringify(this.footed(runningCard(cmd.name, caller.openId))), reply_in_thread: inThread },
     }) as any;
     const cardMessageId: string | undefined = sent?.data?.message_id;
     const final = await this.execute(cmd, raw, caller);
@@ -737,7 +740,7 @@ export class AmberBot {
       }
       await this.replyCard(messageId, inThread, infoCard('网站登录', '登录链接已私聊发给你，请到和 Amber 的私聊里打开。链接只在私聊里发，不会出现在群里。'));
     } else {
-      const r = await this.client.im.v1.message.reply({ path: { message_id: messageId }, data: { msg_type: 'interactive', content: JSON.stringify(card), reply_in_thread: inThread } }) as any;
+      const r = await this.client.im.v1.message.reply({ path: { message_id: messageId }, data: { msg_type: 'interactive', content: JSON.stringify(this.footed(card)), reply_in_thread: inThread } }) as any;
       sentId = r?.data?.message_id;
     }
     if (sentId) this.store.setWebLoginMessage(h, sentId);
@@ -818,7 +821,7 @@ export class AmberBot {
 
   private async patch(messageId: string, card: object): Promise<void> {
     try {
-      await this.client.im.v1.message.patch({ path: { message_id: messageId }, data: { content: JSON.stringify(card) } });
+      await this.client.im.v1.message.patch({ path: { message_id: messageId }, data: { content: JSON.stringify(this.footed(card)) } });
     } catch (e: any) {
       log('patch failed', messageId, e?.response?.data ? JSON.stringify(e.response.data) : e?.message);
     }
@@ -834,7 +837,7 @@ export class AmberBot {
     if (d.event_id && !this.firstTime(key)) return undefined;
     const caller: Caller = { unionId: op.union_id, openId: op.open_id, chatId, chatType: await this.chatType(chatId), channel: 'bot' };
     log('card action', value.a, value.c ?? '', caller.chatType, chatId);
-    const raw = (card: object) => ({ card: { type: 'raw', data: card } });
+    const raw = (card: object) => ({ card: { type: 'raw', data: this.footed(card) } });
     try {
       if (value.a === 'claim_try') {
         // Trial runs can take longer than the callback window: answer now, patch the card when done.

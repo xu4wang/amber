@@ -898,6 +898,17 @@ export class Store {
 
   touchExecutor(id: string): void { this.db.prepare('UPDATE executors SET last_seen = ? WHERE id = ?').run(Date.now(), id); }
 
+  /** Site-wide settings an admin changes on the website (e.g. the card footer). Missing = default. */
+  getSetting(k: string): string | undefined {
+    const r = this.db.prepare('SELECT v FROM settings WHERE k = ?').get(k) as { v: string } | undefined;
+    return r?.v;
+  }
+
+  setSetting(k: string, v: string | null): void {
+    if (v === null) this.db.prepare('DELETE FROM settings WHERE k = ?').run(k);
+    else this.db.prepare('INSERT INTO settings (k, v) VALUES (?, ?) ON CONFLICT (k) DO UPDATE SET v = excluded.v').run(k, v);
+  }
+
   audit(actorUnionId: string | null, action: string, detail: Record<string, unknown>): void {
     this.db.prepare('INSERT INTO audit (at, actor_union_id, action, detail) VALUES (?,?,?,?)').run(Date.now(), actorUnionId, action, JSON.stringify(detail));
   }
