@@ -82,11 +82,13 @@ payload {
 
 > 例子里的 data-mcp 是企业内部的数仓应用，Amber 把它作为可信服务访问，见下面「已接入的服务：data-mcp」。
 
-`tcpPort` 也可以换成 `"unixSocket": "/path/to/service.sock"`。应用脚本声明 `"services": {"data-mcp": {"calls": 2}}` 后（`calls` = 每次执行最多调用几次，1–20 的整数，随代码一起审核、计入版本哈希），运行时会从标准输入收到：
+`tcpPort` 也可以换成 `"unixSocket": "/path/to/service.sock"`，这是 Amber 连服务用的地址，脚本拿不到。应用脚本声明 `"services": {"data-mcp": {"calls": 2}}` 后（`calls` = 每次执行最多调用几次，1–20 的整数，随代码一起审核、计入版本哈希），运行时会从标准输入收到：
 
 ```json
-{"services": {"data-mcp": {"tokens": ["eyJhbGciOiJFZERTQSIs…", "eyJhbGciOiJFZERTQSIs…"], "tcpPort": 8765}}}
+{"services": {"data-mcp": {"tokens": ["eyJhbGciOiJFZERTQSIs…", "eyJhbGciOiJFZERTQSIs…"], "tcpPort": 53127}}}
 ```
+
+`tcpPort` 是这次运行专用的转发端口，不是服务自己的端口：脚本的请求经它交给 Amber 核对（属于这次运行、声明过这个服务、次数没超），再转给服务。沙箱只允许连这个端口，在 Amber 本机和在执行端上都一样（见[执行端](executor.md)「调用 Amber 上登记的服务」）。
 
 `tokens` 按 `call_index` 排好序。脚本每次请求用一张，例如 `Authorization: Amber <token>`，具体怎么带由服务方决定。每张都有独立的 `jti`，服务方应当**每张只接受一次**；用完就没有了，Amber 不会在运行中补签。旧写法 `"services": ["data-mcp"]` 提交时会被拒绝。
 

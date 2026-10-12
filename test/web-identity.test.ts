@@ -97,6 +97,14 @@ test('identity token: the service receives a token for the person who clicked, t
       'try:',
       '  op.open("http://127.0.0.1:%d/v1/keys" % ' + env.apiPort + ', timeout=3); print("LEAK")',
       'except Exception: print("other port blocked")',
+      // The service itself is reached only through the run's relay port, never at its own address.
+      'try:',
+      '  op.open(urllib.request.Request("http://127.0.0.1:%d/" % ' + port + ', headers={"Authorization":"Amber "+s["tokens"][0]}), timeout=3); print("DIRECT")',
+      'except Exception: print("service port blocked")',
+      // A token is spent once: the relay port refuses it the second time.
+      'try:',
+      '  op.open(urllib.request.Request("http://127.0.0.1:%d/" % s["tcpPort"], headers={"Authorization":"Amber "+s["tokens"][0]}), timeout=5); print("REUSED")',
+      'except urllib.error.HTTPError as e: print("reuse refused %d" % e.code)',
     ].join('\n');
     // Declaring a service and internet access together is refused.
     assert.equal((await env.submit({ chatId: GROUP, chatType: 'group', name: '查', params: [], script: script(code, { services: { demo: { calls: 2 } }, network: true }) })).ok, false);
@@ -113,6 +121,11 @@ test('identity token: the service receives a token for the person who clicked, t
     const out = env.amber.store.getRun(env.amber.store.getRequest(r.body.requestId)!.runId!)!.result ?? '';
     assert.match(out, new RegExp(`user=${env.bob.unionId}`));
     assert.match(out, /other port blocked/);
+    assert.match(out, /service port blocked/);
+    assert.match(out, /reuse refused 403/);
+    // Runs on Amber's own machine go through the same relay as executors (and a service without executor: true still works here).
+    const relays = env.amber.store.listAudit({ prefixes: ['executor.relay'], limit: 50 }).map(x => JSON.parse(x.detail));
+    assert.deepEqual(relays.map(d => [d.executor, d.service]), Array(4).fill(['amber', 'demo']), 'trial run + agent run, two relayed calls each');
     const last = seen.at(-1);
     assert.equal(last.good, true);
     assert.equal(last.payload.sub, env.bob.unionId);

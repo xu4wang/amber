@@ -1,6 +1,6 @@
 import type { Store, CommandRow, ParamDef } from './db.ts';
 import { computeSpecHash } from './db.ts';
-import { runScript, serviceDef, validateScript } from './runner.ts';
+import { serviceDef, validateScript } from './runner.ts';
 import type { Signer } from './identity.ts';
 import { redact, type SecretVault } from './secrets.ts';
 import type { ExecutorHub } from './executors.ts';
@@ -199,7 +199,8 @@ export async function runCommand(store: Store, cmd: CommandRow, rawArgs: Record<
     const started = Date.now();
     const runId = store.startRun({ commandId: cmd.id, specHash: cmd.specHash, channel: opts.trial ? `${caller.channel}.trial` : caller.channel, callerUnionId: caller.unionId, chatId: caller.chatId, args });
     store.audit(caller.unionId, 'run.start', { runId, commandId: cmd.id, name: cmd.name, channel: caller.channel, chatId: caller.chatId });
-    const services: Record<string, { tokens: string[]; tcpPort?: number; unixSocket?: string }> = {};
+    // Only the tokens: the run gets a relay port per service (ExecutorHub, relay-port.ts), never the service's address.
+    const services: Record<string, { tokens: string[] }> = {};
     // Services see the documented channels only (docs/identity.md): a page call is a website call.
     const claim = caller.channel === 'page' ? 'web' : caller.channel;
     const channel = opts.trial ? `${claim}.trial` : claim;
@@ -209,13 +210,13 @@ export async function runCommand(store: Store, cmd: CommandRow, rawArgs: Record<
       // One single-use token per declared call (D41); no refills while the script runs.
       const tokens = Array.from({ length: use.calls }, (_, i) => facts.signer!.issue({ aud: d.audience, sub: caller.unionId, cmd: cmd.id, rev: cmd.specHash, run: runId, chat: caller.chatId, channel, callIndex: i + 1, callCount: use.calls, ttlSec: Math.ceil(script.timeoutMs! / 1000) + 60 }));
       store.audit(caller.unionId, 'identity.issue', { runId, service: name, aud: d.audience, count: use.calls });
-      services[name] = { tokens, ...(d.tcpPort ? { tcpPort: d.tcpPort } : {}), ...(d.unixSocket ? { unixSocket: d.unixSocket } : {}) };
+      services[name] = { tokens };
     }
     const input = { params: { ...args, ...config }, caller: { unionId: caller.unionId, chatId: caller.chatId, channel: caller.channel, city }, runId, ...(Object.keys(services).length ? { services } : {}), ...(secrets ? { secrets } : {}) };
-    // script.env (D50): on the executor that holds the data, never here.
-    const raw = script.env
-      ? (HUB ? await HUB.run(script, { name: cmd.name, params: cmd.params, script: cmd.script, options: cmd.options }, cmd.specHash, input, { allowHosts: getGlobalAllowHosts(store) }) : { ok: false, content: '', error: '执行端服务不可用' })
-      : await runScript(script, input, { egress: localEgress(store) });
+    // script.env (D50): on the executor that holds the data, never here. Without it: on Amber's own machine, as the same kind of job.
+    const raw = !HUB ? { ok: false, content: '', error: '执行端服务不可用' }
+      : script.env ? await HUB.run(script, { name: cmd.name, params: cmd.params, script: cmd.script, options: cmd.options }, cmd.specHash, input, { allowHosts: getGlobalAllowHosts(store) })
+      : await HUB.runLocal(script, input, { egress: localEgress(store) });
     // A secret that ends up in the output or the error message is masked before it is stored or shown.
     const r = secrets ? { ...raw, content: redact(raw.content, secrets), ...(raw.error ? { error: redact(raw.error, secrets) } : {}) } : raw;
     if (secrets) store.audit(caller.unionId, 'secret.use', { runId, commandId: cmd.id, names: Object.keys(secrets) });
