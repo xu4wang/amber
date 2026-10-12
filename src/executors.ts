@@ -97,8 +97,13 @@ export function followDiff(prev: Record<string, ExecutorEnv>, next: Record<strin
 export const envsHash = (name: string, envs: Record<string, ExecutorEnv>) => createHash('sha256').update(JSON.stringify({ name, envs })).digest('hex').slice(0, 16);
 
 interface Waiter { resolve: (jobs: JobEnvelope[]) => void; timer: NodeJS.Timeout }
+/** A run's identity for its service calls (D27/D41). The script holds `tickets` (one per declared call); when a call
+ *  passes forward(), Amber takes the ticket out of its Authorization header and puts in a token signed right then by
+ *  `issue` — so a token's lifetime is one call's, not the run's. */
+export interface CallGrant { tickets: Record<string, string[]>; issue(service: string, callIndex: number): string }
+
 /** executorId null: a job on Amber's own machine (runLocal), never dispatched to an executor. */
-interface PendingJob { executorId: string | null; picked: boolean; resolve: (r: ScriptResult) => void; timer: NodeJS.Timeout;
+interface PendingJob { grant?: CallGrant; usedTickets?: Set<string>; executorId: string | null; picked: boolean; resolve: (r: ScriptResult) => void; timer: NodeJS.Timeout;
   /** Service requests in flight for this job; cancelled when the job ends (D52). */
   inflight?: Set<import('node:http').ClientRequest>;
   /** Relay calls left per declared service (D52): at most the declared count, one per token. */
@@ -279,7 +284,7 @@ export class ExecutorHub {
   }
 
   /** A script's call to a registered service, relayed by the executor running its job (D52).
-   *  Amber does not read the request or the response; the service checks the token itself. */
+   *  Amber does not read the request body or the response; it only swaps the ticket in Authorization for a token signed now (CallGrant). */
   async relay(e: ExecutorRow, raw: string): Promise<{ ok: boolean; status?: number; contentType?: string; body?: string; error?: string; message?: string; sig?: string }> {
     let b: any;
     try { b = JSON.parse(raw); } catch { throw new AmberError('bad_json', '请求不是合法的 JSON'); }
@@ -310,6 +315,16 @@ export class ExecutorHub {
     for (const [k, v] of Object.entries(b?.headers ?? {})) {
       const key = k.toLowerCase();
       if (['authorization', 'content-type', 'accept'].includes(key) && typeof v === 'string' && v.length < 8192 && !/[\r\n]/.test(v)) headers[key] = v;
+    }
+    if (j.grant) {
+      // The ticket must be one of this run's for this service, not used yet; the service gets a fresh token in its place.
+      const auth = headers.authorization ?? '';
+      const used = j.usedTickets ?? (j.usedTickets = new Set());
+      const list = j.grant.tickets[name] ?? [];
+      const i = list.findIndex(t => !used.has(t) && (auth === `Amber ${t}` || auth.endsWith(` ${t}`)));
+      if (i < 0) throw new AmberError('forbidden', '请求没有带这次运行未用过的凭证');
+      used.add(list[i]);
+      headers.authorization = auth.slice(0, auth.length - list[i].length) + j.grant.issue(name, i + 1);
     }
     j.calls[name]--;
     const inflight = j.inflight ?? (j.inflight = new Set());
@@ -361,7 +376,7 @@ export class ExecutorHub {
 
   /** Runs a remote command: never on Amber's machine. */
   /** `allowHosts`: the global network allow list (every environment); the executor adds the environment's own. */
-  async run(script: Script, spec: { name: string; params: unknown; script: unknown; options: unknown }, specHash: string, input: ScriptInput, opts: { allowHosts?: string[] } = {}): Promise<ScriptResult> {
+  async run(script: Script, spec: { name: string; params: unknown; script: unknown; options: unknown }, specHash: string, input: ScriptInput, opts: { allowHosts?: string[]; grant?: CallGrant } = {}): Promise<ScriptResult> {
     const p = parseEnv(script.env ?? '');
     if (!p) return { ok: false, content: '', error: '执行位置（env）写得不对' };
     const e = this.store.approvedExecutor(p.executor);
@@ -377,7 +392,7 @@ export class ExecutorHub {
     this.store.audit(input.caller.unionId, 'executor.dispatch', { runId: input.runId, executor: e.id, name: e.name, env: p.env, jobId });
     return await new Promise<ScriptResult>(resolve => {
       const calls = Object.fromEntries(Object.entries(script.services ?? {}).map(([n, u]) => [n, u.calls]));
-      const job: PendingJob = { executorId: e.id, picked: false, resolve, timer: setTimeout(() => {}, 0), calls };
+      const job: PendingJob = { executorId: e.id, picked: false, resolve, timer: setTimeout(() => {}, 0), calls, ...(opts.grant ? { grant: opts.grant } : {}) };
       const fail = (msg: string) => this.finish(jobId, { ok: false, content: '', error: msg });
       job.timer = setTimeout(() => {
         if (!job.picked) return fail(`执行端 ${p.executor} 没有取走任务（可能刚刚离线），这次没有执行`);
@@ -393,14 +408,14 @@ export class ExecutorHub {
   /** Runs a command on Amber's own machine (no script.env) as a job like any other: the script's service calls
    *  reach the service only through its relay ports and forward(), within the declared call counts.
    *  `egress`: Amber's own network allow list (runner.ts). */
-  async runLocal(script: Script, input: ScriptInput, opts: { egress?: string[] } = {}): Promise<ScriptResult> {
+  async runLocal(script: Script, input: ScriptInput, opts: { egress?: string[]; grant?: CallGrant } = {}): Promise<ScriptResult> {
     if (script.env) return { ok: false, content: '', error: '这个应用要在执行端上运行' };
     const jobId = randomUUID();
     const calls = Object.fromEntries(Object.entries(script.services ?? {}).map(([n, u]) => [n, u.calls]));
     const done = new Promise<ScriptResult>(resolve => {
       // The sandbox kills the script at its own timeout; this only covers a run that never comes back.
       const timer = setTimeout(() => this.finish(jobId, { ok: false, content: '', error: '运行没有在时限内结束' }), (script.timeoutMs ?? 60000) + RESULT_GRACE_MS);
-      this.jobs.set(jobId, { executorId: null, picked: true, resolve, timer, calls });
+      this.jobs.set(jobId, { executorId: null, picked: true, resolve, timer, calls, ...(opts.grant ? { grant: opts.grant } : {}) });
     });
     let relays: { ports: number[]; services?: ScriptInput['services']; close(): void } = { ports: [], close() {} };
     try {
@@ -409,7 +424,7 @@ export class ExecutorHub {
         if (!r.ok) return { status: 502, contentType: 'application/json', body: Buffer.from(JSON.stringify({ error: r.error ?? 'relay_failed', message: r.message ?? '' })) };
         return { status: r.status ?? 502, contentType: r.contentType ?? '', body: Buffer.from(r.body ?? '', 'base64') };
       });
-      runScript(script, relays.services ? { ...input, services: relays.services } : input, { ...opts, localPorts: relays.ports })
+      runScript(script, relays.services ? { ...input, services: relays.services } : input, { egress: opts.egress, localPorts: relays.ports })
         .then(r => this.finish(jobId, r), err => this.finish(jobId, { ok: false, content: '', error: `运行失败：${(err as Error).message}` }));
     } catch (err) {
       this.finish(jobId, { ok: false, content: '', error: `运行失败：${(err as Error).message}` });

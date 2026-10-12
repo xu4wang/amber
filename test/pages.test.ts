@@ -4,7 +4,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
-import { makeEnv, activate, script, urlButton, button, GROUP } from './env.ts';
+import { makeEnv, activate, script, urlButton, button, GROUP, claimsService, callForClaims } from './env.ts';
 import { FakeFeishu } from './fake-feishu.ts';
 import { checkFiles, appsOf, outputBlocks } from '../src/pages.ts';
 import { markdownWithCharts } from '../src/cards.ts';
@@ -30,7 +30,8 @@ test('pages: file lists, amber.json and output blocks', () => {
 });
 
 test('pages: publish with confirmation, access, calls as the viewer, signed files on their own origin', async () => {
-  const env = await makeEnv({ services: { demo: { audience: 'demo', tcpPort: 9 } } });
+  const svc = await claimsService();
+  const env = await makeEnv({ services: { demo: { audience: 'demo', tcpPort: svc.port } } });
   const { fake, alice, bob, carol } = env;   // bob owns the page; carol and alice are other members
   fake.chats.get(GROUP)!.members.add(carol.unionId);
   const web = `http://127.0.0.1:${env.webPort}`, pages = `http://localhost:${env.webPort}`;
@@ -44,7 +45,7 @@ test('pages: publish with confirmation, access, calls as the viewer, signed file
     secretVault()!.set({ chatId: GROUP, name: '带密钥' }, 'API_TOKEN', 'bob-token', bob.unionId);
     await activate(env, { chatId: GROUP, chatType: 'group', name: '带密钥', params: [], script: script('print("用了密钥")', { secrets: ['API_TOKEN'] }) }, bob);
     // Shows the channel in its identity token: services only know the documented ones, so a page call says "web".
-    const claim = 'import json,sys,base64\ninp=json.load(sys.stdin)\np=inp["services"]["demo"]["tokens"][0].split(".")[1]\nprint("claim=" + json.loads(base64.urlsafe_b64decode(p + "==="))["channel"])';
+    const claim = callForClaims('demo') + 'print("claim=" + c["channel"])';
     await activate(env, { chatId: GROUP, chatType: 'group', name: '查服务', params: [], script: script(claim, { services: { demo: { calls: 1 } } }) }, bob);
     await activate(env, { chatId: GROUP, chatType: 'group', name: '没绑定', params: [], script: script('print(1)') }, bob);
 
@@ -215,7 +216,7 @@ test('pages: publish with confirmation, access, calls as the viewer, signed file
     assert.ok(existsSync(join(env.cfg.dataDir, 'pages')), 'the pages folder');
     assert.ok(!existsSync(join(env.cfg.dataDir, 'pages', id)), 'its files are gone');
     assert.ok(env.amber.store.listAudit({ prefixes: ['page.'], limit: 50 }).some(a => a.action === 'page.call'));
-  } finally { await env.close(); }
+  } finally { await env.close(); svc.close(); }
 });
 
 test('pages: refuse to serve pages from Amber\'s own host', async () => {

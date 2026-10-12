@@ -9,7 +9,7 @@ import { homedir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { generateKeyPairSync } from 'node:crypto';
-import { makeEnv, activate, button, script, GROUP } from './env.ts';
+import { makeEnv, activate, button, script, GROUP, claimsService } from './env.ts';
 import { FakeFeishu } from './fake-feishu.ts';
 import { sealJob, openJob, newExecutorKeys, keyFromPem, pubB64, signRequest, specHashOf, fingerprint, showFingerprint } from '../src/exec-proto.ts';
 import { computeSpecHash } from '../src/db.ts';
@@ -533,6 +533,7 @@ def q(i, tok):
 print("call1", q(1, svc["tokens"][0]))
 print("call2", q(2, svc["tokens"][1]))
 print("call3", q(3, "spare"))
+print("ticket", svc["tokens"][0].startswith("amber-ticket-"))
 print("ports", svc["tcpPort"] != ${svcPort})
 try:
     urllib.request.urlopen("http://127.0.0.1:${svcPort}/health", timeout=3); print("direct reached")
@@ -546,12 +547,16 @@ except Exception as e: print("direct", type(e).__name__)
     assert.match(t, /call1 200 \d+/);
     assert.match(t, /call2 200 \d+/);
     assert.match(t, /call3 http 403/, 'no more calls than declared');
+    assert.match(t, /ticket True/, 'the script holds tickets, not signed tokens');
     assert.match(t, /ports True/, 'the script gets a local relay port, not the service address');
     assert.doesNotMatch(t, /direct reached/, 'the service itself is not reachable from the sandbox');
     // The service saw exactly the two declared calls, with Amber's tokens and the script's body, unchanged.
     const calls = seen.slice(before);
     assert.equal(calls.length, 2);
     for (const c of calls) { assert.match(c.auth!, /^Amber eyJ/); assert.equal(c.path, '/amber/query'); }
+    // Each token is signed as its call passes Amber's relay: numbered by the ticket, valid for one call's time, not the run's.
+    const claims = calls.map(c => JSON.parse(Buffer.from(c.auth!.split('.')[1], 'base64url').toString()));
+    assert.deepEqual(claims.map(p => [p.call_index, p.call_count, p.exp - p.iat, p.aud]), [[1, 2, 120, 'demo'], [2, 2, 120, 'demo']]);
     assert.match(calls[0].body, /select 1/);
     // The relay is only for the executor a running job went to.
     const k = newExecutorKeys();
@@ -775,4 +780,24 @@ test('export-botmux-env --out: writes the file only when the definition changed'
     assert.match((await run()).stdout, /updated/);
     assert.ok(JSON.parse(readFileSync(out, 'utf8')).access.readOnly.includes('/opt/x'));
   } finally { rmSync(home, { recursive: true, force: true }); }
+});
+
+test('relay: a ticket is swapped for a token signed at that moment, once; unknown, reused or another service\'s tickets are refused', async () => {
+  const svc = await claimsService();
+  const env = await makeEnv({ services: { demo: { audience: 'demo', tcpPort: svc.port }, other: { audience: 'other', tcpPort: svc.port } } });
+  try {
+    const hub: any = env.amber.hub;
+    const issued: [string, number][] = [];
+    const issue = (s: string, i: number) => { issued.push([s, i]); return `h.${Buffer.from(JSON.stringify({ s, i })).toString('base64url')}.sig`; };
+    hub.jobs.set('j-grant', { executorId: null, picked: true, resolve() {}, timer: setTimeout(() => {}, 0), calls: { demo: 5, other: 5 }, grant: { tickets: { demo: ['tA', 'tB'], other: ['tC'] }, issue } });
+    const f = (service: string, auth: string) => hub.forward({ jobId: 'j-grant', service, method: 'GET', path: '/', headers: { authorization: auth }, body: '' }, null);
+    const r = await f('demo', 'Amber tB');
+    assert.equal(r.ok, true);
+    assert.deepEqual(JSON.parse(Buffer.from(r.body, 'base64').toString()).claims, { s: 'demo', i: 2 }, 'the service gets the token for that ticket, not the ticket');
+    await assert.rejects(f('demo', 'Amber tB'), /未用过的凭证/, 'each ticket once');
+    await assert.rejects(f('demo', 'Amber tC'), /未用过的凭证/, 'another service\'s ticket');
+    await assert.rejects(f('demo', 'Amber guessed'), /未用过的凭证/);
+    assert.deepEqual(issued, [['demo', 2]], 'a token is signed only for an accepted ticket');
+    hub.finish('j-grant', { ok: true, content: '' });
+  } finally { await env.close(); svc.close(); }
 });

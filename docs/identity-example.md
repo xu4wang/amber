@@ -10,7 +10,7 @@
 |---|---|---|
 | 是什么 | 一个**常驻的后端程序**，例如 Data MCP 或者你们自己的查询服务 | 固化应用里的那段 Python |
 | 谁写、谁运行 | 服务方写，由运维部署在 Amber 所在的机器上，一直运行 | agent 写，经认领和审核，每次执行时由 Amber 在沙盒里运行一次 |
-| 拿着什么 | 数据库账号、权限规则等真正的访问能力 | 只有 Amber 为本次执行签发的一张凭证，5 分钟内有效，只能用一次 |
+| 拿着什么 | 数据库账号、权限规则等真正的访问能力 | 只有 Amber 在这次调用经过时签发的一张凭证，2 分钟内有效，只能用一次 |
 | 负责什么 | 验证凭证，按凭证里的执行人只返回他有权限的数据 | 带着凭证调用服务，把结果整理成 Markdown 输出 |
 
 这样分工的好处：脚本永远碰不到数据库账号，也冒充不了别人。脚本能拿到什么数据，完全由服务按「真正点按钮的那个人」来判断。
@@ -69,7 +69,7 @@ DEMO_PORT=18790 DEMO_AUDIENCE=demo-profile ~/demo-service-venv/bin/python servic
 - 服务**只监听 127.0.0.1**，和 Amber 在同一台机器上。
 - 端口要选一个没被占用的。先用 `lsof -nP -iTCP:<端口> -sTCP:LISTEN` 检查。如果端口上其实是别的程序，凭证就会被发给那个程序。
 - 正式使用时，用 launchd 之类的工具让服务常驻，写法参照 [安装与部署](install.md#常驻运行launchd) 里 Amber 自己的 plist。
-- 服务**运行时不访问** Amber 的 7341 端口，只认 `amber-keys.json` 里的公钥：Amber 停掉时，本机任何进程都能占用这个端口冒充 Amber 发布公钥。Amber 换密钥时，先把新旧两把都写进文件、重启服务，等旧凭证全部过期（最长 5 分钟）后再删掉旧的。
+- 服务**运行时不访问** Amber 的 7341 端口，只认 `amber-keys.json` 里的公钥：Amber 停掉时，本机任何进程都能占用这个端口冒充 Amber 发布公钥。Amber 换密钥时，先把新旧两把都写进文件、重启服务，等旧凭证全部过期（最长 2 分钟）后再删掉旧的。
 - 示例把用过的 `jti` 放在内存里，服务重启后就忘了；正式服务要持久化保存到 `exp` 之后。
 
 ## 3. 在 Amber 里登记服务
@@ -96,7 +96,7 @@ DEMO_PORT=18790 DEMO_AUDIENCE=demo-profile ~/demo-service-venv/bin/python servic
 import json, sys, urllib.request
 
 inp = json.load(sys.stdin)
-svc = inp["services"]["demo-profile"]          # Amber 为本次执行签发的凭证和服务地址
+svc = inp["services"]["demo-profile"]          # 这次执行的调用票据和转发端口
 req = urllib.request.Request(
     f"http://127.0.0.1:{svc['tcpPort']}/sales",
     headers={"Authorization": "Amber " + svc["tokens"][0]},   # 每次请求用一张，每张只能用一次

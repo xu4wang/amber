@@ -2,7 +2,7 @@
 // machine, on each executor, and per person. Over a limit a run is refused at once.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { makeEnv, activate, script, urlButton, GROUP } from './env.ts';
+import { makeEnv, activate, script, urlButton, GROUP, claimsService, callForClaims } from './env.ts';
 import { checkLimits, effectiveTimeoutMs, RunSlots, DEFAULT_LIMITS, timeoutLabel, getLimits } from '../src/limits.ts';
 
 async function login(env: any, u: any): Promise<string> {
@@ -46,7 +46,8 @@ test('limits: checked, applied to the run time, counted per place and per person
 
 test('limits: set on the website by admins; enforced on submit and on runs', async () => {
   process.env.AMBER_WEB_RUN_WAIT_MS = '1500';
-  const env = await makeEnv({ services: { demo: { audience: 'demo', tcpPort: 1 } } });
+  const svc = await claimsService();
+  const env = await makeEnv({ services: { demo: { audience: 'demo', tcpPort: svc.port } } });
   const { alice, bob } = env;   // alice is an admin
   const base = `http://127.0.0.1:${env.webPort}`;
   const post = (cookie: string, path: string, body: unknown) => fetch(base + path, { method: 'POST', headers: { cookie, origin: base, 'content-type': 'application/json' }, body: JSON.stringify(body) }).then(async x => ({ status: x.status, body: await x.json() }));
@@ -67,11 +68,11 @@ test('limits: set on the website by admins; enforced on submit and on runs', asy
     assert.equal(over.ok, false);
     assert.match(JSON.stringify(over), /最多 300000/);
 
-    // Tokens last the run's time limit plus a minute.
-    const ttl = 'import json,sys,base64\nt=json.load(sys.stdin)["services"]["demo"]["tokens"][0].split(".")[1]\np=json.loads(base64.urlsafe_b64decode(t+"=="*2))\nprint("ttl=%d" % (p["exp"]-p["iat"]))';
+    // A token's lifetime is one call's, signed when the call is made — not the run's time limit (3 minutes here).
+    const ttl = callForClaims('demo') + 'print("ttl=%d" % (c["exp"]-c["iat"]))';
     const tid = await activate(env, { chatId: GROUP, chatType: 'group', name: '凭证', params: [], script: script(ttl, { timeoutMs: 180_000, services: { demo: { calls: 1 } } }) }, bob);
     const tr = await post(bobCookie, '/web/api/run', { scope: 'group:' + GROUP, commandId: tid, args: {} });
-    assert.match(tr.body.markdown, /ttl=240/);
+    assert.match(tr.body.markdown, /ttl=120\b/);
 
     // The default applies to an app that doesn't ask: 5 s, so a 7 s script is cut short. The website hands
     // the long run over as a job to poll; meanwhile bob (1 at a time) cannot start another.
@@ -94,7 +95,7 @@ test('limits: set on the website by admins; enforced on submit and on runs', asy
     assert.equal((await fetch(`${base}/web/api/run-jobs/${first.body.job}`, { headers: { cookie: bobCookie } })).status, 404, 'handed over once, then gone');
     // Slot given back: bob can run again.
     assert.equal((await post(bobCookie, '/web/api/run', { scope: 'group:' + GROUP, commandId: tid, args: {} })).body.ok, true);
-  } finally { delete process.env.AMBER_WEB_RUN_WAIT_MS; await env.close(); }
+  } finally { delete process.env.AMBER_WEB_RUN_WAIT_MS; await env.close(); svc.close(); }
 });
 
 test('limits: an executor runs for the time Amber sends; older Amber (no time sent) keeps the app\'s own', async () => {
