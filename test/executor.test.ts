@@ -797,6 +797,8 @@ test('relay: a ticket is swapped for a token signed at that moment, once; unknow
     await assert.rejects(f('demo', 'Amber tB'), /未用过的凭证/, 'each ticket once');
     await assert.rejects(f('demo', 'Amber tC'), /未用过的凭证/, 'another service\'s ticket');
     await assert.rejects(f('demo', 'Amber guessed'), /未用过的凭证/);
+    await assert.rejects(f('demo', 'Bearer Amber tA'), /未用过的凭证/, 'only exactly "Amber <ticket>"');
+    await assert.rejects(f('demo', 'Bearer tA'), /未用过的凭证/);
     assert.deepEqual(issued, [['demo', 2]], 'a token is signed only for an accepted ticket');
     hub.finish('j-grant', { ok: true, content: '' });
   } finally { await env.close(); svc.close(); }

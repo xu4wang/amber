@@ -321,10 +321,11 @@ export class ExecutorHub {
       const auth = headers.authorization ?? '';
       const used = j.usedTickets ?? (j.usedTickets = new Set());
       const list = j.grant.tickets[name] ?? [];
-      const i = list.findIndex(t => !used.has(t) && (auth === `Amber ${t}` || auth.endsWith(` ${t}`)));
+      // Exactly `Amber <ticket>`: nothing else is signed for, and the service always gets `Amber <token>`.
+      const i = list.findIndex(t => !used.has(t) && auth === `Amber ${t}`);
       if (i < 0) throw new AmberError('forbidden', '请求没有带这次运行未用过的凭证');
       used.add(list[i]);
-      headers.authorization = auth.slice(0, auth.length - list[i].length) + j.grant.issue(name, i + 1);
+      headers.authorization = `Amber ${j.grant.issue(name, i + 1)}`;
     }
     j.calls[name]--;
     const inflight = j.inflight ?? (j.inflight = new Set());
