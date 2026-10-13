@@ -283,9 +283,25 @@ export function startWeb(port: number, store: Store, deps: WebDeps): import('nod
           const prefixes = AUDIT_CATEGORIES[cat]?.prefixes;
           const rows = store.listAudit({ before: Number(url.searchParams.get('before')) || undefined, limit: 50, prefixes, q: (url.searchParams.get('q') ?? '').trim().slice(0, 100) || undefined, actor: url.searchParams.get('actor') || undefined });
           const names = new Map<string, string>();
-          for (const u of new Set(rows.map(r => r.actor).filter(Boolean) as string[])) names.set(u, (await deps.nameOf(u).catch(() => undefined)) ?? u);
+          const nameOf = async (u: string) => { if (!names.has(u)) names.set(u, (await deps.nameOf(u).catch(() => undefined)) ?? u); return names.get(u)!; };
+          const chats = new Map<string, string | undefined>();
+          const chatOf = async (c: string) => { if (!chats.has(c)) chats.set(c, await deps.chatName(c).catch(() => undefined)); return chats.get(c); };
+          for (const u of new Set(rows.map(r => r.actor).filter(Boolean) as string[])) await nameOf(u);
+          // Readable names for the chats and people a row refers to (value -> name), shown next to the ids.
+          const refsOf = async (detail: string): Promise<Record<string, string> | undefined> => {
+            let d: Record<string, unknown>;
+            try { d = JSON.parse(detail); } catch { return undefined; }
+            const refs: Record<string, string> = {};
+            if (typeof d.appOwner === 'string') refs[d.appOwner] = await nameOf(d.appOwner);
+            if (typeof d.appChatId === 'string') {
+              const n = d.appScope === 'p2p' ? `${typeof d.appOwner === 'string' ? refs[d.appOwner] : '创建人'} 的私聊` : await chatOf(d.appChatId);
+              if (n) refs[d.appChatId] = n;
+            }
+            if (typeof d.chatId === 'string' && !refs[d.chatId]) { const n = await chatOf(d.chatId); if (n) refs[d.chatId] = n; }
+            return Object.keys(refs).length ? refs : undefined;
+          };
           return json(res, 200, { ok: true, categories: Object.entries(AUDIT_CATEGORIES).map(([k, v]) => ({ key: k, label: v.label })),
-            rows: rows.map(r => ({ ...r, actorName: r.actor ? names.get(r.actor) : null, detail: r.detail.length > 2000 ? r.detail.slice(0, 2000) + '…' : r.detail })) });
+            rows: await Promise.all(rows.map(async r => ({ ...r, actorName: r.actor ? names.get(r.actor) : null, refs: await refsOf(r.detail), detail: r.detail.length > 2000 ? r.detail.slice(0, 2000) + '…' : r.detail }))) });
         }
         if (req.method === 'GET' && url.pathname === '/web/api/settings') {
           // Site-wide settings: admins only.

@@ -199,7 +199,9 @@ export async function runCommand(store: Store, cmd: CommandRow, rawArgs: Record<
     script = { ...script, timeoutMs: effectiveTimeoutMs(script.timeoutMs, limits) };
     const started = Date.now();
     const runId = store.startRun({ commandId: cmd.id, specHash: cmd.specHash, channel: opts.trial ? `${caller.channel}.trial` : caller.channel, callerUnionId: caller.unionId, chatId: caller.chatId, args });
-    store.audit(caller.unionId, 'run.start', { runId, commandId: cmd.id, name: cmd.name, channel: caller.channel, chatId: caller.chatId });
+    // chatId: where it was run from. app*: where the app itself belongs (a group, or its owner's private chat), as of this run.
+    store.audit(caller.unionId, 'run.start', { runId, commandId: cmd.id, name: cmd.name, channel: caller.channel, chatId: caller.chatId,
+      appScope: cmd.scopeType, appChatId: cmd.chatId, ...(cmd.scopeType === 'p2p' ? { appOwner: cmd.ownerUnionId } : {}), ...(cmd.global ? { appGlobal: true } : {}) });
     // The script gets one single-use ticket per declared call (D41), never a signed token and never the service's
     // address: its call goes to the run's relay port (ExecutorHub, relay-port.ts), and Amber signs the token for the
     // ticket right then, valid SERVICE_TOKEN_TTL_SEC — however long the run itself may take.

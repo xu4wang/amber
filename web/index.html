@@ -824,9 +824,12 @@ async function auditPane(more = false) {
   AUDIT.categories = r.categories;
   AUDIT.rows = AUDIT.rows.concat(r.rows);
   AUDIT.done = r.rows.length < 50;
-  const detail = d => { try { const o = JSON.parse(d); return Object.entries(o).map(([k, v]) => `<span class="kv-k">${esc(k)}</span> ${esc(typeof v === 'string' ? v : JSON.stringify(v))}`).join('　'); } catch { return esc(d); } };
+  // refs: names for the chats and people in a row (app's group or private chat, its owner), shown with the id.
+  const AUDIT_KEY = { appScope: '应用归属', appChatId: '应用所在', appOwner: '应用创建人', appGlobal: '全局应用' };
+  const val = (k, v, refs) => k === 'appScope' ? ({ group: '群聊', p2p: '私聊' }[v] || v) : typeof v === 'string' && refs?.[v] ? `${refs[v]}（${v}）` : typeof v === 'string' ? v : JSON.stringify(v);
+  const detail = (d, refs) => { try { const o = JSON.parse(d); return Object.entries(o).map(([k, v]) => `<span class="kv-k">${esc(AUDIT_KEY[k] || k)}</span> ${esc(val(k, v, refs))}`).join('　'); } catch { return esc(d); } };
   const rows = AUDIT.rows.map(x => `<tr><td class="nowrap">${fmtTime(x.at)}</td><td class="nowrap">${x.actor ? esc(x.actorName || x.actor) : '<span class="note">系统</span>'}</td>
-    <td class="nowrap">${esc(AUDIT_LABEL[x.action] || x.action)}<br><span class="note mono">${esc(x.action)}</span></td><td class="audit-detail">${detail(x.detail)}</td></tr>`).join('');
+    <td class="nowrap">${esc(AUDIT_LABEL[x.action] || x.action)}<br><span class="note mono">${esc(x.action)}</span></td><td class="audit-detail">${detail(x.detail, x.refs)}</td></tr>`).join('');
   document.getElementById('pane').innerHTML = `${backBtn}
     <div class="pane-head"><h1>审计日志</h1></div>
     <div class="where">系统管理 · 管理员</div>

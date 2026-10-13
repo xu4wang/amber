@@ -5,7 +5,7 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Store } from '../src/db.ts';
-import { makeEnv, urlButton } from './env.ts';
+import { makeEnv, urlButton, activate, script, GROUP } from './env.ts';
 
 test('audit: listing filters by prefix, text and person; pages by id; wildcards in the query are literal', () => {
   const st = new Store(mkdtempSync(join(tmpdir(), 'amber-audit-')));
@@ -44,5 +44,30 @@ test('audit: the website shows it to admins only, with names and categories', as
     assert.equal(q.rows.length, 1);
     const logins = await (await fetch(base + '/web/api/audit?cat=login', { headers: { cookie: a } })).json();
     assert.ok(logins.rows.length >= 2 && logins.rows.every((r: any) => r.action.startsWith('web.login') || r.action.startsWith('web.logout')));
+  } finally { await env.close(); }
+});
+
+test('audit: a run records which group or private chat the app belongs to, shown with names', async () => {
+  const env = await makeEnv();
+  const base = `http://127.0.0.1:${env.webPort}`;
+  try {
+    await env.dm(env.alice, '登录');
+    const a = (await fetch(urlButton(env.fake.sent.at(-1)!.card)!, { redirect: 'manual' })).headers.get('set-cookie')!.split(';')[0];
+    await activate(env, { chatId: GROUP, chatType: 'group', name: '群里的', params: [], script: script('print("g")') }, env.bob);
+    const dm = 'oc_dmbob';
+    env.fake.chats.set(dm, { mode: 'p2p', name: '', members: new Set(['BOT', env.bob.unionId]) });
+    await activate(env, { chatId: dm, chatType: 'p2p', claimer: env.bob.email, name: '私聊的', params: [], script: script('print("p")') }, env.bob);
+    await env.say(env.bob, GROUP, '群里的');
+    await env.dm(env.bob, '私聊的');
+    const starts = async () => (await (await fetch(base + '/web/api/audit?cat=run', { headers: { cookie: a } })).json()).rows.filter((r: any) => r.action === 'run.start');
+    let rows: any[] = [];
+    for (let i = 0; i < 40 && rows.length < 2; i++) { rows = await starts(); if (rows.length < 2) await new Promise(ok => setTimeout(ok, 250)); }
+    const byName = Object.fromEntries(rows.map((r: any) => [JSON.parse(r.detail).name, r]));
+    const g = JSON.parse(byName['群里的'].detail), p = JSON.parse(byName['私聊的'].detail);
+    assert.deepEqual([g.appScope, g.appChatId, g.appOwner], ['group', GROUP, undefined]);
+    assert.equal(byName['群里的'].refs[GROUP], env.fake.chats.get(GROUP)!.name, 'the group\'s name');
+    assert.deepEqual([p.appScope, p.appChatId, p.appOwner], ['p2p', dm, env.bob.unionId]);
+    assert.equal(byName['私聊的'].refs[dm], 'bob 的私聊');
+    assert.equal(byName['私聊的'].refs[env.bob.unionId], 'bob');
   } finally { await env.close(); }
 });
