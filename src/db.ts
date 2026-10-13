@@ -992,10 +992,15 @@ export class Store {
     return (this.db.prepare(sql).all(...args, Math.min(Math.max(o.limit ?? 50, 1), 200)) as any[]).map(r => ({ id: Number(r.id), at: Number(r.at), actor: r.actor ?? null, action: String(r.action), detail: String(r.detail) }));
   }
 
-  /** The run an executor job belonged to, from its dispatch record (relay records before they carried runId). */
-  runIdOfJob(jobId: string): string | undefined {
-    const r = this.db.prepare(`SELECT json_extract(detail, '$.runId') AS run FROM audit WHERE action = 'executor.dispatch' AND json_extract(detail, '$.jobId') = ? LIMIT 1`).get(jobId) as { run?: string } | undefined;
-    return r?.run ?? undefined;
+  /** The runs executor jobs belonged to, from their dispatch records (relay records before they carried runId). One query for a page. */
+  runIdsOfJobs(jobIds: string[]): Map<string, string> {
+    const out = new Map<string, string>();
+    const ids = [...new Set(jobIds)].slice(0, 200);
+    if (!ids.length) return out;
+    const rows = this.db.prepare(`SELECT json_extract(detail, '$.jobId') AS job, json_extract(detail, '$.runId') AS run FROM audit
+      WHERE action = 'executor.dispatch' AND json_extract(detail, '$.jobId') IN (${ids.map(() => '?').join(',')})`).all(...ids) as { job?: string; run?: string }[];
+    for (const r of rows) if (r.job && r.run) out.set(r.job, r.run);
+    return out;
   }
 
   audit(actorUnionId: string | null, action: string, detail: Record<string, unknown>): void {

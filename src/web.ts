@@ -305,13 +305,16 @@ export function startWeb(port: number, store: Store, deps: WebDeps): import('nod
           };
           // The app a row is about and where it belongs, for every row of a run (by runId, or jobId for relays) or about
           // an app (commandId): the app as it is now. The run's own start record keeps where it belonged at the time.
+          // Relay records from before they carried runId: their jobs resolved in one query for the page.
+          const legacyJobs = rows.flatMap(r => { try { const d = JSON.parse(r.detail); return typeof d.jobId === 'string' && !d.runId ? [d.jobId] : []; } catch { return []; } });
+          const jobRuns = store.runIdsOfJobs(legacyJobs);
           const commandOfRow = (detail: string): string | undefined => {
             let d: Record<string, unknown>;
             try { d = JSON.parse(detail); } catch { return undefined; }
             const s = (v: unknown) => typeof v === 'string' && v ? v : undefined;
             const direct = s(d.commandId) ?? s(d.command);
             if (direct) return direct;
-            const runId = s(d.runId) ?? (s(d.jobId) ? store.runIdOfJob(d.jobId as string) : undefined);
+            const runId = s(d.runId) ?? (s(d.jobId) ? jobRuns.get(d.jobId as string) : undefined);
             return runId ? store.getRun(runId)?.commandId : undefined;
           };
           const apps = new Map<string, Promise<{ name: string; where: string } | undefined>>();
