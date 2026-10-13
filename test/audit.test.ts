@@ -67,7 +67,7 @@ test('audit: a run records which group or private chat the app belongs to, shown
     assert.deepEqual([g.appScope, g.appChatId, g.appOwner], ['group', GROUP, undefined]);
     assert.equal(byName['群里的'].refs[GROUP], env.fake.chats.get(GROUP)!.name, 'the group\'s name');
     assert.deepEqual([p.appScope, p.appChatId, p.appOwner], ['p2p', dm, env.bob.unionId]);
-    assert.equal(byName['私聊的'].refs[dm], 'bob 的私聊');
+    assert.equal(byName['私聊的'].refs[dm], '私聊（创建人 bob）');
     assert.equal(byName['私聊的'].refs[env.bob.unionId], 'bob');
   } finally { await env.close(); }
 });

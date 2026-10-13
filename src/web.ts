@@ -282,11 +282,13 @@ export function startWeb(port: number, store: Store, deps: WebDeps): import('nod
           const cat = url.searchParams.get('cat') ?? '';
           const prefixes = AUDIT_CATEGORIES[cat]?.prefixes;
           const rows = store.listAudit({ before: Number(url.searchParams.get('before')) || undefined, limit: 50, prefixes, q: (url.searchParams.get('q') ?? '').trim().slice(0, 100) || undefined, actor: url.searchParams.get('actor') || undefined });
-          const names = new Map<string, string>();
-          const nameOf = async (u: string) => { if (!names.has(u)) names.set(u, (await deps.nameOf(u).catch(() => undefined)) ?? u); return names.get(u)!; };
-          const chats = new Map<string, string | undefined>();
-          const chatOf = async (c: string) => { if (!chats.has(c)) chats.set(c, await deps.chatName(c).catch(() => undefined)); return chats.get(c); };
-          for (const u of new Set(rows.map(r => r.actor).filter(Boolean) as string[])) await nameOf(u);
+          // One lookup per person or chat on the page: rows resolve concurrently, so the promises are cached.
+          const names = new Map<string, Promise<string>>();
+          const nameOf = (u: string) => { if (!names.has(u)) names.set(u, deps.nameOf(u).catch(() => undefined).then(n => n ?? u)); return names.get(u)!; };
+          const chats = new Map<string, Promise<string | undefined>>();
+          const chatOf = (c: string) => { if (!chats.has(c)) chats.set(c, deps.chatName(c).catch(() => undefined)); return chats.get(c)!; };
+          const actorNames = new Map<string, string>();
+          for (const u of new Set(rows.map(r => r.actor).filter(Boolean) as string[])) actorNames.set(u, await nameOf(u));
           // Readable names for the chats and people a row refers to (value -> name), shown next to the ids.
           const refsOf = async (detail: string): Promise<Record<string, string> | undefined> => {
             let d: Record<string, unknown>;
@@ -294,14 +296,15 @@ export function startWeb(port: number, store: Store, deps: WebDeps): import('nod
             const refs: Record<string, string> = {};
             if (typeof d.appOwner === 'string') refs[d.appOwner] = await nameOf(d.appOwner);
             if (typeof d.appChatId === 'string') {
-              const n = d.appScope === 'p2p' ? `${typeof d.appOwner === 'string' ? refs[d.appOwner] : '创建人'} 的私聊` : await chatOf(d.appChatId);
+              // A private-chat app belongs to its owner (it is listed by owner, not by chat): say whose, not whose chat this is.
+              const n = d.appScope === 'p2p' ? `私聊（创建人 ${typeof d.appOwner === 'string' ? refs[d.appOwner] : '未知'}）` : await chatOf(d.appChatId);
               if (n) refs[d.appChatId] = n;
             }
             if (typeof d.chatId === 'string' && !refs[d.chatId]) { const n = await chatOf(d.chatId); if (n) refs[d.chatId] = n; }
             return Object.keys(refs).length ? refs : undefined;
           };
           return json(res, 200, { ok: true, categories: Object.entries(AUDIT_CATEGORIES).map(([k, v]) => ({ key: k, label: v.label })),
-            rows: await Promise.all(rows.map(async r => ({ ...r, actorName: r.actor ? names.get(r.actor) : null, refs: await refsOf(r.detail), detail: r.detail.length > 2000 ? r.detail.slice(0, 2000) + '…' : r.detail }))) });
+            rows: await Promise.all(rows.map(async r => ({ ...r, actorName: r.actor ? actorNames.get(r.actor) : null, refs: await refsOf(r.detail), detail: r.detail.length > 2000 ? r.detail.slice(0, 2000) + '…' : r.detail }))) });
         }
         if (req.method === 'GET' && url.pathname === '/web/api/settings') {
           // Site-wide settings: admins only.
