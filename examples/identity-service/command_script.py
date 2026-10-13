@@ -3,7 +3,7 @@
 import json, sys, urllib.request
 
 inp = json.load(sys.stdin)
-svc = inp["services"]["demo-profile"]          # Amber 为本次执行签发的凭证和服务地址
+svc = inp["services"]["demo-profile"]          # 这次执行的调用票据和转发端口
 req = urllib.request.Request(
     f"http://127.0.0.1:{svc['tcpPort']}/sales",
     headers={"Authorization": "Amber " + svc["tokens"][0]},   # 每次请求用一张，每张只能用一次

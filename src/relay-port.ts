@@ -31,7 +31,7 @@ export async function startRelayPorts(services: Record<string, { tokens: string[
         req.on('end', async () => {
           if (big) return reply(413, 'application/json', json('too_large', `请求超过 ${RELAY_MAX_REQUEST / 1024}KB`));
           const auth = typeof req.headers.authorization === 'string' ? req.headers.authorization : '';
-          const tok = [...unused].find(t => auth === `Amber ${t}` || auth.endsWith(` ${t}`));
+          const tok = [...unused].find(t => auth === `Amber ${t}`);
           if (!tok) return reply(403, 'application/json', json('relay_refused', '请求没有带这次任务未用过的凭证'));
           unused.delete(tok);
           const headers: Record<string, string> = {};

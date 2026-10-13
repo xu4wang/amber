@@ -3,7 +3,8 @@ import { computeSpecHash } from './db.ts';
 import { serviceDef, validateScript } from './runner.ts';
 import type { Signer } from './identity.ts';
 import { redact, type SecretVault } from './secrets.ts';
-import type { ExecutorHub } from './executors.ts';
+import type { ExecutorHub, CallGrant } from './executors.ts';
+import { newTicket, SERVICE_TOKEN_TTL_SEC } from './identity.ts';
 import { getLimits, effectiveTimeoutMs, SLOTS, localEgress, getGlobalAllowHosts } from './limits.ts';
 
 let HUB: ExecutorHub | undefined;
@@ -199,24 +200,32 @@ export async function runCommand(store: Store, cmd: CommandRow, rawArgs: Record<
     const started = Date.now();
     const runId = store.startRun({ commandId: cmd.id, specHash: cmd.specHash, channel: opts.trial ? `${caller.channel}.trial` : caller.channel, callerUnionId: caller.unionId, chatId: caller.chatId, args });
     store.audit(caller.unionId, 'run.start', { runId, commandId: cmd.id, name: cmd.name, channel: caller.channel, chatId: caller.chatId });
-    // Only the tokens: the run gets a relay port per service (ExecutorHub, relay-port.ts), never the service's address.
+    // The script gets one single-use ticket per declared call (D41), never a signed token and never the service's
+    // address: its call goes to the run's relay port (ExecutorHub, relay-port.ts), and Amber signs the token for the
+    // ticket right then, valid SERVICE_TOKEN_TTL_SEC — however long the run itself may take.
     const services: Record<string, { tokens: string[] }> = {};
     // Services see the documented channels only (docs/identity.md): a page call is a website call.
     const claim = caller.channel === 'page' ? 'web' : caller.channel;
     const channel = opts.trial ? `${claim}.trial` : claim;
     for (const [name, use] of Object.entries(script.services ?? {})) {
-      const d = serviceDef(name);
-      if (!d || !facts.signer) continue;
-      // One single-use token per declared call (D41); no refills while the script runs.
-      const tokens = Array.from({ length: use.calls }, (_, i) => facts.signer!.issue({ aud: d.audience, sub: caller.unionId, cmd: cmd.id, rev: cmd.specHash, run: runId, chat: caller.chatId, channel, callIndex: i + 1, callCount: use.calls, ttlSec: Math.ceil(script.timeoutMs! / 1000) + 60 }));
-      store.audit(caller.unionId, 'identity.issue', { runId, service: name, aud: d.audience, count: use.calls });
-      services[name] = { tokens };
+      if (!serviceDef(name) || !facts.signer) continue;
+      services[name] = { tokens: Array.from({ length: use.calls }, newTicket) };
+      store.audit(caller.unionId, 'identity.grant', { runId, service: name, count: use.calls });
     }
+    const signer = facts.signer;
+    const grant: CallGrant | undefined = signer && Object.keys(services).length ? {
+      tickets: Object.fromEntries(Object.entries(services).map(([n, s]) => [n, s.tokens])),
+      issue: (name, callIndex) => {
+        const d = serviceDef(name)!;
+        store.audit(caller.unionId, 'identity.issue', { runId, service: name, aud: d.audience, callIndex });
+        return signer.issue({ aud: d.audience, sub: caller.unionId, cmd: cmd.id, rev: cmd.specHash, run: runId, chat: caller.chatId, channel, callIndex, callCount: script.services![name].calls, ttlSec: SERVICE_TOKEN_TTL_SEC });
+      },
+    } : undefined;
     const input = { params: { ...args, ...config }, caller: { unionId: caller.unionId, chatId: caller.chatId, channel: caller.channel, city }, runId, ...(Object.keys(services).length ? { services } : {}), ...(secrets ? { secrets } : {}) };
     // script.env (D50): on the executor that holds the data, never here. Without it: on Amber's own machine, as the same kind of job.
     const raw = !HUB ? { ok: false, content: '', error: '执行端服务不可用' }
-      : script.env ? await HUB.run(script, { name: cmd.name, params: cmd.params, script: cmd.script, options: cmd.options }, cmd.specHash, input, { allowHosts: getGlobalAllowHosts(store) })
-      : await HUB.runLocal(script, input, { egress: localEgress(store) });
+      : script.env ? await HUB.run(script, { name: cmd.name, params: cmd.params, script: cmd.script, options: cmd.options }, cmd.specHash, input, { allowHosts: getGlobalAllowHosts(store), grant })
+      : await HUB.runLocal(script, input, { egress: localEgress(store), grant });
     // A secret that ends up in the output or the error message is masked before it is stored or shown.
     const r = secrets ? { ...raw, content: redact(raw.content, secrets), ...(raw.error ? { error: redact(raw.error, secrets) } : {}) } : raw;
     if (secrets) store.audit(caller.unionId, 'secret.use', { runId, commandId: cmd.id, names: Object.keys(secrets) });

@@ -19,6 +19,27 @@ async function freePort(): Promise<number> {
   });
 }
 
+/** A service that answers each call with the claims of the token it received (not verified: for tests of what Amber signs). */
+export async function claimsService(): Promise<{ port: number; close(): void }> {
+  const { createServer } = await import('node:http');
+  const srv = createServer((req, res) => {
+    const tok = String(req.headers.authorization ?? '').replace(/^Amber /, '');
+    let claims: unknown = null;
+    try { claims = JSON.parse(Buffer.from(tok.split('.')[1], 'base64url').toString()); } catch { /* not a token */ }
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({ claims }));
+  });
+  const port = await new Promise<number>(r => srv.listen(0, '127.0.0.1', () => r((srv.address() as { port: number }).port)));
+  return { port, close: () => srv.close() };
+}
+
+/** Python: calls service `name` once with the first token and binds the claims the service saw to `c`. */
+export const callForClaims = (name: string) => `import json,sys,urllib.request
+s=json.load(sys.stdin)["services"]["${name}"]
+op=urllib.request.build_opener(urllib.request.ProxyHandler({}))
+c=json.load(op.open(urllib.request.Request("http://127.0.0.1:%d/" % s["tcpPort"], headers={"Authorization":"Amber "+s["tokens"][0]}), timeout=10))["claims"]
+`;
+
 export interface Env {
   amber: Amber; fake: FakeFeishu; cfg: AmberConfig;
   alice: User; bob: User; carol: User;

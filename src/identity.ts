@@ -7,7 +7,7 @@
 //   payload { iss: "amber", aud, sub: <caller union_id>, cmd, rev: <spec_hash>, run, chat, channel,
 //             call_index, call_count, iat, exp, jti }
 // A run gets call_count tokens per declared service (D41), each with its own jti, meant to be used once.
-import { generateKeyPairSync, createPrivateKey, createPublicKey, sign, randomUUID, createHash } from 'node:crypto';
+import { generateKeyPairSync, createPrivateKey, createPublicKey, sign, randomUUID, randomBytes, createHash } from 'node:crypto';
 import type { KeyObject } from 'node:crypto';
 import { existsSync, lstatSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -63,6 +63,7 @@ export class Signer {
     return sign(null, relayResponseInput(jobId, reqId, r), this.key).toString('base64');
   }
 
+  /** `ttlSec`: services accept at most 300 (data-mcp's DATA_MCP_AMBER_MAX_TOKEN_LIFETIME_SECONDS default). */
   issue(c: { aud: string; sub: string; cmd: string; rev: string; run: string; chat: string; channel: string; callIndex: number; callCount: number; ttlSec?: number }): string {
     const now = Math.floor(Date.now() / 1000);
     const header = { alg: 'EdDSA', typ: 'JWT', kid: this.kid };
@@ -71,3 +72,9 @@ export class Signer {
     return `${input}.${b64u(sign(null, Buffer.from(input), this.key))}`;
   }
 }
+
+/** How long a service token is valid. It is signed when the call passes Amber's relay (ExecutorHub.forward), so this
+ *  covers one call (the relay waits at most 60 s) plus clock skew — not the run, which may take up to 30 minutes. */
+export const SERVICE_TOKEN_TTL_SEC = 120;
+/** What a script holds in place of a token: random, single use, worth something only to Amber's relay during its run. */
+export const newTicket = (): string => 'amber-ticket-' + randomBytes(24).toString('base64url');
