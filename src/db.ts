@@ -768,6 +768,11 @@ export class Store {
   }
 
   /** Group chats that have active commands or schedules (candidates for "chats this person is in"). */
+  /** Group chats that have or had apps (any status), for filtering the audit log. */
+  groupChatsWithApps(): string[] {
+    return (this.db.prepare(`SELECT DISTINCT chat_id FROM commands WHERE scope_type = 'group' ORDER BY chat_id`).all() as { chat_id: string }[]).map(r => r.chat_id);
+  }
+
   groupChatsWithContent(): string[] {
     return (this.db.prepare(`SELECT DISTINCT chat_id FROM commands WHERE status = 'active' AND scope_type = 'group'
       UNION SELECT DISTINCT chat_id FROM schedules WHERE status != 'deleted' AND chat_type = 'group'`).all() as { chat_id: string }[]).map(r => r.chat_id);
@@ -982,13 +987,26 @@ export class Store {
 
   /** Newest first. `before`: continue below this id. `prefixes`: actions starting with any of these. `q`: text in
    *  the action or the detail. `actor`: one person's union_id. */
-  listAudit(o: { before?: number; limit?: number; prefixes?: string[]; q?: string; actor?: string } = {}): { id: number; at: number; actor: string | null; action: string; detail: string }[] {
+  /** `chat`: rows about an app in that group chat, or 'p2p' for private-chat apps — found by the row's commandId/command,
+   *  or its runId's run. `trigger`: rows of runs started by a schedule, or of one-off runs. Rows that are neither about an
+   *  app nor part of a run (and relay records that have only a jobId) never match these two. */
+  listAudit(o: { before?: number; limit?: number; prefixes?: string[]; q?: string; actor?: string; chat?: string; trigger?: 'schedule' | 'once' } = {}): { id: number; at: number; actor: string | null; action: string; detail: string }[] {
     const where: string[] = [], args: (string | number)[] = [];
-    if (o.before) { where.push('rowid < ?'); args.push(o.before); }
+    const run = `(SELECT r.%s FROM runs r WHERE r.id = json_extract(audit.detail, '$.runId'))`;
+    if (o.chat) {
+      const app = `COALESCE(json_extract(audit.detail, '$.commandId'), json_extract(audit.detail, '$.command'), ${run.replace('%s', 'command_id')})`;
+      if (o.chat === 'p2p') where.push(`${app} IN (SELECT id FROM commands WHERE scope_type = 'p2p')`);
+      else { where.push(`${app} IN (SELECT id FROM commands WHERE scope_type = 'group' AND chat_id = ?)`); args.push(o.chat); }
+    }
+    if (o.trigger) {
+      const scheduled = `(SELECT r.schedule_id IS NOT NULL OR r.channel = 'schedule' FROM runs r WHERE r.id = json_extract(audit.detail, '$.runId'))`;
+      where.push(o.trigger === 'schedule' ? `${scheduled} = 1` : `${scheduled} = 0`);
+    }
+    if (o.before) { where.push('audit.rowid < ?'); args.push(o.before); }
     if (o.prefixes?.length) { where.push('(' + o.prefixes.map(() => "action LIKE ? ESCAPE '\\'").join(' OR ') + ')'); args.push(...o.prefixes.map(p => p.replace(/[\\%_]/g, c => '\\' + c) + '%')); }
     if (o.q) { where.push("(action LIKE ? ESCAPE '\\' OR detail LIKE ? ESCAPE '\\')"); const q = '%' + o.q.replace(/[\\%_]/g, c => '\\' + c) + '%'; args.push(q, q); }
     if (o.actor) { where.push('actor_union_id = ?'); args.push(o.actor); }
-    const sql = `SELECT rowid AS id, at, actor_union_id AS actor, action, detail FROM audit ${where.length ? 'WHERE ' + where.join(' AND ') : ''} ORDER BY rowid DESC LIMIT ?`;
+    const sql = `SELECT audit.rowid AS id, at, actor_union_id AS actor, action, detail FROM audit ${where.length ? 'WHERE ' + where.join(' AND ') : ''} ORDER BY audit.rowid DESC LIMIT ?`;
     return (this.db.prepare(sql).all(...args, Math.min(Math.max(o.limit ?? 50, 1), 200)) as any[]).map(r => ({ id: Number(r.id), at: Number(r.at), actor: r.actor ?? null, action: String(r.action), detail: String(r.detail) }));
   }
 

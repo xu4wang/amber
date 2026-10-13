@@ -86,3 +86,53 @@ test('audit: a run records which group or private chat the app belongs to, shown
     assert.deepEqual(top.slice(0, 4).map((r: any) => r.app?.name ?? null), [null, '群里的', '群里的', '群里的'], 'unknown job: no app');
   } finally { await env.close(); }
 });
+
+test('audit: filter by the group an app belongs to, private-chat apps, and scheduled or one-off runs', async () => {
+  const env = await makeEnv();
+  const base = `http://127.0.0.1:${env.webPort}`;
+  try {
+    await env.dm(env.alice, '登录');
+    const a = (await fetch(urlButton(env.fake.sent.at(-1)!.card)!, { redirect: 'manual' })).headers.get('set-cookie')!.split(';')[0];
+    const gid = await activate(env, { chatId: GROUP, chatType: 'group', name: '群里的', params: [], script: script('print("g")') }, env.bob);
+    const dm = 'oc_dmbob';
+    env.fake.chats.set(dm, { mode: 'p2p', name: '', members: new Set(['BOT', env.bob.unionId]) });
+    const pid = await activate(env, { chatId: dm, chatType: 'p2p', claimer: env.bob.email, name: '私聊的', params: [], script: script('print("p")') }, env.bob);
+    await env.say(env.bob, GROUP, '群里的');
+    await env.dm(env.bob, '私聊的');
+    const st = env.amber.store;
+    const runOf = (name: string) => st.listAudit({ prefixes: ['run.start'], limit: 50 }).map(r => JSON.parse(r.detail)).find(d => d.name === name)?.runId as string | undefined;
+    for (let i = 0; i < 40 && !(runOf('群里的') && runOf('私聊的')); i++) await new Promise(ok => setTimeout(ok, 250));
+    const gRun = runOf('群里的')!, pRun = runOf('私聊的')!;
+    // Every run of an app so far (the trial run at activation counts: it is a one-off run of that app).
+    const runsOf = (cid: string) => st.listAudit({ prefixes: ['run.start'], limit: 50 }).map(r => JSON.parse(r.detail)).filter(d => d.commandId === cid).map(d => d.runId as string);
+    const gOnce = runsOf(gid), pOnce = runsOf(pid);
+    assert.ok(gOnce.includes(gRun) && pOnce.includes(pRun));
+    // A scheduled run of the group app (the scheduler marks its runs like this).
+    const sRun = st.startRun({ commandId: gid, specHash: st.getCommand(gid)!.specHash, channel: 'schedule', callerUnionId: env.bob.unionId, chatId: GROUP, args: {} });
+    st.audit(env.bob.unionId, 'run.start', { runId: sRun, commandId: gid, name: '群里的', channel: 'schedule' });
+    st.audit(null, 'executor.relay', { jobId: 'j1', runId: sRun, service: 'demo' });
+    st.audit(env.bob.unionId, 'schedule.create', { commandId: gid, name: '群里的' });
+    st.audit(null, 'startup.seed', { setting: 'x' });
+    const get = async (qs: string) => (await (await fetch(`${base}/web/api/audit?${qs}`, { headers: { cookie: a } })).json());
+    const runsIn = (rows: any[]) => new Set(rows.map((r: any) => { const d = JSON.parse(r.detail); return d.runId ?? (d.commandId ? 'cmd:' + d.commandId : r.action); }));
+    const first = await get('');
+    assert.deepEqual(first.chats, [{ id: GROUP, name: env.fake.chats.get(GROUP)!.name }], 'groups with apps, by name');
+    // By group: every row of the group app's runs, and rows about the app; nothing of the private one or unrelated.
+    const g = await get('chat=' + GROUP);
+    assert.deepEqual([...runsIn(g.rows)].sort(), [...gOnce, sRun, 'cmd:' + gid].sort());
+    assert.ok(g.rows.some((r: any) => r.action === 'executor.relay') && g.rows.some((r: any) => r.action === 'run.ok'));
+    assert.deepEqual([...runsIn((await get('chat=p2p')).rows)].sort(), [...pOnce].sort());
+    assert.equal((await get('chat=oc_nope')).rows.length, 0);
+    // By trigger: scheduled runs only / one-off runs only; rows not part of a run are in neither.
+    assert.deepEqual([...runsIn((await get('trigger=schedule')).rows)], [sRun]);
+    assert.deepEqual([...runsIn((await get('trigger=once')).rows)].sort(), [...gOnce, ...pOnce].sort());
+    // Combined with each other and with the category filter.
+    assert.deepEqual([...runsIn((await get(`chat=${GROUP}&trigger=once`)).rows)].sort(), [...gOnce].sort());
+    assert.deepEqual((await get(`chat=${GROUP}&trigger=schedule&cat=run`)).rows.map((r: any) => r.action), ['run.start']);
+    assert.ok((await get('trigger=bogus')).rows.some((r: any) => r.action === 'startup.seed'), 'an unknown value filters nothing');
+    // Paging works within a filter.
+    const all = st.listAudit({ chat: GROUP, limit: 200 }).map(r => r.id);
+    const p1 = st.listAudit({ chat: GROUP, limit: 2 }), p2 = st.listAudit({ chat: GROUP, limit: 200, before: p1[1].id });
+    assert.deepEqual([...p1, ...p2].map(r => r.id), all);
+  } finally { await env.close(); }
+});

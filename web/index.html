@@ -814,14 +814,15 @@ const AUDIT_LABEL = {
   'page.publish_request': '请求发布页面', 'page.publish': '发布页面', 'page.publish_cancel': '取消发布页面', 'page.update': '更新页面内容', 'page.access': '修改页面访问范围', 'page.delete': '删除页面', 'page.call': '页面调用应用',
   'startup.seed': '首次启动写入默认设置', 'startup.interrupted_runs': '重启时标记中断的执行', 'startup.unrunnable': '发现不能执行的应用',
 };
-let AUDIT = { rows: [], cat: '', q: '', done: false, categories: [] };
+let AUDIT = { rows: [], cat: '', q: '', chat: '', trigger: '', done: false, categories: [], chats: [] };
 async function auditPane(more = false) {
   if (!more) AUDIT = { ...AUDIT, rows: [], done: false };
-  const params = new URLSearchParams({ cat: AUDIT.cat, q: AUDIT.q });
+  const params = new URLSearchParams({ cat: AUDIT.cat, q: AUDIT.q, chat: AUDIT.chat, trigger: AUDIT.trigger });
   if (more && AUDIT.rows.length) params.set('before', AUDIT.rows[AUDIT.rows.length - 1].id);
   const r = await fetch('/web/api/audit?' + params).then(x => x.json()).catch(() => ({ ok: false }));
   if (!r.ok) { document.getElementById('pane').innerHTML = `${backBtn}<p class="note">审计日志读取失败</p>`; return; }
   AUDIT.categories = r.categories;
+  if (r.chats) AUDIT.chats = r.chats;
   AUDIT.rows = AUDIT.rows.concat(r.rows);
   AUDIT.done = r.rows.length < 50;
   // refs: names for the chats and people in a row (app's group or private chat, its owner), shown with the id.
@@ -836,13 +837,15 @@ async function auditPane(more = false) {
     <p class="desc">谁在什么时候做了什么：认领审核、执行、上下线、设置修改、执行端、登录等，最新的在前面。</p>
     <form class="audit-filter" id="audit-form">
       <select name="cat"><option value="">全部类别</option>${AUDIT.categories.map(c => `<option value="${esc(c.key)}"${c.key === AUDIT.cat ? ' selected' : ''}>${esc(c.label)}</option>`).join('')}</select>
+      <select name="chat"><option value="">全部群</option><option value="p2p"${AUDIT.chat === 'p2p' ? ' selected' : ''}>私聊应用</option>${AUDIT.chats.map(c => `<option value="${esc(c.id)}"${c.id === AUDIT.chat ? ' selected' : ''}>${esc(c.name)}</option>`).join('')}</select>
+      <select name="trigger"><option value="">全部执行方式</option>${[['schedule', '定时任务'], ['once', '一次性执行']].map(([k, l]) => `<option value="${k}"${k === AUDIT.trigger ? ' selected' : ''}>${l}</option>`).join('')}</select>
       <input name="q" placeholder="搜索：应用 id、名字、操作……" value="${esc(AUDIT.q)}">
       <button class="btn small" type="submit">查询</button>
     </form>
     <div class="output"><table class="audit"><thead><tr><th>时间</th><th>操作人</th><th>操作</th><th>详情</th></tr></thead><tbody>${rows || '<tr><td colspan="4" class="note">没有记录</td></tr>'}</tbody></table>
     ${AUDIT.done ? '' : '<div class="actions"><button class="btn small" id="audit-more">加载更多</button></div>'}</div>`;
   const form = document.getElementById('audit-form');
-  form.addEventListener('submit', ev => { ev.preventDefault(); AUDIT.cat = form.cat.value; AUDIT.q = form.q.value.trim(); auditPane(); });
+  form.addEventListener('submit', ev => { ev.preventDefault(); AUDIT.cat = form.cat.value; AUDIT.chat = form.chat.value; AUDIT.trigger = form.trigger.value; AUDIT.q = form.q.value.trim(); auditPane(); });
   document.getElementById('audit-more')?.addEventListener('click', () => auditPane(true));
 }
 
