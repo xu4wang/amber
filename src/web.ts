@@ -303,8 +303,29 @@ export function startWeb(port: number, store: Store, deps: WebDeps): import('nod
             if (typeof d.chatId === 'string' && !refs[d.chatId]) { const n = await chatOf(d.chatId); if (n) refs[d.chatId] = n; }
             return Object.keys(refs).length ? refs : undefined;
           };
+          // The app a row is about and where it belongs, for every row of a run (by runId, or jobId for relays) or about
+          // an app (commandId): the app as it is now. The run's own start record keeps where it belonged at the time.
+          const commandOfRow = (detail: string): string | undefined => {
+            let d: Record<string, unknown>;
+            try { d = JSON.parse(detail); } catch { return undefined; }
+            const s = (v: unknown) => typeof v === 'string' && v ? v : undefined;
+            const direct = s(d.commandId) ?? s(d.command);
+            if (direct) return direct;
+            const runId = s(d.runId) ?? (s(d.jobId) ? store.runIdOfJob(d.jobId as string) : undefined);
+            return runId ? store.getRun(runId)?.commandId : undefined;
+          };
+          const apps = new Map<string, Promise<{ name: string; where: string } | undefined>>();
+          const appOf = (id: string) => {
+            if (!apps.has(id)) apps.set(id, (async () => {
+              const c = store.getCommand(id);
+              if (!c) return undefined;
+              const where = c.scopeType === 'p2p' ? `私聊（创建人 ${await nameOf(c.ownerUnionId)}）` : `群 ${(await chatOf(c.chatId)) ?? c.chatId}`;
+              return { name: c.name, where: c.global ? `${where}，全局应用` : where };
+            })());
+            return apps.get(id)!;
+          };
           return json(res, 200, { ok: true, categories: Object.entries(AUDIT_CATEGORIES).map(([k, v]) => ({ key: k, label: v.label })),
-            rows: await Promise.all(rows.map(async r => ({ ...r, actorName: r.actor ? actorNames.get(r.actor) : null, refs: await refsOf(r.detail), detail: r.detail.length > 2000 ? r.detail.slice(0, 2000) + '…' : r.detail }))) });
+            rows: await Promise.all(rows.map(async r => { const cid = commandOfRow(r.detail); return { ...r, actorName: r.actor ? actorNames.get(r.actor) : null, refs: await refsOf(r.detail), app: cid ? await appOf(cid) : undefined, detail: r.detail.length > 2000 ? r.detail.slice(0, 2000) + '…' : r.detail }; })) });
         }
         if (req.method === 'GET' && url.pathname === '/web/api/settings') {
           // Site-wide settings: admins only.

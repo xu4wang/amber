@@ -829,7 +829,7 @@ async function auditPane(more = false) {
   const val = (k, v, refs) => k === 'appScope' ? ({ group: '群聊', p2p: '私聊' }[v] || v) : typeof v === 'string' && refs?.[v] ? `${refs[v]}（${v}）` : typeof v === 'string' ? v : JSON.stringify(v);
   const detail = (d, refs) => { try { const o = JSON.parse(d); return Object.entries(o).map(([k, v]) => `<span class="kv-k">${esc(AUDIT_KEY[k] || k)}</span> ${esc(val(k, v, refs))}`).join('　'); } catch { return esc(d); } };
   const rows = AUDIT.rows.map(x => `<tr><td class="nowrap">${fmtTime(x.at)}</td><td class="nowrap">${x.actor ? esc(x.actorName || x.actor) : '<span class="note">系统</span>'}</td>
-    <td class="nowrap">${esc(AUDIT_LABEL[x.action] || x.action)}<br><span class="note mono">${esc(x.action)}</span></td><td class="audit-detail">${detail(x.detail, x.refs)}</td></tr>`).join('');
+    <td class="nowrap">${esc(AUDIT_LABEL[x.action] || x.action)}<br><span class="note mono">${esc(x.action)}</span></td><td class="audit-detail">${x.app ? `<span class="kv-k">应用</span> ${esc(x.app.name)}　<span class="kv-k">所在</span> ${esc(x.app.where)}　` : ''}${detail(x.detail, x.refs)}</td></tr>`).join('');
   document.getElementById('pane').innerHTML = `${backBtn}
     <div class="pane-head"><h1>审计日志</h1></div>
     <div class="where">系统管理 · 管理员</div>

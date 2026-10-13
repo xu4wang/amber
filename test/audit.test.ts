@@ -69,5 +69,20 @@ test('audit: a run records which group or private chat the app belongs to, shown
     assert.deepEqual([p.appScope, p.appChatId, p.appOwner], ['p2p', dm, env.bob.unionId]);
     assert.equal(byName['私聊的'].refs[dm], '私聊（创建人 bob）');
     assert.equal(byName['私聊的'].refs[env.bob.unionId], 'bob');
+    // Every row of a run says which app and where it belongs, not only the start record.
+    const gRun = g.runId, pRun = p.runId;
+    const all = (await (await fetch(base + '/web/api/audit', { headers: { cookie: a } })).json()).rows;
+    const ofRun = (id: string) => all.filter((r: any) => r.detail.includes(id));
+    const groupWhere = `群 ${env.fake.chats.get(GROUP)!.name}`;
+    assert.ok(ofRun(gRun).some((r: any) => r.action === 'run.ok'));
+    for (const r of ofRun(gRun)) assert.deepEqual(r.app, { name: '群里的', where: groupWhere }, r.action);
+    for (const r of ofRun(pRun)) assert.deepEqual(r.app, { name: '私聊的', where: '私聊（创建人 bob）' }, r.action);
+    // An older relay record has only a jobId: found through its dispatch record. A record about an app has its commandId.
+    env.amber.store.audit(null, 'executor.dispatch', { runId: gRun, jobId: 'job-old' });
+    env.amber.store.audit(null, 'executor.relay', { jobId: 'job-old', service: 'demo' });
+    env.amber.store.audit(env.bob.unionId, 'schedule.create', { commandId: g.commandId, name: '群里的' });
+    env.amber.store.audit(null, 'executor.relay', { jobId: 'job-unknown', service: 'demo' });
+    const top = (await (await fetch(base + '/web/api/audit', { headers: { cookie: a } })).json()).rows;
+    assert.deepEqual(top.slice(0, 4).map((r: any) => r.app?.name ?? null), [null, '群里的', '群里的', '群里的'], 'unknown job: no app');
   } finally { await env.close(); }
 });

@@ -992,6 +992,12 @@ export class Store {
     return (this.db.prepare(sql).all(...args, Math.min(Math.max(o.limit ?? 50, 1), 200)) as any[]).map(r => ({ id: Number(r.id), at: Number(r.at), actor: r.actor ?? null, action: String(r.action), detail: String(r.detail) }));
   }
 
+  /** The run an executor job belonged to, from its dispatch record (relay records before they carried runId). */
+  runIdOfJob(jobId: string): string | undefined {
+    const r = this.db.prepare(`SELECT json_extract(detail, '$.runId') AS run FROM audit WHERE action = 'executor.dispatch' AND json_extract(detail, '$.jobId') = ? LIMIT 1`).get(jobId) as { run?: string } | undefined;
+    return r?.run ?? undefined;
+  }
+
   audit(actorUnionId: string | null, action: string, detail: Record<string, unknown>): void {
     this.db.prepare('INSERT INTO audit (at, actor_union_id, action, detail) VALUES (?,?,?,?)').run(Date.now(), actorUnionId, action, JSON.stringify(detail));
   }
