@@ -112,6 +112,8 @@ test('audit: filter by the group an app belongs to, private-chat apps, and sched
     st.audit(env.bob.unionId, 'run.start', { runId: sRun, commandId: gid, name: '群里的', channel: 'schedule' });
     st.audit(null, 'executor.relay', { jobId: 'j1', runId: sRun, service: 'demo' });
     st.audit(env.bob.unionId, 'schedule.create', { commandId: gid, name: '群里的' });
+    // A row whose command field is not an app id still belongs to its run's app.
+    st.audit(null, 'agent.run', { runId: sRun, command: 'not-an-app-id' });
     st.audit(null, 'startup.seed', { setting: 'x' });
     const get = async (qs: string) => (await (await fetch(`${base}/web/api/audit?${qs}`, { headers: { cookie: a } })).json());
     const runsIn = (rows: any[]) => new Set(rows.map((r: any) => { const d = JSON.parse(r.detail); return d.runId ?? (d.commandId ? 'cmd:' + d.commandId : r.action); }));
@@ -128,7 +130,8 @@ test('audit: filter by the group an app belongs to, private-chat apps, and sched
     assert.deepEqual([...runsIn((await get('trigger=once')).rows)].sort(), [...gOnce, ...pOnce].sort());
     // Combined with each other and with the category filter.
     assert.deepEqual([...runsIn((await get(`chat=${GROUP}&trigger=once`)).rows)].sort(), [...gOnce].sort());
-    assert.deepEqual((await get(`chat=${GROUP}&trigger=schedule&cat=run`)).rows.map((r: any) => r.action), ['run.start']);
+    assert.deepEqual((await get(`chat=${GROUP}&trigger=schedule&cat=run`)).rows.map((r: any) => r.action), ['agent.run', 'run.start']);
+    assert.equal(g.rows.find((r: any) => r.action === 'agent.run')?.app?.name, '群里的', 'shown with its run\'s app too');
     assert.ok((await get('trigger=bogus')).rows.some((r: any) => r.action === 'startup.seed'), 'an unknown value filters nothing');
     // Paging works within a filter.
     const all = st.listAudit({ chat: GROUP, limit: 200 }).map(r => r.id);

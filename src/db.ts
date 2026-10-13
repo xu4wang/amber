@@ -994,9 +994,11 @@ export class Store {
     const where: string[] = [], args: (string | number)[] = [];
     const run = `(SELECT r.%s FROM runs r WHERE r.id = json_extract(audit.detail, '$.runId'))`;
     if (o.chat) {
-      const app = `COALESCE(json_extract(audit.detail, '$.commandId'), json_extract(audit.detail, '$.command'), ${run.replace('%s', 'command_id')})`;
-      if (o.chat === 'p2p') where.push(`${app} IN (SELECT id FROM commands WHERE scope_type = 'p2p')`);
-      else { where.push(`${app} IN (SELECT id FROM commands WHERE scope_type = 'group' AND chat_id = ?)`); args.push(o.chat); }
+      // Any of the row's app references counts: a value that is not an app id simply matches nothing.
+      const refs = [`json_extract(audit.detail, '$.commandId')`, `json_extract(audit.detail, '$.command')`, run.replace('%s', 'command_id')];
+      const apps = o.chat === 'p2p' ? `SELECT id FROM commands WHERE scope_type = 'p2p'` : `SELECT id FROM commands WHERE scope_type = 'group' AND chat_id = ?`;
+      where.push('(' + refs.map(r => `${r} IN (${apps})`).join(' OR ') + ')');
+      if (o.chat !== 'p2p') args.push(o.chat, o.chat, o.chat);
     }
     if (o.trigger) {
       const scheduled = `(SELECT r.schedule_id IS NOT NULL OR r.channel = 'schedule' FROM runs r WHERE r.id = json_extract(audit.detail, '$.runId'))`;

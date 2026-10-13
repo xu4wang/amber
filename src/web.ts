@@ -315,7 +315,8 @@ export function startWeb(port: number, store: Store, deps: WebDeps): import('nod
             let d: Record<string, unknown>;
             try { d = JSON.parse(detail); } catch { return undefined; }
             const s = (v: unknown) => typeof v === 'string' && v ? v : undefined;
-            const direct = s(d.commandId) ?? s(d.command);
+            // A direct reference that is not an app id falls through to the run.
+            const direct = [s(d.commandId), s(d.command)].find(id => id && store.getCommand(id));
             if (direct) return direct;
             const runId = s(d.runId) ?? (s(d.jobId) ? jobRuns.get(d.jobId as string) : undefined);
             return runId ? store.getRun(runId)?.commandId : undefined;
