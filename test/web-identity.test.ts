@@ -126,6 +126,7 @@ test('identity token: the service receives a token for the person who clicked, t
     // Runs on Amber's own machine go through the same relay as executors (and a service without executor: true still works here).
     const relays = env.amber.store.listAudit({ prefixes: ['executor.relay'], limit: 50 }).map(x => JSON.parse(x.detail));
     assert.deepEqual(relays.map(d => [d.executor, d.service]), Array(4).fill(['amber', 'demo']), 'trial run + agent run, two relayed calls each');
+    assert.ok(relays.every(d => typeof d.runId === 'string' && env.amber.store.getRun(d.runId)), 'each relay record names its run');
     const last = seen.at(-1);
     assert.equal(last.good, true);
     assert.equal(last.payload.sub, env.bob.unionId);

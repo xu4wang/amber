@@ -103,7 +103,7 @@ interface Waiter { resolve: (jobs: JobEnvelope[]) => void; timer: NodeJS.Timeout
 export interface CallGrant { tickets: Record<string, string[]>; issue(service: string, callIndex: number): string }
 
 /** executorId null: a job on Amber's own machine (runLocal), never dispatched to an executor. */
-interface PendingJob { grant?: CallGrant; usedTickets?: Set<string>; executorId: string | null; picked: boolean; resolve: (r: ScriptResult) => void; timer: NodeJS.Timeout;
+interface PendingJob { runId?: string; grant?: CallGrant; usedTickets?: Set<string>; executorId: string | null; picked: boolean; resolve: (r: ScriptResult) => void; timer: NodeJS.Timeout;
   /** Service requests in flight for this job; cancelled when the job ends (D52). */
   inflight?: Set<import('node:http').ClientRequest>;
   /** Relay calls left per declared service (D52): at most the declared count, one per token. */
@@ -329,7 +329,7 @@ export class ExecutorHub {
     }
     j.calls[name]--;
     const inflight = j.inflight ?? (j.inflight = new Set());
-    this.store.audit(null, 'executor.relay', { jobId: b.jobId, executor: executorId ?? 'amber', service: name, method, path: path.split('?')[0] });
+    this.store.audit(null, 'executor.relay', { jobId: b.jobId, ...(j.runId ? { runId: j.runId } : {}), executor: executorId ?? 'amber', service: name, method, path: path.split('?')[0] });
     return await new Promise(resolve => {
       const req = httpRequest({ ...(d.unixSocket ? { socketPath: d.unixSocket } : { host: '127.0.0.1', port: d.tcpPort }), method, path, headers: { ...headers, 'content-length': String(body.length) }, timeout: RELAY_TIMEOUT_MS }, res => {
         const chunks: Buffer[] = [];
@@ -393,7 +393,7 @@ export class ExecutorHub {
     this.store.audit(input.caller.unionId, 'executor.dispatch', { runId: input.runId, executor: e.id, name: e.name, env: p.env, jobId });
     return await new Promise<ScriptResult>(resolve => {
       const calls = Object.fromEntries(Object.entries(script.services ?? {}).map(([n, u]) => [n, u.calls]));
-      const job: PendingJob = { executorId: e.id, picked: false, resolve, timer: setTimeout(() => {}, 0), calls, ...(opts.grant ? { grant: opts.grant } : {}) };
+      const job: PendingJob = { runId: input.runId, executorId: e.id, picked: false, resolve, timer: setTimeout(() => {}, 0), calls, ...(opts.grant ? { grant: opts.grant } : {}) };
       const fail = (msg: string) => this.finish(jobId, { ok: false, content: '', error: msg });
       job.timer = setTimeout(() => {
         if (!job.picked) return fail(`执行端 ${p.executor} 没有取走任务（可能刚刚离线），这次没有执行`);
@@ -416,7 +416,7 @@ export class ExecutorHub {
     const done = new Promise<ScriptResult>(resolve => {
       // The sandbox kills the script at its own timeout; this only covers a run that never comes back.
       const timer = setTimeout(() => this.finish(jobId, { ok: false, content: '', error: '运行没有在时限内结束' }), (script.timeoutMs ?? 60000) + RESULT_GRACE_MS);
-      this.jobs.set(jobId, { executorId: null, picked: true, resolve, timer, calls, ...(opts.grant ? { grant: opts.grant } : {}) });
+      this.jobs.set(jobId, { runId: input.runId, executorId: null, picked: true, resolve, timer, calls, ...(opts.grant ? { grant: opts.grant } : {}) });
     });
     let relays: { ports: number[]; services?: ScriptInput['services']; close(): void } = { ports: [], close() {} };
     try {
