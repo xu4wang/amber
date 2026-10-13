@@ -281,7 +281,10 @@ export function startWeb(port: number, store: Store, deps: WebDeps): import('nod
           if (!deps.isAdmin(who.unionId)) return json(res, 404, { ok: false, error: 'not_found' });
           const cat = url.searchParams.get('cat') ?? '';
           const prefixes = AUDIT_CATEGORIES[cat]?.prefixes;
-          const rows = store.listAudit({ before: Number(url.searchParams.get('before')) || undefined, limit: 50, prefixes, q: (url.searchParams.get('q') ?? '').trim().slice(0, 100) || undefined, actor: url.searchParams.get('actor') || undefined });
+          // chat: a group chat id or 'p2p' (private-chat apps); trigger: 'schedule' or 'once'.
+          const chat = (url.searchParams.get('chat') ?? '').slice(0, 100) || undefined;
+          const trigger = (['schedule', 'once'] as const).find(t => t === url.searchParams.get('trigger'));
+          const rows = store.listAudit({ before: Number(url.searchParams.get('before')) || undefined, limit: 50, prefixes, q: (url.searchParams.get('q') ?? '').trim().slice(0, 100) || undefined, actor: url.searchParams.get('actor') || undefined, chat, trigger });
           // One lookup per person or chat on the page: rows resolve concurrently, so the promises are cached.
           const names = new Map<string, Promise<string>>();
           const nameOf = (u: string) => { if (!names.has(u)) names.set(u, deps.nameOf(u).catch(() => undefined).then(n => n ?? u)); return names.get(u)!; };
@@ -312,7 +315,8 @@ export function startWeb(port: number, store: Store, deps: WebDeps): import('nod
             let d: Record<string, unknown>;
             try { d = JSON.parse(detail); } catch { return undefined; }
             const s = (v: unknown) => typeof v === 'string' && v ? v : undefined;
-            const direct = s(d.commandId) ?? s(d.command);
+            // A direct reference that is not an app id falls through to the run.
+            const direct = [s(d.commandId), s(d.command)].find(id => id && store.getCommand(id));
             if (direct) return direct;
             const runId = s(d.runId) ?? (s(d.jobId) ? jobRuns.get(d.jobId as string) : undefined);
             return runId ? store.getRun(runId)?.commandId : undefined;
@@ -327,7 +331,10 @@ export function startWeb(port: number, store: Store, deps: WebDeps): import('nod
             })());
             return apps.get(id)!;
           };
-          return json(res, 200, { ok: true, categories: Object.entries(AUDIT_CATEGORIES).map(([k, v]) => ({ key: k, label: v.label })),
+          // The groups to filter by (only on the first page: the list does not change while paging).
+          const chatList = url.searchParams.get('before') ? undefined
+            : await Promise.all(store.groupChatsWithApps().map(async id => ({ id, name: (await chatOf(id)) ?? id })));
+          return json(res, 200, { ok: true, categories: Object.entries(AUDIT_CATEGORIES).map(([k, v]) => ({ key: k, label: v.label })), ...(chatList ? { chats: chatList } : {}),
             rows: await Promise.all(rows.map(async r => { const cid = commandOfRow(r.detail); return { ...r, actorName: r.actor ? actorNames.get(r.actor) : null, refs: await refsOf(r.detail), app: cid ? await appOf(cid) : undefined, detail: r.detail.length > 2000 ? r.detail.slice(0, 2000) + '…' : r.detail }; })) });
         }
         if (req.method === 'GET' && url.pathname === '/web/api/settings') {
