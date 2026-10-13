@@ -139,7 +139,7 @@ node ~/amber/client/amber-executor/amber-executor.mjs status
 
 ## 调用 Amber 上登记的服务
 
-data-mcp 这类服务装在 Amber 那台机器上，只监听本机。执行端上的应用照样可以调用，**脚本写法和在 Amber 本机完全一样**：
+data-mcp 这类服务装在 Amber 那台机器上，只监听本机。执行端上的应用照样可以调用，**脚本写法和在 Amber 本机完全一样**。在 Amber 本机运行的应用也走同一套：Amber 自己就是一个执行端，同样开转发端口、同样经过下面第 3 步的核对，只是不用经过网络和签名（服务不要求打开 `executor`）。
 
 ```python
 svc = inp["services"]["data-mcp"]

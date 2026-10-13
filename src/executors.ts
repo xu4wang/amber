@@ -13,6 +13,9 @@
 //   relay     a script's call to a registered service (D52): the executor forwards it, signed, to Amber,
 //             which checks the job, the service and the call count and passes it to the local service.
 //   result    the executor posts the output (already masked), Amber masks again, records and shows it.
+// Amber's own machine (a command without script.env) is one more executor of the same kind, in process:
+// runLocal() makes the same job, its script reaches services through the same relay port (relay-port.ts)
+// and forward(), with the same checks and call counts — only dispatch and result need no network.
 // An offline executor fails the run immediately; a job that is not picked up or answered in time
 // fails too. Nothing is queued for later.
 import { CONCURRENCY_BOUNDS } from './limits.ts';
@@ -21,7 +24,8 @@ import { createHash, randomUUID } from 'node:crypto';
 import type { Store, ExecutorRow, ExecutorEnv } from './db.ts';
 import type { Signer } from './identity.ts';
 import type { Script, ScriptInput, ScriptResult } from './runner.ts';
-import { parseEnv, serviceDef } from './runner.ts';
+import { parseEnv, serviceDef, runScript } from './runner.ts';
+import { startRelayPorts } from './relay-port.ts';
 import { request as httpRequest } from 'node:http';
 import { EXECUTOR_NAME, ENV_NAME, fingerprint, verifyRequest, pubFromB64, showFingerprint, REQUEST_SKEW_MS, type JobEnvelope } from './exec-proto.ts';
 import { AmberError } from './engine.ts';
@@ -93,7 +97,8 @@ export function followDiff(prev: Record<string, ExecutorEnv>, next: Record<strin
 export const envsHash = (name: string, envs: Record<string, ExecutorEnv>) => createHash('sha256').update(JSON.stringify({ name, envs })).digest('hex').slice(0, 16);
 
 interface Waiter { resolve: (jobs: JobEnvelope[]) => void; timer: NodeJS.Timeout }
-interface PendingJob { executorId: string; envelope: JobEnvelope; picked: boolean; resolve: (r: ScriptResult) => void; timer: NodeJS.Timeout;
+/** executorId null: a job on Amber's own machine (runLocal), never dispatched to an executor. */
+interface PendingJob { executorId: string | null; picked: boolean; resolve: (r: ScriptResult) => void; timer: NodeJS.Timeout;
   /** Service requests in flight for this job; cancelled when the job ends (D52). */
   inflight?: Set<import('node:http').ClientRequest>;
   /** Relay calls left per declared service (D52): at most the declared count, one per token. */
@@ -280,18 +285,20 @@ export class ExecutorHub {
     try { b = JSON.parse(raw); } catch { throw new AmberError('bad_json', '请求不是合法的 JSON'); }
     const reqId = String(b?.reqId ?? '');
     if (!/^[0-9a-f]{32}$/.test(reqId)) throw new AmberError('invalid', '缺少 reqId');
-    const r = await this.forward(e, b);
+    const r = await this.forward(b, e.id);
     // Signed, so the executor can tell the response really comes from Amber for this very request.
     return { ...r, sig: this.signer.signRelayResponse(String(b.jobId), reqId, r) };
   }
 
-  private async forward(e: ExecutorRow, b: any): Promise<{ ok: boolean; status?: number; contentType?: string; body?: string; error?: string; message?: string }> {
+  /** `executorId` null: a call from a job on Amber's own machine (runLocal). */
+  private async forward(b: any, executorId: string | null): Promise<{ ok: boolean; status?: number; contentType?: string; body?: string; error?: string; message?: string }> {
     const j = this.jobs.get(String(b?.jobId ?? ''));
     // Only the executor this job went to, only while it is running.
-    if (!j || j.executorId !== e.id || !j.picked) throw new AmberError('forbidden', '没有这个正在运行的任务');
+    if (!j || j.executorId !== executorId || !j.picked) throw new AmberError('forbidden', '没有这个正在运行的任务');
     const name = String(b?.service ?? '');
     const d = serviceDef(name);
-    if (!(name in j.calls) || !d || d.executor !== true) throw new AmberError('forbidden', `这个应用没有声明服务 ${name}，或这个服务不允许在执行端上调用`);
+    // Services that do not allow executors are still reachable from Amber's own machine, as they always were.
+    if (!(name in j.calls) || !d || (executorId !== null && d.executor !== true)) throw new AmberError('forbidden', `这个应用没有声明服务 ${name}，或这个服务不允许在执行端上调用`);
     if (j.calls[name] <= 0) throw new AmberError('forbidden', `服务 ${name} 的调用次数已用完`);
     const method = String(b?.method ?? '');
     const path = String(b?.path ?? '');
@@ -306,7 +313,7 @@ export class ExecutorHub {
     }
     j.calls[name]--;
     const inflight = j.inflight ?? (j.inflight = new Set());
-    this.store.audit(null, 'executor.relay', { jobId: b.jobId, executor: e.id, service: name, method, path: path.split('?')[0] });
+    this.store.audit(null, 'executor.relay', { jobId: b.jobId, executor: executorId ?? 'amber', service: name, method, path: path.split('?')[0] });
     return await new Promise(resolve => {
       const req = httpRequest({ ...(d.unixSocket ? { socketPath: d.unixSocket } : { host: '127.0.0.1', port: d.tcpPort }), method, path, headers: { ...headers, 'content-length': String(body.length) }, timeout: RELAY_TIMEOUT_MS }, res => {
         const chunks: Buffer[] = [];
@@ -365,13 +372,12 @@ export class ExecutorHub {
     const jobId = randomUUID();
     // script.timeoutMs is already the effective limit for this run (engine.ts); the executor is told it too.
     const timeoutMs = (script.timeoutMs ?? 60000) + RESULT_GRACE_MS;
-    // Services: only the tokens travel; the executor gives the script a local port and relays the calls here.
-    const remoteInput = input.services ? { ...input, services: Object.fromEntries(Object.entries(input.services).map(([n, s]) => [n, { tokens: s.tokens }])) } : input;
-    const envelope = this.signer.sealJob(e.id, e.boxPub, jobId, this.pickupMs * 2, { jobId, runId: input.runId, env: p.env, spec, specHash, input: remoteInput, timeoutMs: script.timeoutMs, allowHosts: opts.allowHosts ?? [] });
+    // Services: only the tokens travel (engine.ts); the executor gives the script a relay port and relays the calls here.
+    const envelope = this.signer.sealJob(e.id, e.boxPub, jobId, this.pickupMs * 2, { jobId, runId: input.runId, env: p.env, spec, specHash, input, timeoutMs: script.timeoutMs, allowHosts: opts.allowHosts ?? [] });
     this.store.audit(input.caller.unionId, 'executor.dispatch', { runId: input.runId, executor: e.id, name: e.name, env: p.env, jobId });
     return await new Promise<ScriptResult>(resolve => {
       const calls = Object.fromEntries(Object.entries(script.services ?? {}).map(([n, u]) => [n, u.calls]));
-      const job: PendingJob = { executorId: e.id, envelope, picked: false, resolve, timer: setTimeout(() => {}, 0), calls };
+      const job: PendingJob = { executorId: e.id, picked: false, resolve, timer: setTimeout(() => {}, 0), calls };
       const fail = (msg: string) => this.finish(jobId, { ok: false, content: '', error: msg });
       job.timer = setTimeout(() => {
         if (!job.picked) return fail(`执行端 ${p.executor} 没有取走任务（可能刚刚离线），这次没有执行`);
@@ -382,6 +388,33 @@ export class ExecutorHub {
       if (w) { clearTimeout(w.timer); this.waiters.delete(e.id); w.resolve([envelope]); }
       else this.queues.set(e.id, [...(this.queues.get(e.id) ?? []), envelope]);
     });
+  }
+
+  /** Runs a command on Amber's own machine (no script.env) as a job like any other: the script's service calls
+   *  reach the service only through its relay ports and forward(), within the declared call counts.
+   *  `egress`: Amber's own network allow list (runner.ts). */
+  async runLocal(script: Script, input: ScriptInput, opts: { egress?: string[] } = {}): Promise<ScriptResult> {
+    if (script.env) return { ok: false, content: '', error: '这个应用要在执行端上运行' };
+    const jobId = randomUUID();
+    const calls = Object.fromEntries(Object.entries(script.services ?? {}).map(([n, u]) => [n, u.calls]));
+    const done = new Promise<ScriptResult>(resolve => {
+      // The sandbox kills the script at its own timeout; this only covers a run that never comes back.
+      const timer = setTimeout(() => this.finish(jobId, { ok: false, content: '', error: '运行没有在时限内结束' }), (script.timeoutMs ?? 60000) + RESULT_GRACE_MS);
+      this.jobs.set(jobId, { executorId: null, picked: true, resolve, timer, calls });
+    });
+    let relays: { ports: number[]; services?: ScriptInput['services']; close(): void } = { ports: [], close() {} };
+    try {
+      relays = await startRelayPorts(input.services, async req => {
+        const r = await this.forward({ jobId, service: req.service, method: req.method, path: req.path, headers: req.headers, body: req.body.toString('base64') }, null);
+        if (!r.ok) return { status: 502, contentType: 'application/json', body: Buffer.from(JSON.stringify({ error: r.error ?? 'relay_failed', message: r.message ?? '' })) };
+        return { status: r.status ?? 502, contentType: r.contentType ?? '', body: Buffer.from(r.body ?? '', 'base64') };
+      });
+      runScript(script, relays.services ? { ...input, services: relays.services } : input, { ...opts, localPorts: relays.ports })
+        .then(r => this.finish(jobId, r), err => this.finish(jobId, { ok: false, content: '', error: `运行失败：${(err as Error).message}` }));
+    } catch (err) {
+      this.finish(jobId, { ok: false, content: '', error: `运行失败：${(err as Error).message}` });
+    }
+    try { return await done; } finally { relays.close(); }
   }
 
   close(): void {

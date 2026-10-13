@@ -53,22 +53,18 @@ export function serviceDef(name: string): ServiceDef | undefined { return SERVIC
 export const MAX_CODE_BYTES = 64 * 1024;
 const PYTHON = process.env.AMBER_PYTHON ?? '/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/bin/python3.9';
 
+/** The sandbox reaches no service directly: only the local ports it is given (the job's relay ports, the egress proxy). */
 function profile(script: Script, runDir: string, localPorts: number[] = []): string {
-  const tcpPorts: number[] = [...localPorts], unixSockets: string[] = [];
-  for (const name of serviceNames(script)) {
-    const d = SERVICES[name];
-    if (d?.tcpPort) tcpPorts.push(d.tcpPort);
-    if (d?.unixSocket) unixSockets.push(d.unixSocket);
-  }
-  return compileToSeatbelt(buildPolicy({ runDir }), { all: !!script.network, tcpPorts, unixSockets });
+  return compileToSeatbelt(buildPolicy({ runDir }), { all: !!script.network, tcpPorts: localPorts });
 }
 
 export interface ScriptInput {
   params: Record<string, string>;
   caller: { unionId: string; chatId: string; channel: string; city?: string };
   runId: string;
-  /** service name -> { tokens, address }, only for services the script declared. One single-use token per declared call. */
-  services?: Record<string, { tokens: string[]; tcpPort?: number; unixSocket?: string }>;
+  /** service name -> { tokens, tcpPort }, only for services the script declared. One single-use token per declared call.
+   *  tcpPort is the job's relay port for that service (relay-port.ts), on Amber's machine and on executors alike. */
+  services?: Record<string, { tokens: string[]; tcpPort?: number }>;
   /** Command secret name -> value, only the names the script declared (D48). */
   secrets?: Record<string, string>;
 }
@@ -123,13 +119,15 @@ export function validateScript(s: unknown): Script {
   throw new Error('脚本类型只能是 script');
 }
 
-/** `egress`: Amber's own network allow list (admin, on the website) — the hosts a script without full internet
- *  access may still reach, through a local proxy. Scripts with "network": true reach everything anyway. */
-export async function runScript(script: Script, input: ScriptInput, opts: { egress?: string[] } = {}): Promise<ScriptResult> {
+/** The sandboxed run on Amber's machine. Commands go through ExecutorHub.runLocal, which gives the script its relay ports.
+ *  `egress`: Amber's own network allow list (admin, on the website) — the hosts a script without full internet
+ *  access may still reach, through a local proxy. Scripts with "network": true reach everything anyway.
+ *  `localPorts`: the job's relay ports, the only service addresses the sandbox may reach. */
+export async function runScript(script: Script, input: ScriptInput, opts: { egress?: string[]; localPorts?: number[] } = {}): Promise<ScriptResult> {
   // Only sandboxed scripts exist; anything else never runs.
   if (script.kind !== 'script') return { ok: false, content: '', error: '脚本类型只能是 script' };
   // Remote commands are dispatched by the engine; never run one here without its environment.
   if (script.env) return { ok: false, content: '', error: '这个应用要在执行端上运行' };
-  return runSandboxed({ code: script.code, python: script.interpreter ? normalizePath(script.interpreter) : PYTHON, profileFor: (dir, ports) => profile(script, dir, ports), input, timeoutMs: script.timeoutMs,
+  return runSandboxed({ code: script.code, python: script.interpreter ? normalizePath(script.interpreter) : PYTHON, profileFor: (dir, ports) => profile(script, dir, [...(opts.localPorts ?? []), ...ports]), input, timeoutMs: script.timeoutMs,
     ...(!script.network && opts.egress?.length ? { egress: opts.egress } : {}) });
 }

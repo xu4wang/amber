@@ -11,7 +11,7 @@
   "params": {"city": "北京", "repo": "group/project"},
   "caller": {"unionId": "on_…", "chatId": "oc_…", "channel": "bot|web|agent|schedule|page", "city": "北京"},
   "runId": "…",
-  "services": {"data-mcp": {"tokens": ["…", "…"], "tcpPort": 8765}},
+  "services": {"data-mcp": {"tokens": ["…", "…"], "tcpPort": 53127}},
   "secrets": {"API_TOKEN": "…"}
 }
 ```
@@ -77,7 +77,7 @@ Content-Type: application/json
 {"sql": "…", "datasource": "tchouse-c"}
 ```
 
-- 端口取输入里的 `tcpPort`，不要写死；请求不要走代理。在执行端上运行的应用写法完全一样。
+- 端口取输入里的 `tcpPort`，不要写死：它是这次运行专用的转发端口，每次都不一样，服务自己的端口脚本连不上。请求不要走代理。在执行端上运行的应用写法完全一样。
 - 请求体只能有 `sql` 和 `datasource`（可省略），多带任何字段返回 422。
 - 返回 200 时看 `status`：`success` 才算成功，数据在 `rows`（以列名为键的对象数组）、`columns`、`row_count`、`truncated`；`validation_error` 等失败也是 200，原因在 `error_code` 或 `issues[].code`。
 - 401 是凭证无效，409 是凭证已用过，429 是定时执行限流。
