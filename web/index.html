@@ -967,7 +967,7 @@ function trigPane(t, others = false) {
     <div class="box"><h3>最近触发</h3>${t.recent.length ? `<table style="width:100%"><thead><tr><th>时间</th><th>事件</th><th>结果</th></tr></thead><tbody>${t.recent.map(d => `<tr><td>${fmtTime(d.at)}</td><td>${esc(tgEventLabel(d.type))}</td><td>${esc(TG_STATUS[d.status] || d.status)}${d.status !== 'done' && d.error ? `<span class="note">（${esc(TG_SKIP[d.error] || d.error)}）</span>` : ''}</td></tr>`).join('')}</tbody></table>` : '<p class="note">还没有触发过。</p>'}</div>
     <div class="actions">${t.status === 'active' ? '<button class="btn" data-tg="pause">暂停</button>' : '<button class="btn primary" data-tg="resume">恢复</button>'}
       <button class="btn danger" data-tg="delete">删除</button></div>`;
-  document.getElementById('pane').dataset.tg = t.id;
+  document.getElementById('pane').dataset.trigger = t.id;   // not data-tg: that marks the buttons, and the pane stays
 }
 
 function trigAllPane() {
@@ -1084,7 +1084,7 @@ async function reload(keepKey) {
 document.addEventListener('click', async ev => {
   const tgOpen = ev.target.closest('[data-tg-open]');
   if (tgOpen) { ev.preventDefault(); const t = (TRIG.others || []).find(x => x.id === tgOpen.dataset.tgOpen); if (t) trigPane(t); return; }
-  const tgBtn = ev.target.closest('[data-tg]');
+  const tgBtn = ev.target.closest('button[data-tg]');
   if (tgBtn) {
     const op = tgBtn.dataset.tg;
     if (op === 'create') {
@@ -1096,7 +1096,7 @@ document.addEventListener('click', async ev => {
       if (!r.ok) return alert(r.message || '没有建成');
       await reload('tg:' + r.id); return;
     }
-    const id = document.getElementById('pane').dataset.tg;
+    const id = document.getElementById('pane').dataset.trigger;
     if (op === 'delete' && !confirm('删除这个触发器？')) return;
     const r = await post(`/web/api/triggers/${id}/${op}`, {}).catch(e => ({ ok: false, message: e.message }));
     if (!r.ok) return alert(r.message || '操作失败');
