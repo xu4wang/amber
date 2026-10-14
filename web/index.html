@@ -281,12 +281,13 @@ table.audit .mono { font-family: ui-monospace, Menlo, monospace; font-size: 11px
 .pg-warn { border-left: 3px solid var(--warn); background: var(--bg); padding: 8px 12px; font-size: 13px; color: var(--body-ink); margin: 0 0 12px; }
 .pg-foot { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
 #app.center:has(.landing) { display: block; }
-.help-q { flex: none; width: 24px; height: 24px; padding: 0; border-radius: 50%; border: 1px solid var(--line-2); background: var(--bg); color: var(--muted); font-size: 13px; font-weight: 700; letter-spacing: 0; line-height: 22px; text-align: center; cursor: pointer; }
-.help-q:hover, .help-q[aria-expanded="true"] { border-color: var(--accent); color: var(--accent-ink); }
-.help-box { margin: -2px 0 12px; padding: 10px 14px; background: var(--bg); border-left: 3px solid var(--accent); font-size: 13px; color: var(--body-ink); }
-.help-box p { margin: 0 0 6px; }
-.help-box ul { margin: 0 0 6px; padding-left: 18px; }
-.help-box li { margin-bottom: 2px; }
+.help-q { flex: none; align-self: center; width: 20px; height: 20px; padding: 0; border-radius: 50%; border: 1px solid var(--line-2); background: transparent; color: var(--muted-2); font-size: 12px; font-weight: 700; letter-spacing: 0; line-height: 18px; text-align: center; cursor: pointer; }
+.help-q:hover, .help-q[aria-expanded="true"] { border-color: var(--accent); color: var(--accent-ink); background: transparent; }
+.help-pop { position: fixed; z-index: 50; width: min(440px, calc(100vw - 16px)); padding: 12px 16px; background: var(--panel); color: var(--body-ink); border: 1px solid var(--line-2); border-top: 3px solid var(--accent); box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18); font-size: 13px; line-height: 1.65; }
+.help-pop p { margin: 0 0 6px; }
+.help-pop p:last-child, .help-pop ul:last-child { margin-bottom: 0; }
+.help-pop ul { margin: 0 0 6px; padding-left: 18px; }
+.help-pop li { margin-bottom: 2px; }
 </style>
 </head>
 <body>
@@ -983,9 +984,34 @@ function trigAllPane() {
     ${rows.length ? `<table><thead><tr><th>名字</th><th>主人</th><th>事件</th><th>通知</th><th>状态</th></tr></thead><tbody>${rows.map(t => `<tr><td><a href="#" data-tg-open="${esc(t.id)}">${esc(t.name)}</a></td><td>${esc(t.ownerName || '')}</td><td>${esc(t.onLabel)}${t.app ? `（${esc(t.app)}）` : ''}</td><td>${esc(t.to)}</td><td>${t.status === 'active' ? '生效中' : '已暂停'}</td></tr>`).join('')}</tbody></table>` : '<p class="note">别人还没有建触发器。</p>'}`;
 }
 
-// A 「?」 next to a field: why it offers these choices, for you, and how to get others.
+// A 「?」 next to a field: why it offers these choices, for you, and how to get others. It opens a small popover
+// (nothing moves on the page), which closes on a click elsewhere, Esc or scrolling.
 const helpQ = k => `<button type="button" class="help-q" data-help="${k}" title="为什么是这些选项" aria-expanded="false">?</button>`;
-const helpBox = (k, html) => `<div class="help-box" id="help-${k}" hidden>${html}</div>`;
+const helpBox = (k, html) => `<template id="help-${k}">${html}</template>`;
+function closeHelp() {
+  document.getElementById('help-pop')?.remove();
+  document.querySelectorAll('.help-q[aria-expanded="true"]').forEach(b => b.setAttribute('aria-expanded', 'false'));
+}
+function openHelp(btn) {
+  const was = btn.getAttribute('aria-expanded') === 'true';
+  closeHelp();
+  const tpl = document.getElementById('help-' + btn.dataset.help);
+  if (was || !tpl) return;
+  const pop = document.createElement('div');
+  pop.id = 'help-pop';
+  pop.className = 'help-pop';
+  pop.setAttribute('role', 'tooltip');
+  pop.appendChild(tpl.content.cloneNode(true));
+  document.body.appendChild(pop);
+  const r = btn.getBoundingClientRect(), w = pop.offsetWidth, h = pop.offsetHeight;
+  const left = Math.max(8, Math.min(r.right - w, window.innerWidth - w - 8));
+  const top = r.bottom + 8 + h <= window.innerHeight ? r.bottom + 8 : Math.max(8, r.top - h - 8);
+  pop.style.left = left + 'px';
+  pop.style.top = top + 'px';
+  btn.setAttribute('aria-expanded', 'true');
+}
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeHelp(); });
+document.addEventListener('scroll', closeHelp, true);
 
 function trigNewPane() {
   const ev = TRIG.events, apps = TRIG.apps, groups = TRIG.groups;
@@ -1027,7 +1053,6 @@ function trigNewPane() {
     const e = ev.find(x => x.type === onSel.value);
     const appEvent = e.type.startsWith('app.') || e.type.startsWith('run.') || e.type === 'schedule.paused';
     document.getElementById('tg-app-row').style.display = appEvent ? '' : 'none';
-    if (!appEvent) document.getElementById('help-app').hidden = true;
     appSel.innerHTML = (e.all ? '<option value="">所有应用</option>' : '') + apps.map((a, i) => `<option value="${i}">${esc(a.name)} · ${esc(a.chat)}</option>`).join('');
   };
   onSel.addEventListener('change', appsFor);
@@ -1115,11 +1140,8 @@ async function reload(keepKey) {
 
 document.addEventListener('click', async ev => {
   const hq = ev.target.closest('button[data-help]');
-  if (hq) {
-    const box = document.getElementById('help-' + hq.dataset.help);
-    if (box) { box.hidden = !box.hidden; hq.setAttribute('aria-expanded', String(!box.hidden)); }
-    return;
-  }
+  if (hq) { openHelp(hq); return; }
+  if (!ev.target.closest('#help-pop')) closeHelp();
   const tgOpen = ev.target.closest('[data-tg-open]');
   if (tgOpen) { ev.preventDefault(); const t = (TRIG.others || []).find(x => x.id === tgOpen.dataset.tgOpen); if (t) trigPane(t); return; }
   const tgBtn = ev.target.closest('button[data-tg]');
