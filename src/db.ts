@@ -64,6 +64,18 @@ export function computeSpecHash(c: Pick<CommandRow, 'name' | 'params' | 'script'
   return createHash('sha256').update(canonical).digest('hex');
 }
 
+/** Something that happened in Amber (src/triggers.ts lists the types); data holds who and what, never run output. */
+export interface EventRow { id: number; type: string; at: number; data: Record<string, unknown> }
+export type TriggerStatus = 'pending' | 'active' | 'paused';
+/** Where a trigger's notice goes: the owner's private chat, or a chat (optionally a thread), @-ing bots or people there. */
+export type TriggerAction = { kind: 'notify'; to: 'me' } | { kind: 'notify'; to: 'chat'; chatId: string; chatName?: string; rootId?: string; mentions: { openId: string; name: string }[] };
+export interface TriggerRow {
+  id: string; ownerUnionId: string; ownerOpenId: string | null; name: string; eventType: string;
+  filter: { app?: string; chatId?: string }; action: TriggerAction; status: TriggerStatus; pauseReason: string | null;
+  createdAt: number; confirmMessageId: string | null; requestedBy: string | null;
+}
+export interface DeliveryRow { triggerId: string; eventId: number; status: 'pending' | 'done' | 'failed' | 'skipped'; attempts: number; nextAt: number; error: string | null; at: number; doneAt: number | null }
+
 export type ExecutorStatus = 'pending' | 'approved' | 'rejected' | 'revoked';
 /** An environment on an executor: the directory {WORKDIR} stands for, and the Python to use there. */
 export interface ExecutorEnv {
@@ -372,6 +384,34 @@ export class Store {
       updated_at INTEGER NOT NULL
     )`);
     this.db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS pages_chat_name ON pages(chat_id, name) WHERE status != 'deleted'`);
+    // Triggers: events are written first, then each matching trigger gets a delivery that is retried until done.
+    this.db.exec(`CREATE TABLE IF NOT EXISTS events (id INTEGER PRIMARY KEY AUTOINCREMENT, type TEXT NOT NULL, at INTEGER NOT NULL, data TEXT NOT NULL)`);
+    this.db.exec(`CREATE TABLE IF NOT EXISTS triggers (
+      id TEXT PRIMARY KEY,
+      owner_union_id TEXT NOT NULL,
+      owner_open_id TEXT,
+      name TEXT NOT NULL,
+      event_type TEXT NOT NULL,
+      filter_json TEXT NOT NULL,
+      action_json TEXT NOT NULL,
+      status TEXT NOT NULL,
+      pause_reason TEXT,
+      created_at INTEGER NOT NULL,
+      confirm_message_id TEXT,
+      requested_by TEXT
+    )`);
+    this.db.exec(`CREATE TABLE IF NOT EXISTS trigger_deliveries (
+      trigger_id TEXT NOT NULL,
+      event_id INTEGER NOT NULL,
+      status TEXT NOT NULL,
+      attempts INTEGER NOT NULL DEFAULT 0,
+      next_at INTEGER NOT NULL,
+      error TEXT,
+      at INTEGER NOT NULL,
+      done_at INTEGER,
+      PRIMARY KEY (trigger_id, event_id)
+    )`);
+    this.db.exec(`CREATE INDEX IF NOT EXISTS trigger_deliveries_due ON trigger_deliveries(status, next_at)`);
     const runCols = (this.db.prepare(`PRAGMA table_info(runs)`).all() as { name: string }[]).map(c => c.name);
     if (!runCols.includes('schedule_id')) this.db.exec('ALTER TABLE runs ADD COLUMN schedule_id TEXT');
     // Where a login link lands (a page app it was sent for); fixed server side, never taken from the URL.
@@ -548,6 +588,11 @@ export class Store {
 
   /** The active version of a line in a chat. For a submitted command the line is its name, so this is also
    *  "the active command with this name" — never a Store installation, which has a line of its own. */
+  /** Every version under one name in a chat, whatever its status. */
+  commandsInChatNamed(chatId: string, line: string): CommandRow[] {
+    return (this.db.prepare(`SELECT * FROM commands WHERE chat_id = ? AND COALESCE(line, name) = ?`).all(chatId, line) as Record<string, unknown>[]).map(r => this.toRow(r));
+  }
+
   activeByName(chatId: string, line: string): CommandRow | undefined {
     const r = this.db.prepare(`SELECT * FROM commands WHERE chat_id = ? AND COALESCE(line, name) = ? AND status = 'active'`).get(chatId, line) as Record<string, unknown> | undefined;
     return r ? this.toRow(r) : undefined;
@@ -973,6 +1018,78 @@ export class Store {
     if (f.ownerOpenId !== undefined) set('owner_open_id', f.ownerOpenId);
     set('updated_at', Date.now());
     this.db.prepare(`UPDATE pages SET ${cols.join(', ')} WHERE id = ?`).run(...args, id);
+  }
+
+  // ---------- events and triggers
+
+  insertEvent(type: string, data: Record<string, unknown>): number {
+    return Number(this.db.prepare('INSERT INTO events (type, at, data) VALUES (?,?,?)').run(type, Date.now(), JSON.stringify(data)).lastInsertRowid);
+  }
+  getEvent(id: number): EventRow | undefined {
+    const r = this.db.prepare('SELECT * FROM events WHERE id = ?').get(id) as Record<string, unknown> | undefined;
+    return r ? { id: Number(r.id), type: String(r.type), at: Number(r.at), data: JSON.parse(String(r.data)) } : undefined;
+  }
+  /** Old events and their deliveries go; triggers stay. */
+  pruneEvents(before: number): void {
+    this.db.prepare('DELETE FROM trigger_deliveries WHERE event_id IN (SELECT id FROM events WHERE at < ?)').run(before);
+    this.db.prepare('DELETE FROM events WHERE at < ?').run(before);
+  }
+  private triggerRow(r: Record<string, unknown> | undefined): TriggerRow | undefined {
+    if (!r) return undefined;
+    return {
+      id: String(r.id), ownerUnionId: String(r.owner_union_id), ownerOpenId: (r.owner_open_id as string) ?? null, name: String(r.name), eventType: String(r.event_type),
+      filter: JSON.parse(String(r.filter_json)), action: JSON.parse(String(r.action_json)), status: r.status as TriggerStatus, pauseReason: (r.pause_reason as string) ?? null,
+      createdAt: Number(r.created_at), confirmMessageId: (r.confirm_message_id as string) ?? null, requestedBy: (r.requested_by as string) ?? null,
+    };
+  }
+  insertTrigger(t: Omit<TriggerRow, 'createdAt' | 'confirmMessageId' | 'pauseReason'>): void {
+    this.db.prepare('INSERT INTO triggers (id, owner_union_id, owner_open_id, name, event_type, filter_json, action_json, status, created_at, requested_by) VALUES (?,?,?,?,?,?,?,?,?,?)')
+      .run(t.id, t.ownerUnionId, t.ownerOpenId, t.name, t.eventType, JSON.stringify(t.filter), JSON.stringify(t.action), t.status, Date.now(), t.requestedBy);
+  }
+  getTrigger(id: string): TriggerRow | undefined { return this.triggerRow(this.db.prepare('SELECT * FROM triggers WHERE id = ?').get(id) as Record<string, unknown> | undefined); }
+  /** One person's triggers, or everyone's (owner undefined), newest first. */
+  listTriggers(owner?: string): TriggerRow[] {
+    const rows = owner === undefined ? this.db.prepare('SELECT * FROM triggers ORDER BY created_at DESC').all() : this.db.prepare('SELECT * FROM triggers WHERE owner_union_id = ? ORDER BY created_at DESC').all(owner);
+    return (rows as Record<string, unknown>[]).map(r => this.triggerRow(r)!);
+  }
+  activeTriggersFor(eventType: string): TriggerRow[] {
+    return (this.db.prepare(`SELECT * FROM triggers WHERE event_type = ? AND status = 'active' ORDER BY created_at`).all(eventType) as Record<string, unknown>[]).map(r => this.triggerRow(r)!);
+  }
+  updateTrigger(id: string, f: Partial<Pick<TriggerRow, 'status' | 'pauseReason' | 'confirmMessageId' | 'ownerOpenId'>>): void {
+    const cols: string[] = [], args: (string | number | null)[] = [];
+    if (f.status !== undefined) { cols.push('status = ?'); args.push(f.status); }
+    if (f.pauseReason !== undefined) { cols.push('pause_reason = ?'); args.push(f.pauseReason); }
+    if (f.confirmMessageId !== undefined) { cols.push('confirm_message_id = ?'); args.push(f.confirmMessageId); }
+    if (f.ownerOpenId !== undefined) { cols.push('owner_open_id = ?'); args.push(f.ownerOpenId); }
+    if (cols.length) this.db.prepare(`UPDATE triggers SET ${cols.join(', ')} WHERE id = ?`).run(...args, id);
+  }
+  deleteTrigger(id: string): void {
+    this.db.prepare('DELETE FROM trigger_deliveries WHERE trigger_id = ?').run(id);
+    this.db.prepare('DELETE FROM triggers WHERE id = ?').run(id);
+  }
+  /** False when this trigger already has a delivery for this event (each event is handled once). */
+  insertDelivery(triggerId: string, eventId: number, status: DeliveryRow['status'] = 'pending', error: string | null = null): boolean {
+    const now = Date.now();
+    return Number(this.db.prepare('INSERT OR IGNORE INTO trigger_deliveries (trigger_id, event_id, status, attempts, next_at, error, at, done_at) VALUES (?,?,?,0,?,?,?,?)')
+      .run(triggerId, eventId, status, now, error, now, status === 'pending' ? null : now).changes) > 0;
+  }
+  private deliveryRow(r: Record<string, unknown>): DeliveryRow {
+    return { triggerId: String(r.trigger_id), eventId: Number(r.event_id), status: r.status as DeliveryRow['status'], attempts: Number(r.attempts), nextAt: Number(r.next_at), error: (r.error as string) ?? null, at: Number(r.at), doneAt: r.done_at == null ? null : Number(r.done_at) };
+  }
+  dueDeliveries(now: number, limit = 50): DeliveryRow[] {
+    return (this.db.prepare(`SELECT * FROM trigger_deliveries WHERE status = 'pending' AND next_at <= ? ORDER BY next_at LIMIT ?`).all(now, limit) as Record<string, unknown>[]).map(r => this.deliveryRow(r));
+  }
+  updateDelivery(triggerId: string, eventId: number, f: { status: DeliveryRow['status']; attempts: number; nextAt?: number; error?: string | null }): void {
+    this.db.prepare('UPDATE trigger_deliveries SET status = ?, attempts = ?, next_at = COALESCE(?, next_at), error = ?, done_at = ? WHERE trigger_id = ? AND event_id = ?')
+      .run(f.status, f.attempts, f.nextAt ?? null, f.error ?? null, f.status === 'pending' ? null : Date.now(), triggerId, eventId);
+  }
+  deliveriesOf(triggerId: string, limit = 10): (DeliveryRow & { type: string })[] {
+    return (this.db.prepare('SELECT d.*, e.type FROM trigger_deliveries d JOIN events e ON e.id = d.event_id WHERE d.trigger_id = ? ORDER BY d.at DESC LIMIT ?').all(triggerId, limit) as Record<string, unknown>[])
+      .map(r => ({ ...this.deliveryRow(r), type: String(r.type) }));
+  }
+  /** Deliveries sent (or being sent) for a trigger since a moment: the rate limit counts these. */
+  countDeliveriesSince(triggerId: string, since: number): number {
+    return Number((this.db.prepare(`SELECT COUNT(*) AS n FROM trigger_deliveries WHERE trigger_id = ? AND at >= ? AND status != 'skipped'`).get(triggerId, since) as { n: number }).n);
   }
 
   /** Writes only when the key is not there yet (atomic); true when it wrote. */

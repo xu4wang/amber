@@ -16,6 +16,7 @@ import { join, dirname, extname } from 'node:path';
 import type { Store, PageRow, PageApp, PageAccess, CommandRow, ScopeType } from './db.ts';
 import { AmberError, findVisible, runCommand, type Caller, type CallerFacts, type RunOutcome } from './engine.ts';
 import { sanitizeMarkdown, person, closedCard } from './cards.ts';
+import { emitEvent } from './events.ts';
 
 export const MAX_PAGE_FILES = 200;
 export const MAX_PAGE_BYTES = 10 * 1024 * 1024;
@@ -228,6 +229,7 @@ export class PageService {
     this.store.updatePage(id, { apps: bound, version: pending.version, status: 'active', pending: null, ownerOpenId: clicker.openId ?? p.ownerOpenId });
     this.prune({ ...p, version: pending.version, pending: null });
     this.store.audit(clicker.unionId, 'page.publish', { id, name: p.name, version: pending.version, apps: bound.map(a => ({ name: a.name, commandId: a.commandId })) });
+    emitEvent(first ? 'page.published' : 'page.apps_changed', { pageId: id, name: p.name, chatId: p.chatId, chatType: p.chatType, ownerUnionId: p.ownerUnionId });
     const url = this.url(p);
     return {
       schema: '2.0', config: { update_multi: true },

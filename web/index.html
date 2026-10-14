@@ -437,6 +437,7 @@ function showOutput(el, r, meta) {
 let DATA = null;          // overview
 let STORE = null;         // Amber Store: { apps, targets }
 let RUNS = [];
+let TRIG = null;          // triggers: { triggers, others?, events, apps, groups }
 let SETTINGS = null;      // site-wide settings (admins only): { cardFooter, defaultCardFooter, max }
 let SEL = null;           // { kind: 'cmd'|'sch'|'run', key }
 const ITEMS = new Map();  // key -> { kind, c?, scope?, where?, s?, r? }
@@ -524,8 +525,17 @@ function renderTree() {
     }
     ITEMS.set('audit', { kind: 'audit' });
     admin += '<div class="leaf" data-key="audit" data-search="审计日志 audit"><span class="name">审计日志</span></div>';
+    if (TRIG && TRIG.others) { ITEMS.set('tg:all', { kind: 'tg-all' }); admin += `<div class="leaf" data-key="tg:all" data-search="所有触发器"><span class="name">所有人的触发器</span><span class="sub">${TRIG.others.length}</span></div>`; }
     const pendingAll = (o.executors || []).some(e => e.status === 'pending');
     html += node('admin', `系统管理${pendingAll ? '<span class="chip warn">待批准</span>' : ''}`, admin);
+  }
+  if (TRIG && TRIG.ok) {
+    ITEMS.set('tg:new', { kind: 'tg-new' });
+    html += node('triggers', `我的触发器<span class="count">${TRIG.triggers.length}</span>`, TRIG.triggers.map(t => {
+      const key = 'tg:' + t.id;
+      ITEMS.set(key, { kind: 'tg', t });
+      return `<div class="leaf" data-key="${esc(key)}" data-search="${esc((t.name + ' ' + t.onLabel).toLowerCase())}"><span class="dot ${t.status === 'active' ? 'ok' : 'failed'}"></span><span class="name">${esc(t.name)}</span><span class="sub">${t.status === 'active' ? esc(t.onLabel) : '已暂停'}</span></div>`;
+    }).join('') + '<div class="leaf" data-key="tg:new" data-search="新建触发器"><span class="name">＋ 新建触发器</span></div>');
   }
   html += node('runs', `最近运行<span class="count">${RUNS.length}</span>`, RUNS.map(r => {
     const key = 'r:' + r.id;
@@ -567,6 +577,9 @@ function select(key, push = true) {
   else if (it.kind === 'set-hosts') hostsPane();
   else if (it.kind === 'audit') auditPane();
   else if (it.kind === 'page') pagePane(it);
+  else if (it.kind === 'tg') trigPane(it.t);
+  else if (it.kind === 'tg-new') trigNewPane();
+  else if (it.kind === 'tg-all') trigAllPane();
   else runPane(it);
 }
 
@@ -811,6 +824,7 @@ const AUDIT_LABEL = {
   'command.clone_decline': '拒绝接收复制', 'command.reassign_request': '发起重新分配', 'command.reassign_decline': '拒绝接收重新分配',
   'config.delete': '删除配置项', 'config.drop_all': '删除全部配置项', 'secret.delete': '删除密钥', 'request.cancel': '取消确认请求',
   'review.feishu_check_failed': '飞书审批状态查询失败', 'schedule.missed': '定时任务错过（Amber 未运行）', 'web.logout_all': '退出所有网站登录',
+  'trigger.request': '请求新建触发器', 'trigger.create': '新建触发器', 'trigger.cancel': '取消新建触发器', 'trigger.pause': '暂停触发器', 'trigger.resume': '恢复触发器', 'trigger.delete': '删除触发器', 'trigger.deliver_failed': '触发器通知发送失败',
   'page.publish_request': '请求发布页面', 'page.publish': '发布页面', 'page.publish_cancel': '取消发布页面', 'page.update': '更新页面内容', 'page.access': '修改页面访问范围', 'page.delete': '删除页面', 'page.call': '页面调用应用',
   'startup.seed': '首次启动写入默认设置', 'startup.interrupted_runs': '重启时标记中断的执行', 'startup.unrunnable': '发现不能执行的应用',
 };
@@ -937,6 +951,65 @@ function exePane({ e }) {
     </div>`;
 }
 
+// ---- triggers: when something happens in Amber, a notice in your private chat or a group (@ a bot to wake an agent)
+const TG_STATUS = { done: '已发送', pending: '发送中', failed: '发送失败', skipped: '未发送' };
+const TG_SKIP = { not_visible: '你现在看不到这个事件', not_member: '你已不在目标群里', rate_limited: '触发太频繁', trigger_paused: '触发器已暂停', gone: '触发器已删除' };
+function tgEventLabel(type) { return ((TRIG && TRIG.events) || []).find(e => e.type === type)?.label || type; }
+
+function trigPane(t, others = false) {
+  document.getElementById('pane').innerHTML = `${backBtn}
+    <div class="pane-head"><h1>${esc(t.name)}</h1>${t.status === 'active' ? '<span class="chip accent">生效中</span>' : '<span class="chip warn">已暂停</span>'}</div>
+    <div class="where">触发器 ${esc(t.id)} · 建于 ${fmtTime(t.createdAt)}${t.ownerName ? ` · 属于 ${esc(t.ownerName)}` : ''}</div>
+    ${t.status === 'paused' && t.pauseReason ? `<p class="pg-warn">${esc(t.pauseReason)}</p>` : ''}
+    <div class="box"><h3>什么时候</h3><p>${esc(t.onLabel)}${t.app ? `，只看「${esc(t.app)}」${t.appChat ? `（${esc(t.appChat)}）` : ''}` : ''}</p>
+      <h3 style="margin-top:16px">做什么</h3><p>${esc(t.to)}</p>
+      <p class="note">通知里只有发生了什么（哪个应用、谁、什么时间），不包含执行结果。</p></div>
+    <div class="box"><h3>最近触发</h3>${t.recent.length ? `<table style="width:100%"><thead><tr><th>时间</th><th>事件</th><th>结果</th></tr></thead><tbody>${t.recent.map(d => `<tr><td>${fmtTime(d.at)}</td><td>${esc(tgEventLabel(d.type))}</td><td>${esc(TG_STATUS[d.status] || d.status)}${d.status !== 'done' && d.error ? `<span class="note">（${esc(TG_SKIP[d.error] || d.error)}）</span>` : ''}</td></tr>`).join('')}</tbody></table>` : '<p class="note">还没有触发过。</p>'}</div>
+    <div class="actions">${t.status === 'active' ? '<button class="btn" data-tg="pause">暂停</button>' : '<button class="btn primary" data-tg="resume">恢复</button>'}
+      <button class="btn danger" data-tg="delete">删除</button></div>`;
+  document.getElementById('pane').dataset.tg = t.id;
+}
+
+function trigAllPane() {
+  const rows = TRIG.others || [];
+  document.getElementById('pane').innerHTML = `${backBtn}<div class="pane-head"><h1>所有人的触发器</h1></div>
+    <p class="desc">管理员可以看到、暂停和删除别人的触发器。</p>
+    ${rows.length ? `<table><thead><tr><th>名字</th><th>主人</th><th>事件</th><th>通知</th><th>状态</th></tr></thead><tbody>${rows.map(t => `<tr><td><a href="#" data-tg-open="${esc(t.id)}">${esc(t.name)}</a></td><td>${esc(t.ownerName || '')}</td><td>${esc(t.onLabel)}${t.app ? `（${esc(t.app)}）` : ''}</td><td>${esc(t.to)}</td><td>${t.status === 'active' ? '生效中' : '已暂停'}</td></tr>`).join('')}</tbody></table>` : '<p class="note">别人还没有建触发器。</p>'}`;
+}
+
+function trigNewPane() {
+  const ev = TRIG.events, apps = TRIG.apps, groups = TRIG.groups;
+  document.getElementById('pane').innerHTML = `${backBtn}
+    <div class="pane-head"><h1>新建触发器</h1></div>
+    <p class="desc">Amber 里发生某件事时，自动发一条通知：发到你的私聊，或者发到你所在的群并 @某个机器人，让它（比如你的 agent）接着处理，不用一直去查。</p>
+    <div class="box">
+      <div class="field"><label>什么时候</label><select id="tg-on">${ev.map(e => `<option value="${esc(e.type)}">${esc(e.label)}</option>`).join('')}</select></div>
+      <div class="field" id="tg-app-row"><label>哪个应用</label><select id="tg-app"></select></div>
+      <div class="field"><label>通知到</label><select id="tg-to"><option value="me">我的私聊</option>${groups.map(g => `<option value="${esc(g.chatId)}">群：${esc(g.name)}</option>`).join('')}</select></div>
+      <div id="tg-bots" class="pg-members" style="display:none"></div>
+      <div class="field"><label>名字</label><input id="tg-name" placeholder="不填就用事件名" maxlength="40"></div>
+      <p class="note">通知里只有发生了什么（哪个应用、谁、什么时间），不包含执行结果。每分钟最多 10 次、每天最多 200 次，超过会自动暂停。</p>
+      <div class="actions"><button class="btn primary" data-tg="create">建好</button></div>
+    </div>`;
+  const onSel = document.getElementById('tg-on'), appSel = document.getElementById('tg-app'), toSel = document.getElementById('tg-to');
+  const appsFor = () => {
+    const e = ev.find(x => x.type === onSel.value);
+    const appEvent = e.type.startsWith('app.') || e.type.startsWith('run.') || e.type === 'schedule.paused';
+    document.getElementById('tg-app-row').style.display = appEvent ? '' : 'none';
+    appSel.innerHTML = (e.all ? '<option value="">所有应用</option>' : '') + apps.map((a, i) => `<option value="${i}">${esc(a.name)} · ${esc(a.chat)}</option>`).join('');
+  };
+  onSel.addEventListener('change', appsFor);
+  appsFor();
+  toSel.addEventListener('change', async () => {
+    const box = document.getElementById('tg-bots');
+    if (toSel.value === 'me') { box.style.display = 'none'; box.innerHTML = ''; return; }
+    box.style.display = '';
+    box.innerHTML = '<p class="note">加载群里的机器人……</p>';
+    const r = await fetch(`/web/api/groups/${encodeURIComponent(toSel.value)}/bots`).then(x => x.json()).catch(() => ({ ok: false }));
+    box.innerHTML = r.ok && r.bots.length ? '<span class="note" style="width:100%">同时 @（可不选）：</span>' + r.bots.map(b => `<label><input type="checkbox" name="tg-bot" value="${esc(b.name)}">${esc(b.name)}</label>`).join('') : '<p class="note">群里没有别的机器人，通知只发到群里。</p>';
+  });
+}
+
 async function runPane({ r }) {
   document.getElementById('pane').innerHTML = `${backBtn}
     <div class="pane-head"><h1>${esc(r.command)}</h1><span class="chip">${esc(CH[r.channel] || r.channel)}</span>
@@ -1002,12 +1075,33 @@ async function reload(keepKey) {
   DATA = o;
   STORE = await fetch('/web/api/store').then(r => r.json()).catch(() => null);
   SETTINGS = o.isAdmin ? await fetch('/web/api/settings').then(r => r.json()).catch(() => null) : null;
+  TRIG = await fetch('/web/api/triggers').then(r => r.json()).catch(() => null);
   await refreshRuns();
   renderTree();
   if (keepKey && ITEMS.has(keepKey)) select(keepKey, false);
 }
 
 document.addEventListener('click', async ev => {
+  const tgOpen = ev.target.closest('[data-tg-open]');
+  if (tgOpen) { ev.preventDefault(); const t = (TRIG.others || []).find(x => x.id === tgOpen.dataset.tgOpen); if (t) trigPane(t); return; }
+  const tgBtn = ev.target.closest('[data-tg]');
+  if (tgBtn) {
+    const op = tgBtn.dataset.tg;
+    if (op === 'create') {
+      const appSel = document.getElementById('tg-app'), app = document.getElementById('tg-app-row').style.display === 'none' || appSel.value === '' ? null : TRIG.apps[Number(appSel.value)];
+      const to = document.getElementById('tg-to').value;
+      const body = { on: document.getElementById('tg-on').value, name: document.getElementById('tg-name').value.trim() || undefined, app: app ? app.name : undefined, appChatId: app ? app.chatId : undefined,
+        to: to === 'me' ? 'me' : 'chat', chatId: to === 'me' ? undefined : to, mention: [...document.querySelectorAll('input[name=tg-bot]:checked')].map(x => x.value) };
+      const r = await post('/web/api/triggers', body).catch(e => ({ ok: false, message: e.message }));
+      if (!r.ok) return alert(r.message || '没有建成');
+      await reload('tg:' + r.id); return;
+    }
+    const id = document.getElementById('pane').dataset.tg;
+    if (op === 'delete' && !confirm('删除这个触发器？')) return;
+    const r = await post(`/web/api/triggers/${id}/${op}`, {}).catch(e => ({ ok: false, message: e.message }));
+    if (!r.ok) return alert(r.message || '操作失败');
+    await reload(op === 'delete' ? null : SEL); if (op === 'delete') welcome(); return;
+  }
   const pgBtn = ev.target.closest('[data-pg]');
   if (pgBtn) {
     const it = ITEMS.get(SEL);
