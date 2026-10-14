@@ -10,6 +10,7 @@ import type { Rule } from './schedule-rule.ts';
 import { scheduleResultCard, errorCard, scheduleListCard, rebindCard, closedCard } from './cards.ts';
 import type { ScheduleView } from './cards.ts';
 import type { Deps } from './agent.ts';
+import { emitEvent } from './events.ts';
 
 function log(...a: unknown[]): void { console.log(new Date().toISOString(), ...a); }
 
@@ -72,7 +73,14 @@ export class Scheduler {
   private pause(s: ScheduleRow, reason: string): void {
     this.store.updateSchedule(s.id, { status: 'paused', pauseReason: reason });
     this.store.audit(null, 'schedule.pause', { id: s.id, reason });
+    this.pausedEvent(s, reason);
     log('schedule paused', s.id, reason);
+  }
+
+  /** Paused by Amber itself (not by a person): for triggers. */
+  private pausedEvent(s: ScheduleRow, reason: string): void {
+    const cmd = this.store.getCommand(s.commandId);
+    emitEvent('schedule.paused', { scheduleId: s.id, commandId: s.commandId, name: cmd ? cmd.line ?? cmd.name : s.commandId, chatId: s.chatId, chatType: s.chatType, ownerUnionId: s.creatorUnionId, reason });
   }
 
   private async notifyCreator(s: ScheduleRow, title: string, message: string): Promise<void> {
@@ -173,6 +181,7 @@ export class Scheduler {
     for (const s of this.store.schedulesOfCommand(prev.id)) {
       this.store.updateSchedule(s.id, { status: 'paused', pauseReason: '应用已更新为新版本，等待确认换绑' });
       this.store.audit(null, 'schedule.pause', { id: s.id, reason: 'command_replaced', old: prev.id, new: next.id });
+      this.pausedEvent(s, '应用已更新为新版本，等待确认换绑');
       try {
         await this.deps.send({ unionId: s.creatorUnionId }, rebindCard({ scheduleId: s.id, name: next.name, ruleText: describeRule(s.rule), oldHash: prev.specHash, newId: next.id, newHash: next.specHash, stillSchedulable: next.options.schedulable }));
       } catch (e: any) { log('rebind card failed', s.id, e?.response?.data?.code ?? e?.message); }

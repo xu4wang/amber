@@ -16,6 +16,7 @@ import type { Scheduler } from './scheduler.ts';
 import { envsHash, effectiveAccess, credentialPaths, type ExecutorHub } from './executors.ts';
 import type { AppStore } from './apps.ts';
 import { outputBlocks, type PageService } from './pages.ts';
+import type { TriggerService } from './triggers.ts';
 import { showFingerprint } from './exec-proto.ts';
 import { describeRule, formatAt, defaultTz, timezones } from './schedule-rule.ts';
 import { CARD_FOOTER_KEY, CARD_FOOTER_MAX, DEFAULT_CARD_FOOTER, cleanFooter } from './cards.ts';
@@ -60,6 +61,9 @@ export interface WebDeps {
   origin: string;
   /** How long a website run is waited for before the page is told to poll for it (default 20 s). */
   runWaitMs?: number;
+  /** Triggers (triggers.ts): the logged-in person's own. */
+  triggers?: TriggerService;
+  chatBots?(chatId: string): Promise<{ openId: string; name: string }[]>;
   /** Page apps (pages.ts) and the separate origin their files are served from. */
   pages?: PageService;
   pagesBaseUrl?: string;
@@ -77,6 +81,7 @@ const AUDIT_CATEGORIES: Record<string, { label: string; prefixes: string[] }> = 
   executor: { label: '执行端', prefixes: ['executor.', 'web.executor'] },
   settings: { label: '设置、配置项与密钥', prefixes: ['web.card_footer', 'web.run_limits', 'web.allow_hosts', 'config.', 'secret.set', 'secret.delete', 'secret.drop'] },
   page: { label: '页面应用', prefixes: ['page.'] },
+  trigger: { label: '触发器', prefixes: ['trigger.'] },
   login: { label: '登录', prefixes: ['web.login', 'web.logout', 'web.selftest'] },
   system: { label: '系统', prefixes: ['startup.', 'migrate.'] },
 };
@@ -156,7 +161,7 @@ export function startWeb(port: number, store: Store, deps: WebDeps): import('nod
   const logo = readFileSync(join(import.meta.dirname, '..', 'web', 'logo.svg'));
   // Documentation (docs/*.md), readable without logging in. Rendered in the browser.
   // [file, title, nav group "section/subgroup"]; an empty group keeps the page out of the nav (old links still work).
-  const DOCS: [string, string, string][] = [['quickstart', '快速上手', '使用手册/业务开发人员'], ['chat', 'Amber 机器人对话', '使用手册/业务开发人员'], ['with-agent', '和自己的 agent 协作', '使用手册/业务开发人员'], ['web', '网站操作', '使用手册/业务开发人员'], ['scenarios', '主要场景的实现方式', '使用手册/业务开发人员'], ['pages', '页面应用', '使用手册/业务开发人员'], ['sharing', '应用的分享', '使用手册/业务开发人员'], ['faq', '常见问题', '使用手册/业务开发人员'], ['review', '审核指南', '使用手册/审核人员'], ['admin', '管理员手册', '使用手册/系统管理员'], ['install', '安装与部署', '安装运维'], ['feishu-setup', '飞书应用配置', '安装运维'], ['executor', '执行端与运行环境', '安装运维'], ['concepts', '概念模型', '概念模型与开发参考'], ['script', '脚本约定', '概念模型与开发参考'], ['cli-and-skill', 'agent 接入：命令行、skill 与接口', '概念模型与开发参考'], ['identity', '可信身份', '概念模型与开发参考'], ['identity-example', '可信身份：完整示例', '概念模型与开发参考'], ['environment-format', '运行环境定义格式', '概念模型与开发参考'], ['usage', '使用指南（已拆分）', '']];
+  const DOCS: [string, string, string][] = [['quickstart', '快速上手', '使用手册/业务开发人员'], ['chat', 'Amber 机器人对话', '使用手册/业务开发人员'], ['with-agent', '和自己的 agent 协作', '使用手册/业务开发人员'], ['web', '网站操作', '使用手册/业务开发人员'], ['scenarios', '主要场景的实现方式', '使用手册/业务开发人员'], ['pages', '页面应用', '使用手册/业务开发人员'], ['triggers', '触发器', '使用手册/业务开发人员'], ['sharing', '应用的分享', '使用手册/业务开发人员'], ['faq', '常见问题', '使用手册/业务开发人员'], ['review', '审核指南', '使用手册/审核人员'], ['admin', '管理员手册', '使用手册/系统管理员'], ['install', '安装与部署', '安装运维'], ['feishu-setup', '飞书应用配置', '安装运维'], ['executor', '执行端与运行环境', '安装运维'], ['concepts', '概念模型', '概念模型与开发参考'], ['script', '脚本约定', '概念模型与开发参考'], ['cli-and-skill', 'agent 接入：命令行、skill 与接口', '概念模型与开发参考'], ['identity', '可信身份', '概念模型与开发参考'], ['identity-example', '可信身份：完整示例', '概念模型与开发参考'], ['environment-format', '运行环境定义格式', '概念模型与开发参考'], ['usage', '使用指南（已拆分）', '']];
   // Diagrams referenced from the docs as assets/<name>.svg, and the login-page animation (amber-why.gif).
   const docAssets = new Map<string, { type: string; body: Buffer }>();
   for (const f of readdirSync(join(import.meta.dirname, '..', 'docs', 'assets'))) {
@@ -374,6 +379,23 @@ export function startWeb(port: number, store: Store, deps: WebDeps): import('nod
           if (!app || (app.status !== 'listed' && app.maintainerUnionId !== who.unionId && !deps.isAdmin(who.unionId))) return json(res, 404, { ok: false, error: 'not_found', message: '没有这个应用' });
           return json(res, 200, { ok: true, ...deps.apps!.source(app) });
         }
+        if (req.method === 'GET' && url.pathname === '/web/api/triggers' && deps.triggers) {
+          // Your triggers, and what a new one can be about: the events you may hear of, your apps, your groups with Amber.
+          const mine = store.listAll().filter(c => c.ownerUnionId === who.unionId && (c.status === 'active' || c.status === 'pending'));
+          const apps = new Map<string, { name: string; chatId: string; chat: string }>();
+          for (const c of mine) apps.set(`${c.chatId}\u0000${c.line}`, { name: c.line, chatId: c.chatId, chat: c.scopeType === 'p2p' ? '我的私聊' : ((await deps.chatName(c.chatId)) ?? c.chatId) });
+          const groups: { chatId: string; name: string }[] = [];
+          for (const g of (await deps.botGroups?.().catch(() => [])) ?? []) if (await deps.isMember(g.chatId, who.unionId) === true) groups.push({ chatId: g.chatId, name: g.name || g.chatId });
+          const admin = deps.isAdmin(who.unionId);
+          return json(res, 200, { ok: true, triggers: await deps.triggers.list(who.unionId), ...(admin ? { others: (await deps.triggers.list(who.unionId, true)).filter(t => t.owner !== who.unionId) } : {}),
+            events: deps.triggers.eventsFor(who.unionId), apps: [...apps.values()], groups });
+        }
+        if (req.method === 'GET' && /^\/web\/api\/groups\/oc_[A-Za-z0-9]+\/bots$/.test(url.pathname)) {
+          // The bots in one of your groups, to @ from a trigger.
+          const chat = url.pathname.split('/')[4];
+          if (await deps.isMember(chat, who.unionId) !== true) return json(res, 404, { ok: false, error: 'not_found' });
+          return json(res, 200, { ok: true, bots: ((await deps.chatBots?.(chat)) ?? []).map(b => ({ name: b.name })) });
+        }
         if (req.method === 'GET' && url.pathname.startsWith('/web/api/groups/')) {
           // Members of a group: for an admin offering an orphaned app to someone (#4), or a member copying their app
           // to another member (#8). Only admins and the group's own members may list it.
@@ -411,6 +433,14 @@ export function startWeb(port: number, store: Store, deps: WebDeps): import('nod
         }
         const body = await readJson(req);
         const person: Caller = { unionId: who.unionId, openId: who.openId ?? undefined, chatId: '', chatType: 'p2p', channel: 'web' };
+        if (deps.triggers && url.pathname === '/web/api/triggers') {
+          const t = await deps.triggers.create({ unionId: who.unionId, openId: who.openId }, { on: body.on, name: body.name, app: body.app, appChatId: body.appChatId, to: body.to, chatId: body.chatId, mention: body.mention });
+          return json(res, 200, { ok: true, id: t.id });
+        }
+        if (deps.triggers && (m = /^\/web\/api\/triggers\/([0-9a-f]{8})\/(pause|resume|delete)$/.exec(url.pathname))) {
+          deps.triggers.change(m[1], who.unionId, m[2] as 'pause' | 'resume' | 'delete');
+          return json(res, 200, { ok: true });
+        }
         if (deps.pages && (m = /^\/web\/api\/pages\/([0-9a-f]{8})\/(run|access|delete)$/.exec(url.pathname))) {
           const id = m[1];
           if (m[2] === 'access') { const p = deps.pages.setAccess(id, who.unionId, body.access, body.members); return json(res, 200, { ok: true, access: p.access, members: p.members }); }

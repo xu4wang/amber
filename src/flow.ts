@@ -12,6 +12,7 @@ import { validateScript, describeServices } from './runner.ts';
 import { getLimits, fmtDuration, LONG_RUN_MS } from './limits.ts';
 import { describeSecrets } from './secrets.ts';
 import type { FeishuReview } from './feishu-review.ts';
+import { emitEvent, appEvent } from './events.ts';
 import type { Caller, CallerFacts, Block } from './engine.ts';
 import { runCommand, AmberError, dropOrphanSettings, executorHub } from './engine.ts';
 import { sanitizeMarkdown, person, renderBlocks, buttonRow, cardFooter, withFooter } from './cards.ts';
@@ -366,6 +367,7 @@ export class Flow {
       dropOrphanSettings(this.store, c.chatId, c.line, null);
       const why = inst.status === 'REJECTED' ? `审核人驳回${inst.comments.length ? `：${inst.comments.join('；')}` : ''}` : '审批已撤回';
       this.store.audit(null, 'review.feishu_closed', { id: c.id, instanceCode, status: inst.status });
+      emitEvent('app.rejected', appEvent(c, { reason: why }));
       if (meta.claimMessageId) await this.patch(meta.claimMessageId, shell(`未通过：${c.name}`, 'red', [{ tag: 'markdown', content: sanitizeMarkdown(why, 500) }]));
       await note(`**${new Date().toISOString().slice(0, 16).replace('T', ' ')} UTC：${why}。**`);
     }
@@ -416,6 +418,7 @@ export class Flow {
     }
     this.store.setStatus(c.id, 'active');
     this.store.audit(null, 'command.active', { id: c.id, specHash: c.specHash, ...via });
+    emitEvent('app.approved', appEvent(this.store.getCommand(c.id)!, { newVersion: !!prev }));
     if (prev) await this.onReplaced(prev, this.store.getCommand(c.id)!).catch(e => log('onReplaced failed', (e as Error).message));
     return prev;
   }
@@ -463,6 +466,7 @@ export class Flow {
           this.store.setReview(c.id, { instance, docUrl: doc.url, docId: doc.docId });
           this.store.audit(caller.unionId, 'review.feishu_started', { id: c.id, instance, doc: doc.url });
           log('feishu review started', c.id, instance);
+          emitEvent('app.review_started', appEvent(fresh, { newVersion: !!prevC }));
           return shell(`审核中：${c.name}`, 'yellow', [
             { tag: 'markdown', content: `${person(caller.openId)} 已认领并提交审核。\n已发起飞书审批「Amber命令申请」，需要 ${this.reviewers.length} 位审核人全部同意后生效。\n\n**完整代码与试运行结果**：[查看文档](${doc.url})` },
           ]);
@@ -477,6 +481,7 @@ export class Flow {
         try { await this.send({ unionId: r }, reviewCard(fresh, caller.openId, { approved: 0, total: this.reviewers.length })); }
         catch (e: any) { log('review card send failed', r.slice(0, 8), e?.response?.data?.code ?? e?.message); }
       }
+      emitEvent('app.review_started', appEvent(fresh, { newVersion: !!this.prevOf(c.id) }));
       return shell(`审核中：${c.name}`, 'yellow', [
         { tag: 'markdown', content: `${person(caller.openId)} 已认领并提交审核。需要 ${this.reviewers.length} 位审核人全部通过后生效。` },
       ]);
@@ -500,6 +505,7 @@ export class Flow {
     const meta = this.store.getMeta(c.id);
     if (decision === 'reject') {
       this.store.setStatus(c.id, 'rejected');
+      emitEvent('app.rejected', appEvent(c, { reason: reason.trim() }));
       dropOrphanSettings(this.store, c.chatId, c.line, caller.unionId);
       if (meta.claimMessageId) await this.patch(meta.claimMessageId, shell(`已驳回：${c.name}`, 'red', [{ tag: 'markdown', content: `审核人驳回：${sanitizeMarkdown(reason.trim(), 300)}` }]));
     } else if (approved >= this.reviewers.length) {

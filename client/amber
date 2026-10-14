@@ -21,6 +21,14 @@ usage:
                                                an admin confirms on a card
   amber page publish <dir> [--name NAME]       publish a page app (a directory with index.html) for --user;
                                                a new page, or new apps in its amber.json, needs their confirmation
+  amber trigger add --on EVENT [--app NAME] [--to me|here] [--mention BOT[,BOT]] [--name NAME]
+                                               when EVENT happens in Amber, notify --user privately, or in this
+                                               chat/topic (--to here), @-ing bots there; --user confirms on a card.
+                                               events: app.review_started app.approved app.rejected app.retired
+                                               run.failed run.output schedule.paused executor.offline executor.online
+                                               page.published page.apps_changed
+  amber trigger list                           --user's triggers
+  amber trigger pause <id>                     stops it at once (resume or delete it on the website)
   amber envs [--mine]                          approved run environments to name in script.env ("executor/env");
                                                --mine: only those exported from this bot ($BOTMUX_LARK_APP_ID)
   amber info                                   the Amber service this machine uses, and its website
@@ -86,7 +94,7 @@ def call(method, path, body=None, timeout=150):
 
 def parse(argv):
     opts, pos, args = {}, [], {}
-    flags = {"--chat", "--chat-type", "--user", "--reply-to", "--label", "--at", "--tz", "--timeout", "--name"}
+    flags = {"--chat", "--chat-type", "--user", "--reply-to", "--label", "--at", "--tz", "--timeout", "--name", "--on", "--app", "--to", "--mention"}
     i = 0
     while i < len(argv):
         a = argv[i]
@@ -285,6 +293,26 @@ def main(argv):
         else:
             r = call("POST", "/v1/commands/scope", dict(ctx, command=pos[1], **{"global": cmd == "global"}))
         return out(r, opts, "%s\nrequest: %s" % (r.get("message"), r.get("requestId")))
+    if cmd == "trigger":
+        sub = pos[1] if len(pos) > 1 else ""
+        if sub == "add":
+            if not opts.get("on"):
+                raise Usage()
+            body = dict(ctx, on=opts["on"], to=opts.get("to") or "me")
+            for k in ("app", "name", "mention"):
+                if opts.get(k):
+                    body[k] = opts[k]
+            r = call("POST", "/v1/triggers", body)
+            return out(r, opts, "已发出确认卡片，等 %s 点「确认」后生效（触发器 %s）。" % (opts.get("user"), r.get("triggerId")))
+        if sub == "list":
+            r = call("POST", "/v1/triggers/list", ctx)
+            lines = ["%s  %s  %s%s  →  %s%s" % (t["id"], "生效中" if t["status"] == "active" else "已暂停", t["onLabel"], "（%s）" % t["app"] if t.get("app") else "", t["to"],
+                                              "" if t["status"] == "active" else "（%s）" % (t.get("pauseReason") or "")) for t in r.get("triggers", [])]
+            return out(r, opts, "\n".join(lines) or "还没有触发器。")
+        if sub == "pause" and len(pos) > 2:
+            r = call("POST", "/v1/triggers/%s/pause" % pos[2], ctx)
+            return out(r, opts, "已暂停。恢复或删除请到 Amber 网站「我的触发器」。")
+        raise Usage()
     if cmd == "schedule":
         if len(pos) < 2:
             raise Usage()

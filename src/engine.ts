@@ -6,6 +6,7 @@ import { redact, type SecretVault } from './secrets.ts';
 import type { ExecutorHub, CallGrant } from './executors.ts';
 import { newTicket, SERVICE_TOKEN_TTL_SEC } from './identity.ts';
 import { getLimits, effectiveTimeoutMs, SLOTS, localEgress, getGlobalAllowHosts } from './limits.ts';
+import { emitEvent } from './events.ts';
 
 let HUB: ExecutorHub | undefined;
 /** Where commands with script.env are sent (D50); set once at startup. */
@@ -234,12 +235,15 @@ export async function runCommand(store: Store, cmd: CommandRow, rawArgs: Record<
     if (!r.ok) {
       store.finishRun(runId, 'failed', null, r.error ?? 'failed');
       store.audit(caller.unionId, 'run.failed', { runId, error: r.error });
+      emitEvent('run.failed', { runId, commandId: cmd.id, name: cmd.line ?? cmd.name, chatId: caller.chatId, chatType: caller.chatType, callerUnionId: caller.unionId, channel: opts.trial ? `${caller.channel}.trial` : caller.channel, error: (r.error ?? '').slice(0, 300) });
       return { runId, ok: false, blocks: [], markdown: '', error: r.error, elapsedMs: Date.now() - started, args };
     }
     const blocks: Block[] = [{ kind: 'markdown', text: r.content.trim() }];
     const markdown = blocks.map(b => b.text).join('\n\n');
     store.finishRun(runId, 'ok', markdown, null);
     store.audit(caller.unionId, 'run.ok', { runId });
+    // A scheduled run that printed something: monitoring apps print only when something is wrong.
+    if (caller.channel === 'schedule' && markdown) emitEvent('run.output', { runId, commandId: cmd.id, name: cmd.line ?? cmd.name, chatId: caller.chatId, chatType: caller.chatType, callerUnionId: caller.unionId, channel: caller.channel });
     return { runId, ok: true, blocks, markdown, elapsedMs: Date.now() - started, args };
   } finally { release(); }
 }

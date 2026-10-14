@@ -9,6 +9,7 @@ import type { AgentGate, AgentContext } from './agent.ts';
 import { AmberError } from './engine.ts';
 import type { ExecutorHub } from './executors.ts';
 import type { PageService } from './pages.ts';
+import type { TriggerService } from './triggers.ts';
 
 function readRaw(req: IncomingMessage, limit: number): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -26,7 +27,7 @@ async function readBody(req: IncomingMessage): Promise<any> {
   try { return JSON.parse(body); } catch { throw new AmberError('bad_json', '请求不是合法的 JSON'); }
 }
 
-export function startApi(port: number, machines: Record<string, string>, flow: Flow, agent: AgentGate, jwks: () => object, info: { webUrl: string }, hub?: ExecutorHub, pages?: PageService): import('node:http').Server {
+export function startApi(port: number, machines: Record<string, string>, flow: Flow, agent: AgentGate, jwks: () => object, info: { webUrl: string }, hub?: ExecutorHub, pages?: PageService, triggers?: TriggerService): import('node:http').Server {
   const server = createServer(async (req, res) => {
     const reply = (status: number, body: unknown) => {
       res.writeHead(status, { 'content-type': 'application/json; charset=utf-8' });
@@ -90,6 +91,20 @@ export function startApi(port: number, machines: Record<string, string>, flow: F
       if (path === '/v1/runs') return reply(200, { ok: true, ...(await agent.run(ctx, String(body.command ?? ''), body.args ?? {})) });
       if (path === '/v1/schedules/list') return reply(200, { ok: true, schedules: agent.schedules(ctx) });
       if (path === '/v1/schedules') return reply(200, { ok: true, ...(await agent.scheduleAdd(ctx, String(body.command ?? ''), body.args ?? {}, String(body.at ?? ''), body.tz)) });
+      // Triggers: a new one waits for its owner's confirmation; pausing is safe, so the agent may do it directly.
+      // Resuming and deleting are done on the website.
+      if (triggers && path.startsWith('/v1/triggers')) {
+        if (!ctx.user) throw new AmberError('user_required', '触发器要用 --user 指明是谁的（email）');
+        if (path === '/v1/triggers') {
+          // "here": this group (and thread, when asked in one); --app: an app in this chat.
+          const here = body.to === 'here' && ctx.chatType === 'group';
+          const spec = { on: body.on, name: body.name, app: body.app, appChatId: body.app ? ctx.chatId : undefined, to: here ? 'chat' : 'me', chatId: ctx.chatId, rootId: here ? ctx.replyTo : undefined, mention: body.mention };
+          return reply(200, { ok: true, ...(await triggers.request({ ...ctx, user: ctx.user }, spec)) });
+        }
+        if (path === '/v1/triggers/list') return reply(200, { ok: true, triggers: await triggers.list(ctx.user.unionId) });
+        if ((m = /^\/v1\/triggers\/([0-9a-f]{8})\/pause$/.exec(path))) { triggers.change(m[1], ctx.user.unionId, 'pause'); return reply(200, { ok: true, message: '已暂停' }); }
+        return reply(404, { ok: false, error: 'not_found' });
+      }
       if ((m = /^\/v1\/schedules\/([A-Za-z0-9-]{1,40})\/(pause|resume|delete)$/.exec(path))) {
         if (m[2] === 'pause') return reply(200, { ok: true, ...agent.schedulePause(ctx, m[1]) });
         return reply(200, { ok: true, ...(await agent.scheduleChange(ctx, m[1], m[2] === 'resume' ? 'schedule_resume' : 'schedule_delete')) });

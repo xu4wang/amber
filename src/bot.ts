@@ -1,5 +1,7 @@
 import * as lark from '@larksuiteoapi/node-sdk';
 import { PageService } from './pages.ts';
+import { TriggerService } from './triggers.ts';
+import { emitEvent, appEvent } from './events.ts';
 import { randomUUID } from 'node:crypto';
 import type { Store, CommandRow, ScopeType } from './db.ts';
 import type { Caller, Block } from './engine.ts';
@@ -54,6 +56,7 @@ export class AmberBot {
   hub: ExecutorHub;
   apps: AppStore;
   pages: PageService;
+  triggers: TriggerService;
 
   private timers: boolean;
 
@@ -95,6 +98,10 @@ export class AmberBot {
       await this.apps.onVersionLive(prev, next);
     };
     this.hub = new ExecutorHub(store, this.signer);
+    this.triggers = new TriggerService(store, {
+      send: deps.send, patch: (id, card) => this.patch(id, card), isAdmin: u => this.isAdmin(u), isReviewer: u => this.flow.reviewers.includes(u),
+      isMember: (c, u) => this.isMember(c, u), chatBots: c => this.chatBots(c), chatName: async c => this.chatName(c), nameOf: u => this.nameOf(u), webUrl: () => cfg.webBaseUrl,
+    }, { timers: this.timers });
     this.apps = new AppStore(store, this.flow, {
       isMember: (c, u) => this.isMember(c, u), isAdmin: u => this.isAdmin(u), nameOf: u => this.nameOf(u), openIdOf: u => this.flow.openIdOf(u), webUrl: cfg.webBaseUrl, resolveUser: e => this.resolveUser(e),
     });
@@ -117,6 +124,7 @@ export class AmberBot {
     if (delist && app!.maintainerUnionId !== actor.unionId && !this.isAdmin(actor.unionId)) throw new AmberError('forbidden', '只有应用的维护人或管理员可以下架；不下架的话可以直接下线');
     this.store.setStatus(c.id, 'retired');
     this.store.audit(actor.unionId, 'command.retire', { id: c.id, name: c.name, specHash: c.specHash });
+    emitEvent('app.retired', appEvent(c));
     log('command retired', c.id, c.name);
     dropOrphanSettings(this.store, c.chatId, c.line, actor.unionId);
     const schedules = await this.scheduler.onCommandRetired(c, byLabel);
@@ -504,6 +512,10 @@ export class AmberBot {
     if (!this.timers) return;
     setInterval(() => { poll().catch(() => {}); }, 60_000);
     this.scheduler.start();
+    // Executors going offline or coming back are events too (their state is only known by looking).
+    const executors = () => this.triggers.checkExecutors(this.store.listExecutors().filter(e => e.status === 'approved').map(e => ({ name: e.name, machine: e.machine, online: this.hub.online(e) })));
+    executors();
+    setInterval(executors, 60_000).unref?.();
   }
 
   /** Emails are resolved through Amber's own app (needs contact:user.id:readonly); union_ids are taken as-is. */
@@ -797,6 +809,17 @@ export class AmberBot {
     await this.patch(messageId, infoCard('已登录网站', `这个链接已于 ${formatAtDefault(at)} 使用，不能再次使用。\n如果不是你本人操作，请立即发送「退出网站」。`));
   }
 
+  /** The bots in a chat other than Amber, by the open_ids Amber's app knows them by (to @ them). */
+  async chatBots(chatId: string): Promise<{ openId: string; name: string }[]> {
+    try {
+      const b = await this.client.request({ method: 'GET', url: `/open-apis/im/v1/chats/${chatId}/members/bots` }) as any;
+      return (b?.data?.items ?? []).filter((m: any) => m.bot_id && m.bot_id !== this.botOpenId).map((m: any) => ({ openId: String(m.bot_id), name: String(m.bot_name ?? '') }));
+    } catch (e: any) {
+      log('chat bots unavailable', chatId, e?.response?.data?.code ?? e?.message);
+      return [];
+    }
+  }
+
   private chatNameCache = new Map<string, string>();
 
   async chatName(chatId: string): Promise<string | undefined> {
@@ -934,6 +957,7 @@ export class AmberBot {
       }
       if (value.a === 'rs_ok' || value.a === 'rs_no') return raw(await this.onReassignClick(value, caller));
       if (value.a === 'pg_open') return await this.pageLink(String(value.p), caller);
+      if (value.a === 'tg_ok' || value.a === 'tg_no') return raw(this.triggers.onClick(value.a === 'tg_ok', String(value.t), caller));
       if (value.a === 'pg_ok' || value.a === 'pg_no') return raw(await this.pages.onClick(value.a === 'pg_ok', String(value.p), Number(value.v), caller, chatId));
       if (value.a === 'cl_ok' || value.a === 'cl_no') return raw(await this.onCloneClick(value, d.action?.form_value ?? {}, caller));
       if (value.a === 'sch_rebind' || value.a === 'sch_drop') {

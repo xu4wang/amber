@@ -131,6 +131,20 @@ amber submit draft.json --label <你的 bot 名>
 
 之后由人完成：认领人在认领卡上试运行、提交审核；审核人在飞书审批里同意后生效。你不能认领或审核。
 
+## 触发器：某件事发生时被叫醒
+
+需要在 Amber 里发生某件事时接着做事（比如有应用提交审核就预审、执行失败就排查），不要定时去查，建一个触发器，让 Amber 在当前群或话题里 @你：
+
+```bash
+amber trigger add --on app.review_started --to here --mention <你在群里的名字> --user <邮箱>
+```
+
+- 事件：`app.review_started` `app.approved` `app.rejected` `app.retired` `run.failed` `run.output` `schedule.paused` `executor.offline` `executor.online` `page.published` `page.apps_changed`；`--app <应用>` 只看当前会话里的这个应用
+- `--to me`（默认）私聊这个人；`--to here` 发到当前群，在话题里运行就是当前话题
+- 这个人要在卡片上点「确认」；不是审核人或管理员时，应用事件必须用 `--app` 指定他自己的应用
+- 收到的通知最后一行是 `amber-event <事件> event=… command=… spec=…`，按这些编号去查；通知里没有执行结果
+- `amber trigger list` 查看，`amber trigger pause <编号>` 暂停；恢复和删除让用户在网站「我的触发器」里做
+
 ## 做页面应用
 
 用户要一个能交互的网页（查数、看图表、读台账、写飞书）时，做成 Amber 页面应用，不要放 demo 网站：

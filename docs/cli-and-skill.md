@@ -70,6 +70,10 @@ amber global <应用>                          设为全局，需要管理员在
 amber local <应用>                           取消全局，需要管理员在卡片上确认
 amber envs [--mine]                          已批准的运行环境（草稿里 env 写第一列）；--mine 只看从本机器人导出的
 amber page publish <目录> [--name 名字]      发布或更新页面应用，必须带 --user；见下面「页面应用」
+amber trigger add --on 事件 [--app 应用] [--to me|here] [--mention 机器人]
+                                             某件事发生时通知 --user；见下面「触发器」
+amber trigger list                           --user 的触发器
+amber trigger pause <编号>                   立即暂停（恢复、删除在网站上做）
 amber info                                   本机连的 Amber 服务、网站地址
 amber config set-url <地址>                  设置本机的 Amber 服务地址
 ```
@@ -140,6 +144,24 @@ amber page publish ./shanghu --name shanghu --user zhangsan@example.com
 - 第一次发布，或者 `amber.json` 里的应用变了，会在会话里发确认卡片（附页面首屏截图），`--user` 那个人点「确认发布」后生效；命令返回 `awaiting`。只改页面内容直接生效，返回 `updated`，告诉用户刷新页面
 - 页面里怎么调用应用（`Amber.run`、`Amber.render` 等）见[页面应用](pages.md#给写页面的-agent)
 
+## 触发器
+
+想在某件事发生时被叫醒，而不是隔一段时间查一次，就建一个[触发器](triggers.md)：
+
+```bash
+# 有应用提交审核时，在当前群（在话题里运行就是当前话题）发通知并 @Beta
+amber trigger add --on app.review_started --to here --mention Beta --user zhangsan@example.com
+# 自己的应用执行失败时私聊通知自己
+amber trigger add --on run.failed --app 注册商户数 --user zhangsan@example.com
+```
+
+- `--on`：事件，可选 `app.review_started` `app.approved` `app.rejected` `app.retired` `run.failed` `run.output` `schedule.paused` `executor.offline` `executor.online` `page.published` `page.apps_changed`
+- `--app`：只看当前会话里的这个应用。不是审核人或管理员时，应用事件必须指定自己的应用
+- `--to`：`me`（默认，私聊 `--user`）或 `here`（当前群；在话题里运行就发到这个话题）
+- `--mention`：发到群里时同时 @的机器人，按群里的名字，多个用逗号分隔
+- 会发确认卡片，`--user` 本人点「确认」后生效；命令返回 `awaiting`
+- 通知最后一行是 `amber-event <事件> event=… command=… …`，agent 被 @ 后按这些编号去查
+
 ## 接口（给不想用命令行的 agent）
 
 所有接口都在 `/v1/` 下，只放行白名单 IP。除标注 GET 的以外都是 POST，请求体为 JSON。会话上下文字段是 `chatId`、`chatType`、`user`、`replyTo`、`inThread`、`label`。
@@ -156,6 +178,9 @@ amber page publish ./shanghu --name shanghu --user zhangsan@example.com
 | POST | `/v1/commands/retire` | `command` |
 | POST | `/v1/commands/scope` | `command`、`global`（true 设为全局，false 取消全局） |
 | POST | `/v1/drafts` | 草稿 JSON |
+| POST | `/v1/triggers` | `on`、`app`、`to`（`me`/`here`）、`mention`、`name`，必须带 `user` |
+| POST | `/v1/triggers/list` | 无，必须带 `user` |
+| POST | `/v1/triggers/<编号>/pause` | 无，必须带 `user` |
 | POST | `/v1/pages` | `name`、`files`（`[{"path": "index.html", "data": "<base64>"}, …]`），必须带 `user`；请求体最大 16MB |
 | GET | `/v1/info` | 无，返回网站地址 `webUrl` 和本机名字 |
 | GET | `/v1/keys` | 无，返回公钥，见 [identity.md](identity.md) |
