@@ -281,6 +281,13 @@ table.audit .mono { font-family: ui-monospace, Menlo, monospace; font-size: 11px
 .pg-warn { border-left: 3px solid var(--warn); background: var(--bg); padding: 8px 12px; font-size: 13px; color: var(--body-ink); margin: 0 0 12px; }
 .pg-foot { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
 #app.center:has(.landing) { display: block; }
+.help-q { flex: none; align-self: center; width: 20px; height: 20px; padding: 0; border-radius: 50%; border: 1px solid var(--line-2); background: transparent; color: var(--muted-2); font-size: 12px; font-weight: 700; letter-spacing: 0; line-height: 18px; text-align: center; cursor: pointer; }
+.help-q:hover, .help-q[aria-expanded="true"] { border-color: var(--accent); color: var(--accent-ink); background: transparent; }
+.help-pop { position: fixed; z-index: 50; width: min(440px, calc(100vw - 16px)); padding: 12px 16px; background: var(--panel); color: var(--body-ink); border: 1px solid var(--line-2); border-top: 3px solid var(--accent); box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18); font-size: 13px; line-height: 1.65; }
+.help-pop p { margin: 0 0 6px; }
+.help-pop p:last-child, .help-pop ul:last-child { margin-bottom: 0; }
+.help-pop ul { margin: 0 0 6px; padding-left: 18px; }
+.help-pop li { margin-bottom: 2px; }
 </style>
 </head>
 <body>
@@ -977,15 +984,65 @@ function trigAllPane() {
     ${rows.length ? `<table><thead><tr><th>名字</th><th>主人</th><th>事件</th><th>通知</th><th>状态</th></tr></thead><tbody>${rows.map(t => `<tr><td><a href="#" data-tg-open="${esc(t.id)}">${esc(t.name)}</a></td><td>${esc(t.ownerName || '')}</td><td>${esc(t.onLabel)}${t.app ? `（${esc(t.app)}）` : ''}</td><td>${esc(t.to)}</td><td>${t.status === 'active' ? '生效中' : '已暂停'}</td></tr>`).join('')}</tbody></table>` : '<p class="note">别人还没有建触发器。</p>'}`;
 }
 
+// A 「?」 next to a field: why it offers these choices, for you, and how to get others. It opens a small popover
+// (nothing moves on the page), which closes on a click elsewhere, Esc or scrolling.
+const helpQ = k => `<button type="button" class="help-q" data-help="${k}" title="为什么是这些选项" aria-expanded="false">?</button>`;
+const helpBox = (k, html) => `<template id="help-${k}">${html}</template>`;
+function closeHelp() {
+  document.getElementById('help-pop')?.remove();
+  document.querySelectorAll('.help-q[aria-expanded="true"]').forEach(b => b.setAttribute('aria-expanded', 'false'));
+}
+function openHelp(btn) {
+  const was = btn.getAttribute('aria-expanded') === 'true';
+  closeHelp();
+  const tpl = document.getElementById('help-' + btn.dataset.help);
+  if (was || !tpl) return;
+  const pop = document.createElement('div');
+  pop.id = 'help-pop';
+  pop.className = 'help-pop';
+  pop.setAttribute('role', 'tooltip');
+  pop.appendChild(tpl.content.cloneNode(true));
+  document.body.appendChild(pop);
+  const r = btn.getBoundingClientRect(), w = pop.offsetWidth, h = pop.offsetHeight;
+  const left = Math.max(8, Math.min(r.right - w, window.innerWidth - w - 8));
+  const top = r.bottom + 8 + h <= window.innerHeight ? r.bottom + 8 : Math.max(8, r.top - h - 8);
+  pop.style.left = left + 'px';
+  pop.style.top = top + 'px';
+  btn.setAttribute('aria-expanded', 'true');
+}
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeHelp(); });
+document.addEventListener('scroll', closeHelp, true);
+
 function trigNewPane() {
   const ev = TRIG.events, apps = TRIG.apps, groups = TRIG.groups;
+  // What you may subscribe to follows your role in Amber; say which one you have.
+  const admin = ev.some(e => e.type === 'executor.offline');
+  const reviewer = !admin && ev.some(e => e.type === 'app.review_started' && e.all);
+  const role = admin ? '你是<b>管理员</b>' : reviewer ? '你是<b>审核人</b>' : '你<b>不是</b>审核人或管理员';
+  const helpOn = `<p>能选哪些事件，取决于你在 Amber 里的角色（${role}）：</p><ul>
+      <li>应用事件（提交审核、审核通过、被驳回、下线）：审核人和管理员可以订阅所有应用；其他人只能订阅自己创建的应用</li>
+      <li>执行失败、定时执行有输出：只针对你自己执行的那些</li>
+      <li>定时任务被自动暂停、页面事件：你自己的定时任务和页面；管理员可以订阅所有</li>
+      <li>执行端离线 / 重新上线：只有管理员能看到这两项</li></ul>
+    <p>想订阅更多：审核人和管理员名单写在 Amber 的配置里，请联系 Amber 的管理员调整。</p>`;
+  const helpApp = `<p>这里列的是<b>你创建的应用</b>（已生效或正在审核），后面写着它在哪个群或私聊。${apps.length ? '' : '你还没有创建过应用，所以列表是空的。'}</p><ul>
+      <li>「所有应用」：订阅应用事件时只有审核人和管理员能选；订阅执行、定时任务事件时，指的是你自己的全部执行</li>
+      <li>想让某个应用出现在这里：自己创建，或者从 Amber Store 安装、接受同事复制给你的应用（装好后就是你的）</li>
+      <li>想关注别人的应用：需要审核人或管理员来订阅</li></ul>`;
+  const helpTo = `<p>通知可以发到你和 Amber 的私聊，或者一个群。这里只列<b>你在、并且 Amber 也在</b>的群（目前 ${groups.length} 个）。</p><ul>
+      <li>想发到别的群：先把 Amber 机器人拉进那个群（群设置 → 群机器人 → 添加机器人，搜 Amber），刷新这个页面后就会出现</li>
+      <li>选了群以后，下面会列出群里的其他机器人，可以勾选同时 @它们，比如你的 agent，它收到后会接着处理。想 @的机器人不在列表里，也是先把它拉进群</li>
+      <li>你退出那个群后，触发器会自动暂停</li></ul>`;
   document.getElementById('pane').innerHTML = `${backBtn}
     <div class="pane-head"><h1>新建触发器</h1></div>
     <p class="desc">Amber 里发生某件事时，自动发一条通知：发到你的私聊，或者发到你所在的群并 @某个机器人，让它（比如你的 agent）接着处理，不用一直去查。</p>
     <div class="box">
-      <div class="field"><label>什么时候</label><select id="tg-on">${ev.map(e => `<option value="${esc(e.type)}">${esc(e.label)}</option>`).join('')}</select></div>
-      <div class="field" id="tg-app-row"><label>哪个应用</label><select id="tg-app"></select></div>
-      <div class="field"><label>通知到</label><select id="tg-to"><option value="me">我的私聊</option>${groups.map(g => `<option value="${esc(g.chatId)}">群：${esc(g.name)}</option>`).join('')}</select></div>
+      <div class="field"><label>什么时候</label><select id="tg-on">${ev.map(e => `<option value="${esc(e.type)}">${esc(e.label)}</option>`).join('')}</select>${helpQ('on')}</div>
+      ${helpBox('on', helpOn)}
+      <div class="field" id="tg-app-row"><label>哪个应用</label><select id="tg-app"></select>${helpQ('app')}</div>
+      ${helpBox('app', helpApp)}
+      <div class="field"><label>通知到</label><select id="tg-to"><option value="me">我的私聊</option>${groups.map(g => `<option value="${esc(g.chatId)}">群：${esc(g.name)}</option>`).join('')}</select>${helpQ('to')}</div>
+      ${helpBox('to', helpTo)}
       <div id="tg-bots" class="pg-members" style="display:none"></div>
       <div class="field"><label>名字</label><input id="tg-name" placeholder="不填就用事件名" maxlength="40"></div>
       <p class="note">通知里只有发生了什么（哪个应用、谁、什么时间），不包含执行结果。每分钟最多 10 次、每天最多 200 次，超过会自动暂停。</p>
@@ -1082,6 +1139,9 @@ async function reload(keepKey) {
 }
 
 document.addEventListener('click', async ev => {
+  const hq = ev.target.closest('button[data-help]');
+  if (hq) { openHelp(hq); return; }
+  if (!ev.target.closest('#help-pop')) closeHelp();
   const tgOpen = ev.target.closest('[data-tg-open]');
   if (tgOpen) { ev.preventDefault(); const t = (TRIG.others || []).find(x => x.id === tgOpen.dataset.tgOpen); if (t) trigPane(t); return; }
   const tgBtn = ev.target.closest('button[data-tg]');
