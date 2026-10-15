@@ -110,3 +110,25 @@ test('llm: at most maxConcurrent at once; a call whose run ends while waiting gi
   assert.equal((await next).status, 200);
   assert.deepEqual(svc.load, { running: 0, waiting: 0 });
 });
+
+test('llm: configDir picks which Claude login the CLI uses; a missing one fails the call instead of starting a fresh login', async () => {
+  const { LlmService } = await import('../src/llm.ts');
+  const { mkdtempSync, mkdirSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const data = mkdtempSync(join(tmpdir(), 'amber-llm-'));
+  const login = join(data, 'claude-b');
+  mkdirSync(login);
+  const ask = (svc: InstanceType<typeof LlmService>) => svc.handle('POST', '/complete', Buffer.from(JSON.stringify({ prompt: 'hi' })), new AbortController().signal);
+  const calls = () => readFileSync(join(data, 'llm-work', 'calls.jsonl'), 'utf8').trim().split('\n').map(l => JSON.parse(l));
+  assert.equal((await ask(new LlmService({ command: FAKE }, data))).status, 200);
+  assert.equal(calls().pop().configDir, null, 'unset: the default login');
+  assert.equal((await ask(new LlmService({ command: FAKE, configDir: login }, data))).status, 200);
+  assert.equal(calls().pop().configDir, login);
+  const n = calls().length;
+  for (const bad of [join(data, 'nope'), 'test', '']) {
+    const r = await ask(new LlmService({ command: FAKE, configDir: bad }, data));
+    assert.equal(r.status, 502);
+    assert.match(String(r.body.message), /configDir/);
+  }
+  assert.equal(calls().length, n, 'the CLI was not started');
+});

@@ -4,8 +4,8 @@
 // itself instead of forwarding it. The model gets no tools: text in, text out. Whether the session is kept on disk
 // (Claude Code's own transcript) is the script's choice per call (persist), off unless asked.
 import { spawn } from 'node:child_process';
-import { mkdirSync } from 'node:fs';
-import { join } from 'node:path';
+import { mkdirSync, statSync } from 'node:fs';
+import { isAbsolute, join } from 'node:path';
 
 export const LLM_SERVICE = 'llm';
 export const LLM_MAX_PROMPT_CHARS = 150_000;   // the relay takes at most 512KB a request: about this many Chinese characters
@@ -19,12 +19,15 @@ export interface LlmConfig {
   models?: string[];
   maxConcurrent?: number;
   timeoutMs?: number;
+  /** Which Claude login to use when the machine has several: the CLI's config directory (CLAUDE_CONFIG_DIR).
+   *  Unset = the default one of the system user running Amber. Saved sessions (persist) go there too. */
+  configDir?: string;
 }
 
 export interface LlmReply { status: number; body: Record<string, unknown> }
 
 export class LlmService {
-  private cfg: Required<LlmConfig>;
+  private cfg: Required<Omit<LlmConfig, 'configDir'>> & Pick<LlmConfig, 'configDir'>;
   private workDir: string;
   private running = 0;
   private waiting: (() => void)[] = [];
@@ -88,6 +91,14 @@ export class LlmService {
       ...(system ? ['--system-prompt', system] : [])];
     // Only what the CLI needs to find its login; nothing from Amber's own environment.
     const env: Record<string, string> = { HOME: process.env.HOME ?? '', PATH: '/usr/bin:/bin:/usr/sbin:/sbin', LANG: 'en_US.UTF-8' };
+    const dir = this.cfg.configDir;
+    if (dir !== undefined) {
+      // A missing directory would make the CLI quietly start a fresh, logged-out one there.
+      let ok = false;
+      try { ok = typeof dir === 'string' && isAbsolute(dir) && statSync(dir).isDirectory(); } catch { /* missing */ }
+      if (!ok) return Promise.resolve({ ok: false, status: 502, error: 'llm_unavailable', message: '大模型服务配置有误：llm.configDir 要是已存在目录的绝对路径' });
+      env.CLAUDE_CONFIG_DIR = dir;
+    }
     return new Promise(resolve => {
       const child = spawn(this.cfg.command, args, { cwd: this.workDir, env, stdio: ['pipe', 'pipe', 'pipe'] });
       let out = Buffer.alloc(0), err = '', done = false;
