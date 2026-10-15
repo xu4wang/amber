@@ -281,3 +281,25 @@ test('a replacement whose claim card cannot be sent leaves the old draft claimab
     await env.waitFor(() => button(env.fake.cardOf(a.claimMessageId), 'claim_submit'));
   } finally { await env.close(); }
 });
+
+test('a trial run shows it is running at once, and clicking again does not start another', async () => {
+  const env = await makeEnv();
+  try {
+    const slow = script('import time\ntime.sleep(1.5)\nprint("好了")', { timeoutMs: 20000 });
+    const r = await env.submit({ chatId: GROUP, chatType: 'group', name: '慢', params: [], script: slow });
+    const first = await env.click(env.alice, r.claimMessageId, { a: 'claim_try', c: r.id });
+    assert.match(JSON.stringify(first), /试运行中：慢/);
+    assert.match(JSON.stringify(first), /不用重复点击/);
+    assert.match(JSON.stringify(first), /20 秒/, 'says how long it may take');
+    assert.ok(!button(first.card.data, 'claim_try') && !button(first.card.data, 'claim_submit'), 'no buttons while it runs');
+    const again = await env.click(env.alice, r.claimMessageId, { a: 'claim_try', c: r.id });
+    assert.match(JSON.stringify(again), /还在进行中/);
+    assert.equal(again.card, undefined);
+    await env.waitFor(() => button(env.fake.cardOf(r.claimMessageId), 'claim_submit'));
+    assert.match(FakeFeishu.text(env.fake.cardOf(r.claimMessageId)), /好了/);
+    assert.equal(env.amber.store.runsByCaller(env.alice.unionId, 10).filter(x => x.commandName === '慢').length, 1, 'one run, not two');
+    // Done: it can be tried again.
+    assert.match(JSON.stringify(await env.click(env.alice, r.claimMessageId, { a: 'claim_try', c: r.id })), /试运行中/);
+    await env.waitFor(() => env.amber.store.runsByCaller(env.alice.unionId, 10).filter(x => x.commandName === '慢').length === 2 || undefined, 20000);
+  } finally { await env.close(); }
+});
