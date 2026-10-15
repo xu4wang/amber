@@ -68,6 +68,7 @@ export async function startAmber(cfg: AmberConfig, opts: { apiPort: number; webP
     triggers: bot.triggers,
     chatBots: c => bot.chatBots(c),
     pagesBaseUrl: cfg.pagesBaseUrl,
+    larkUser,
   });
   if (cfg.pagesBaseUrl && cfg.pageScreenshotChrome) bot.pages.shoot = makePageShooter(cfg.pageScreenshotChrome, cfg.pagesBaseUrl, opts.webPort);
   const closeServer = (s: Server) => new Promise<void>(r => { s.close(() => r()); s.closeAllConnections(); });

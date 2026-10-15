@@ -17,6 +17,7 @@ import { envsHash, effectiveAccess, credentialPaths, type ExecutorHub } from './
 import type { AppStore } from './apps.ts';
 import { outputBlocks, type PageService } from './pages.ts';
 import type { TriggerService } from './triggers.ts';
+import type { LarkUserVault, AuthOutcome } from './lark-user.ts';
 import { showFingerprint } from './exec-proto.ts';
 import { describeRule, formatAt, defaultTz, timezones } from './schedule-rule.ts';
 import { CARD_FOOTER_KEY, CARD_FOOTER_MAX, DEFAULT_CARD_FOOTER, cleanFooter } from './cards.ts';
@@ -67,7 +68,24 @@ export interface WebDeps {
   /** Page apps (pages.ts) and the separate origin their files are served from. */
   pages?: PageService;
   pagesBaseUrl?: string;
+  /** Feishu user identity (D54): the logged-in person can authorize here too, not only in their private chat. */
+  larkUser?: LarkUserVault;
 }
+
+/** An authorization started on the website, per person: the link to show, and how it ended. */
+interface WebLarkAuth { url: string; code: string; deviceCode: string; expiresAt: number; outcome?: AuthOutcome }
+const webLarkAuth = new Map<string, WebLarkAuth>();
+/** The link is shown only while it is still the person's flow: started again elsewhere (their private chat), it is not. */
+function liveLarkAuth(v: LarkUserVault, unionId: string, minLeftMs = 0): WebLarkAuth | undefined {
+  const now = Date.now();
+  for (const [u, x] of webLarkAuth) if (x.expiresAt && x.expiresAt + 600_000 < now) webLarkAuth.delete(u);   // and forget old ones
+  const a = webLarkAuth.get(unionId);
+  return a && !a.outcome && a.expiresAt > now + minLeftMs && v.isPending(unionId, a.deviceCode) ? a : undefined;
+}
+const AUTH_FAILED: Record<string, string> = {
+  denied: '你在飞书上拒绝了授权。', expired: '授权链接已过期。',
+  mismatch: '确认授权的不是你本人的飞书账号，已作废。请用你自己的账号重新授权。', error: '授权没有完成。',
+};
 
 /** A website run still going after runWaitMs: the page asks for it by job id. Kept 30 minutes after it ends. */
 interface WebJob { owner: string; done?: Record<string, unknown>; endedAt?: number }
@@ -280,6 +298,17 @@ export function startWeb(port: number, store: Store, deps: WebDeps): import('nod
         if (req.method === 'GET' && url.pathname === '/web/api/me') {
           return json(res, 200, { ok: true, name: (await deps.nameOf(who.unionId)) ?? '', unionId: who.unionId });
         }
+        if (req.method === 'GET' && url.pathname === '/web/api/lark-auth') {
+          // Feishu user identity (D54): whether the person has authorized, and the authorization started here, if any.
+          const v = deps.larkUser;
+          if (!v) return json(res, 200, { ok: true, enabled: false });
+          const st = v.status(who.unionId);
+          const live = liveLarkAuth(v, who.unionId);
+          const a = webLarkAuth.get(who.unionId);
+          const pending = live ? { url: live.url, code: live.code, expiresAt: live.expiresAt } : null;
+          const failed = a?.outcome && !a.outcome.ok ? AUTH_FAILED[a.outcome.reason] ?? AUTH_FAILED.error : null;
+          return json(res, 200, { ok: true, enabled: true, authorized: st.authorized, scopes: st.scopes.length, updatedAt: st.updatedAt ?? null, pending, failed });
+        }
         if (req.method === 'GET' && url.pathname === '/web/api/overview') return json(res, 200, { ok: true, ...(await overview(store, deps, who.unionId)), timezones: timezones() });
         if (req.method === 'GET' && url.pathname === '/web/api/audit') {
           // The audit log (admins only): newest first, filtered by category, text or person; 50 at a time.
@@ -433,6 +462,20 @@ export function startWeb(port: number, store: Store, deps: WebDeps): import('nod
         }
         const body = await readJson(req);
         const person: Caller = { unionId: who.unionId, openId: who.openId ?? undefined, chatId: '', chatType: 'p2p', channel: 'web' };
+        if (url.pathname === '/web/api/lark-auth/start') {
+          // The same device flow as 「授权飞书」 in the private chat; whoever approves must be the logged-in person.
+          const v = deps.larkUser;
+          if (!v) throw new AmberError('not_found', '飞书用户身份服务没有启用');
+          const cur = liveLarkAuth(v, who.unionId, 60_000);
+          if (cur) return json(res, 200, { ok: true, url: cur.url, code: cur.code, expiresAt: cur.expiresAt });
+          const a: WebLarkAuth = { url: '', code: '', deviceCode: '', expiresAt: 0 };
+          webLarkAuth.set(who.unionId, a);
+          let s: Awaited<ReturnType<LarkUserVault['start']>>;
+          try { s = await v.start(who.unionId, o => { a.outcome = o; }); }
+          catch (e) { webLarkAuth.delete(who.unionId); throw new AmberError('lark_auth_failed', `发起授权失败：${(e as Error).message}`); }
+          Object.assign(a, { url: s.verificationUrl, code: s.userCode, deviceCode: s.deviceCode, expiresAt: Date.now() + s.expiresIn * 1000 });
+          return json(res, 200, { ok: true, url: a.url, code: a.code, expiresAt: a.expiresAt });
+        }
         if (deps.triggers && url.pathname === '/web/api/triggers') {
           const t = await deps.triggers.create({ unionId: who.unionId, openId: who.openId }, { on: body.on, name: body.name, app: body.app, appChatId: body.appChatId, to: body.to, chatId: body.chatId, mention: body.mention });
           return json(res, 200, { ok: true, id: t.id });
@@ -669,6 +712,8 @@ function cmdView(c: CommandRow, viewer?: string, isAdmin?: (u: string) => boolea
     secrets,
     version: store ? store.versionsOf(c.id).length + 1 : 1,
     id: c.id, name: c.name, description: c.description, global: c.global, options: c.options,
+    // Runs as the person running it, with their Feishu authorization (D54).
+    larkUser: !!c.script.larkUser,
     params: runParams(c.params).map(p => ({ name: p.name, label: p.label ?? p.name, type: p.type, required: !!p.required, default: p.default, fromCity: p.defaultFrom === 'caller.city' })),
     // Configuration items (#3): values are not secret, everyone who sees the command sees them.
     config: (v => configParams(c.params).map(p => ({ name: p.name, label: p.label ?? p.name, type: p.type, required: !!p.required, default: p.default ?? null, value: v[p.name] ?? null })))(store ? configValues(store, c) : {}),

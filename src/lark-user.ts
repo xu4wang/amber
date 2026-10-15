@@ -236,6 +236,12 @@ export class LarkUserVault {
     return { ok: true, scopes };
   }
 
+  /** Whether this device flow is still the person's authorization in progress (a newer one replaces it). */
+  isPending(unionId: string, deviceCode: string): boolean {
+    const p = this.pending.get(unionId);
+    return !!p && !p.cancelled && p.deviceCode === deviceCode;
+  }
+
   /** Stops the person's authorization in progress, if any; a stored authorization is kept. */
   cancel(unionId: string): void {
     const p = this.pending.get(unionId);

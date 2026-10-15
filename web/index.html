@@ -618,6 +618,7 @@ function cmdPane(key, { c, scope }) {
     ${c.description ? `<div class="desc">${esc(c.description)}</div>` : '<div class="desc"></div>'}
     <div class="box">
       ${c.canRun ? '' : `<p class="note">这是别人的应用：管理员可以查看代码、设置和下线，不能执行。</p>`}
+      ${c.canRun && c.larkUser ? '<div id="lark-auth" class="note">这个应用以你本人的飞书身份运行，正在读取你的飞书授权状态……</div>' : ''}
       <div class="tabs">${c.canRun ? '<button class="on" data-tab="run">执行</button><button data-tab="sch">定时</button><button data-tab="code">代码</button>' : '<button class="on" data-tab="code">代码</button>'}</div>
       ${c.canRun ? '' : '<form data-form="code"><div id="src" class="note">读取中……</div></form>'}
       ${!c.canRun ? '' : `<form data-form="run">${c.params.length ? paramInputs(c) : `<p class="note">${(c.config || []).length ? '执行时不用填参数（用页面底部的配置项）。' : '这个应用没有参数。'}</p>`}
@@ -661,10 +662,35 @@ function cmdPane(key, { c, scope }) {
     ${c.canManage ? `<div class="manage"><h3 class="note">管理</h3>
       <p class="note">要修改这个应用，跟你的 agent 说改什么，它会提交新版本，审核通过后自动替换。不再需要时可以下线：下线后不能再执行，它的定时任务会暂停。</p>
       <button class="btn" data-retire="1">下线这个应用</button></div>` : ''}`;
+  if (c.canRun && c.larkUser) loadLarkAuth();
   if (last && c.canRun) showOutput(document.getElementById('out'), last.r, last.meta);
   if (!c.canRun) loadSource();
   if (c.orphan) loadMembers(scope);
   if (c.canClone) loadMembers(scope, '[data-clone-to]');
+}
+
+// Feishu user identity (D54): apps that run as the person need their Feishu authorization first.
+let LARK_POLL;
+async function loadLarkAuth() {
+  clearTimeout(LARK_POLL);
+  const box = document.getElementById('lark-auth');
+  if (!box) return;
+  const r = await fetch('/web/api/lark-auth').then(x => x.json()).catch(() => null);
+  if (!box.isConnected) return;
+  if (!r || !r.ok || !r.enabled) { box.className = 'pg-warn'; box.textContent = '这个应用以你本人的飞书身份运行，但 Amber 的飞书授权服务暂时不可用，现在不能执行。'; return; }
+  if (r.authorized) {
+    box.className = 'note';
+    box.style.margin = '0 0 12px';
+    box.innerHTML = `这个应用以<b>你本人的飞书身份</b>运行，你已授权飞书。要撤销，在和 Amber 的私聊里发「撤销飞书授权」。`;
+    return;
+  }
+  box.className = 'pg-warn';
+  box.innerHTML = `<b>请先授权飞书，授权后才能执行</b>（定时任务也一样）。这个应用以你本人的飞书身份调用飞书，需要你用自己的飞书账号授权一次。<div class="actions" style="margin-top:8px;align-items:center">`
+    + (r.pending
+      ? `<a class="btn primary small" style="display:inline-flex;align-items:center" href="${esc(r.pending.url)}" target="_blank" rel="noopener">去飞书确认授权</a> <span class="note">验证码 <b>${esc(r.pending.code)}</b>。用你本人的账号确认后，这里会自动更新；不要把链接转给别人。</span>`
+      : `<button type="button" class="btn primary small" data-lark-auth="start">授权飞书</button> <span class="note">也可以在和 Amber 的私聊里发「授权飞书」。</span>`)
+    + `</div>${r.failed && !r.pending ? `<div style="color:var(--warn);margin-top:6px">${esc(r.failed)}</div>` : ''}`;
+  if (r.pending) LARK_POLL = setTimeout(loadLarkAuth, 3000);
 }
 
 async function loadMembers(scope, selector = '[data-reassign-to]') {
@@ -1398,6 +1424,14 @@ document.addEventListener('click', async ev => {
     const r = await post(`/web/api/commands/${encodeURIComponent(c.id)}/clone`, { scope, to: sel.value });
     cl.disabled = false;
     alert(r.ok ? '已私聊发出确认卡，对方接收后就是他自己的应用。' : (r.message || r.error));
+    return;
+  }
+  const la = ev.target.closest('[data-lark-auth]');
+  if (la) {
+    la.disabled = true;
+    const r = await post('/web/api/lark-auth/start', {});
+    if (!r.ok) { alert(r.message || r.error); la.disabled = false; return; }
+    await loadLarkAuth();
     return;
   }
   const gl = ev.target.closest('[data-global]');
