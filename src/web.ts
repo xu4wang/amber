@@ -10,7 +10,7 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Store, CommandRow, ScheduleRow, PageRow } from './db.ts';
 import type { Caller } from './engine.ts';
-import { runCommand, AmberError, secretVault, lineOf, runParams, configParams, configValues, validateArgs } from './engine.ts';
+import { runCommand, AmberError, ENV_NOT_GLOBAL, secretVault, lineOf, runParams, configParams, configValues, validateArgs } from './engine.ts';
 import type { Signer } from './identity.ts';
 import type { Scheduler } from './scheduler.ts';
 import { envsHash, effectiveAccess, credentialPaths, type ExecutorHub } from './executors.ts';
@@ -603,6 +603,22 @@ export function startWeb(port: number, store: Store, deps: WebDeps): import('nod
           store.audit(who.unionId, 'web.executor_decide', { id: m[1], approve: m[2] === 'approve' });
           return json(res, 200, { ok: true, status: r.row!.status });
         }
+        if ((m = /^\/web\/api\/commands\/([A-Za-z0-9-]{1,40})\/global$/.exec(url.pathname))) {
+          // Global or back to where it was made: changes who can run it, so admins only, same rules as in Feishu.
+          if (!deps.isAdmin(who.unionId)) throw new AmberError('forbidden', '只有管理员可以设置全局应用');
+          const t = await target(store, deps, who.unionId, String(body.scope ?? ''), m[1], true);
+          const c = t.cmd;
+          if (typeof body.global !== 'boolean') throw new AmberError('bad_request', 'global 只能是 true 或 false');
+          if (body.confirm !== true) throw new AmberError('needs_confirm', '请确认后再修改');
+          const toGlobal = body.global;
+          if (toGlobal === c.global) throw new AmberError('not_needed', toGlobal ? `「${c.name}」已经是全局应用` : `「${c.name}」本来就只在创建处可用`);
+          if (toGlobal && c.script.env) throw new AmberError('env_not_global', ENV_NOT_GLOBAL);
+          if (toGlobal && store.listActiveGlobal().some(g => g.name === c.name && g.id !== c.id)) throw new AmberError('conflict', `已经有一个全局应用叫「${c.name}」，不能重名`);
+          store.setGlobal(c.id, toGlobal);
+          store.audit(who.unionId, toGlobal ? 'scope.promote' : 'scope.demote', { id: c.id, name: c.name, via: 'web' });
+          console.log(new Date().toISOString(), 'scope', toGlobal ? 'promote' : 'demote', c.id, c.name, 'via web');
+          return json(res, 200, { ok: true, global: toGlobal });
+        }
         if ((m = /^\/web\/api\/commands\/([A-Za-z0-9-]{1,40})\/retire$/.exec(url.pathname))) {
           const t = await target(store, deps, who.unionId, String(body.scope ?? ''), m[1], true);
           if (body.confirm !== true) throw new AmberError('needs_confirm', '请确认后再下线');
@@ -644,6 +660,8 @@ function cmdView(c: CommandRow, viewer?: string, isAdmin?: (u: string) => boolea
     .map(i => (canManage ? i : { name: i.name, set: i.set })) : [];
   return {
     canManage,
+    // Global or not is the admins' call (it changes who can run it).
+    canScope: !!viewer && !!isAdmin?.(viewer) && (c.global || !c.script.env),
     // Only the creator runs their command (#4); everyone may run a global one. An admin may look, not run.
     canRun: !!viewer && (c.global || c.ownerUnionId === viewer),
     // Amber Store (#4): listed from here (the original), installed from the Store, or can be listed.
