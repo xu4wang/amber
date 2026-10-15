@@ -220,3 +220,58 @@ test('larkUser: lark-cli is handed to scripts as the native binary behind the np
   assert.equal(resolveLarkCli({ PATH: '/nonexistent' }), undefined);
   assert.equal(resolveLarkCli({ PATH: join(d, 'path'), AMBER_LARK_CLI: '/x/lark-cli' }), '/x/lark-cli');
 });
+
+test('larkUser on the website: the app page shows whether you authorized, and you can authorize there, only as yourself', async () => {
+  const oauth = new FakeOAuth();
+  const env = await makeEnv({}, { larkOAuth: oauth });
+  try {
+    const { alice, bob, fake } = env;
+    larkUserVault()!.pollFloorMs = 5;
+    const base = `http://127.0.0.1:${env.webPort}`;
+    await env.dm(alice, '登录');
+    const cookie = (await fetch(urlButton(fake.sent.at(-1)!.card)!, { redirect: 'manual' })).headers.get('set-cookie')!.split(';')[0];
+    const get = (path: string) => fetch(base + path, { headers: { cookie } }).then(x => x.json());
+    const until = async (f: (s: any) => boolean) => { for (let i = 0; i < 300; i++) { const s = await get('/web/api/lark-auth'); if (f(s)) return s; await new Promise(r => setTimeout(r, 20)); } throw new Error('timed out'); };
+    const post = (path: string, body: unknown, c = cookie) => fetch(base + path, { method: 'POST', headers: { cookie: c, origin: base, 'content-type': 'application/json' }, body: JSON.stringify(body) }).then(async x => ({ status: x.status, body: await x.json() }));
+    const plain = await activate(env, { chatId: GROUP, chatType: 'group', name: '普通', params: [], script: script('print(1)') }, alice);
+    assert.deepEqual(await get('/web/api/lark-auth'), { ok: true, enabled: true, authorized: false, scopes: 0, updatedAt: null, pending: null, failed: null });
+    // Not logged in: nothing.
+    assert.equal((await fetch(base + '/web/api/lark-auth')).status, 401);
+    assert.equal((await post('/web/api/lark-auth/start', {}, '')).status, 401);
+    // Started here; asking again while it is open gives the same link (no new flow).
+    const a = await post('/web/api/lark-auth/start', {});
+    assert.equal(a.body.ok, true);
+    assert.equal((await post('/web/api/lark-auth/start', {})).body.url, a.body.url);
+    assert.equal(oauth.starts, 1);
+    assert.equal((await get('/web/api/lark-auth')).pending.code, a.body.code);
+    // Started again in the private chat: that one replaces it, so the page stops showing the old link.
+    await env.dm(alice, '授权飞书');
+    assert.equal((await get('/web/api/lark-auth')).pending, null);
+    const a2 = await post('/web/api/lark-auth/start', {});
+    assert.notEqual(a2.body.url, a.body.url, 'a new link, not the replaced one');
+    assert.equal((await get('/web/api/lark-auth')).pending.code, a2.body.code);
+    a.body = a2.body;
+    // Someone else approves it: thrown away, and the page says why.
+    oauth.approvals.set(/flow=(dc-\d+)/.exec(a.body.url)![1], bob.unionId);
+    const failed = await until(s => !!s.failed);
+    assert.match(failed.failed, /不是你本人/);
+    assert.equal(failed.pending, null);
+    assert.equal(failed.authorized, false);
+    // Again, approved by Alice herself: authorized, and the app runs.
+    const b = await post('/web/api/lark-auth/start', {});
+    assert.notEqual(b.body.url, a.body.url);
+    oauth.approvals.set(/flow=(dc-\d+)/.exec(b.body.url)![1], alice.unionId);
+    const ok = await until(s => s.authorized);
+    assert.equal(ok.scopes, 3);
+    assert.equal(ok.failed, null);
+    const id = await activate(env, { chatId: GROUP, chatType: 'group', name: '我的妙记', params: [], script: USES_TOKEN }, alice);
+    const views = (await get('/web/api/overview')).groups.flatMap((g: any) => g.commands);
+    assert.equal(views.find((c: any) => c.id === id).larkUser, true);
+    assert.equal(views.find((c: any) => c.id === plain).larkUser, false);
+    const r = await post('/web/api/run', { scope: 'group:' + GROUP, commandId: id, args: {} });
+    assert.match(JSON.stringify(r.body), new RegExp(`owner=${alice.unionId}`));
+    // The page follows the authorization wherever it changes: revoked in the private chat.
+    await env.dm(alice, '撤销飞书授权');
+    assert.equal((await get('/web/api/lark-auth')).authorized, false);
+  } finally { await env.close(); }
+});
