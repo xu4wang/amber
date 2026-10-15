@@ -1,11 +1,12 @@
 import type { Store, CommandRow, ParamDef } from './db.ts';
 import { computeSpecHash } from './db.ts';
-import { serviceDef, validateScript } from './runner.ts';
+import { serviceDef, validateScript, type ScriptInput } from './runner.ts';
 import type { Signer } from './identity.ts';
 import { redact, type SecretVault } from './secrets.ts';
 import type { ExecutorHub, CallGrant } from './executors.ts';
 import { newTicket, SERVICE_TOKEN_TTL_SEC } from './identity.ts';
-import { getLimits, effectiveTimeoutMs, SLOTS, localEgress, getGlobalAllowHosts } from './limits.ts';
+import { getLimits, effectiveTimeoutMs, SLOTS, localEgress, getGlobalAllowHosts, FEISHU_HOSTS } from './limits.ts';
+import { NeedsLarkAuth, type LarkUserVault } from './lark-user.ts';
 import { emitEvent } from './events.ts';
 
 let HUB: ExecutorHub | undefined;
@@ -44,6 +45,11 @@ export function missingConfigMessage(missing: string[]): string {
 let VAULT: SecretVault | undefined;
 /** The secret store used for runs (D48); set once at startup. */
 export function setSecretVault(v: SecretVault): void { VAULT = v; }
+/** Feishu user identity (D54). `onDead`: the person's authorization stopped working (the bot reminds them). */
+let LARK_USER: { vault: LarkUserVault; onDead: (unionId: string) => void } | undefined;
+export function setLarkUser(v: LarkUserVault, onDead: (unionId: string) => void = () => {}): void { LARK_USER = { vault: v, onDead }; }
+export function larkUserVault(): LarkUserVault | undefined { return LARK_USER?.vault; }
+export const LARK_AUTH_HINT = '私聊 Amber 发「授权飞书」';
 export function secretVault(): SecretVault | undefined { return VAULT; }
 
 /** Declared secret names that have no value yet (all of them when no vault is configured). */
@@ -198,6 +204,25 @@ export async function runCommand(store: Store, cmd: CommandRow, rawArgs: Record<
   const release = SLOTS.acquire(caller.unionId, script.env, limits);
   try {
     script = { ...script, timeoutMs: effectiveTimeoutMs(script.timeoutMs, limits) };
+    // Feishu user identity (D54): the caller's own token, valid for the whole run, or no run at all. Only a person
+    // can be a caller here; an agent run stands for nobody (docs/identity.md).
+    let larkUser: ScriptInput['larkUser'];
+    if (script.larkUser) {
+      if (!LARK_USER) throw new AmberError('no_lark_user', '飞书用户身份服务不可用');
+      if (caller.channel === 'agent' || !caller.unionId.startsWith('on_')) throw new AmberError('forbidden', '这个应用以执行人的飞书身份运行，只能由人执行（在飞书或网站上）');
+      try {
+        const t = await LARK_USER.vault.token(caller.unionId, script.timeoutMs ?? 0);
+        const appId = LARK_USER.vault.appId;
+        const cli = LARK_USER.vault.larkCli;
+        larkUser = { accessToken: t.token, appId, expiresAt: t.expiresAt, env: { LARKSUITE_CLI_USER_ACCESS_TOKEN: t.token, LARKSUITE_CLI_APP_ID: appId }, ...(cli ? { cli } : {}) };
+      } catch (e) {
+        if (e instanceof NeedsLarkAuth) {
+          LARK_USER.onDead(caller.unionId);
+          throw new AmberError('needs_lark_auth', `这个应用以执行人的飞书身份运行，${e.message}。请${LARK_AUTH_HINT}，授权一次后再执行`);
+        }
+        throw new AmberError('lark_user_unavailable', `取飞书授权失败，请稍后再试：${(e as Error).message}`);
+      }
+    }
     const started = Date.now();
     const runId = store.startRun({ commandId: cmd.id, specHash: cmd.specHash, channel: opts.trial ? `${caller.channel}.trial` : caller.channel, callerUnionId: caller.unionId, chatId: caller.chatId, args });
     // chatId: where it was run from. app*: where the app itself belongs (a group, or its owner's private chat), as of this run.
@@ -224,13 +249,16 @@ export async function runCommand(store: Store, cmd: CommandRow, rawArgs: Record<
         return signer.issue({ aud: d.audience, sub: caller.unionId, cmd: cmd.id, rev: cmd.specHash, run: runId, chat: caller.chatId, channel, callIndex, callCount: script.services![name].calls, ttlSec: SERVICE_TOKEN_TTL_SEC });
       },
     } : undefined;
-    const input = { params: { ...args, ...config }, caller: { unionId: caller.unionId, chatId: caller.chatId, channel: caller.channel, city }, runId, ...(Object.keys(services).length ? { services } : {}), ...(secrets ? { secrets } : {}) };
+    if (larkUser) store.audit(caller.unionId, 'larkuser.issue', { runId, commandId: cmd.id, channel });
+    const input = { params: { ...args, ...config }, caller: { unionId: caller.unionId, chatId: caller.chatId, channel: caller.channel, city }, runId, ...(Object.keys(services).length ? { services } : {}), ...(secrets ? { secrets } : {}), ...(larkUser ? { larkUser } : {}) };
     // script.env (D50): on the executor that holds the data, never here. Without it: on Amber's own machine, as the same kind of job.
     const raw = !HUB ? { ok: false, content: '', error: '执行端服务不可用' }
       : script.env ? await HUB.run(script, { name: cmd.name, params: cmd.params, script: cmd.script, options: cmd.options }, cmd.specHash, input, { allowHosts: getGlobalAllowHosts(store), grant })
-      : await HUB.runLocal(script, input, { egress: localEgress(store), grant });
-    // A secret that ends up in the output or the error message is masked before it is stored or shown.
-    const r = secrets ? { ...raw, content: redact(raw.content, secrets), ...(raw.error ? { error: redact(raw.error, secrets) } : {}) } : raw;
+      // A run with a Feishu user token reaches Feishu and nothing else (D54), whatever Amber's own allow list says.
+      : await HUB.runLocal(script, input, { egress: larkUser ? FEISHU_HOSTS : localEgress(store), grant });
+    // A secret (or the user token) that ends up in the output or the error message is masked before it is stored or shown.
+    const masked = { ...(secrets ?? {}), ...(larkUser ? { '': larkUser.accessToken } : {}) };
+    const r = Object.keys(masked).length ? { ...raw, content: redact(raw.content, masked), ...(raw.error ? { error: redact(raw.error, masked) } : {}) } : raw;
     if (secrets) store.audit(caller.unionId, 'secret.use', { runId, commandId: cmd.id, names: Object.keys(secrets) });
     if (!r.ok) {
       store.finishRun(runId, 'failed', null, r.error ?? 'failed');

@@ -29,10 +29,11 @@ function docMarkdown(c: CommandRow, opts: DocOpts): string {
   const how = '沙盒脚本';
   const net = s.network ? '，可访问外网' : s.services && Object.keys(s.services).length ? `，以执行人身份调用：${describeServices(s)}（不能直连网络，经代理只能访问执行位置的网络白名单）` : '，不能直连网络（经代理只能访问执行位置的网络白名单）';
   const interp = (s.interpreter ? `\n\n**解释器**：${s.interpreter}` : '') + (s.env ? `\n\n**执行位置**：${executorHub()?.describe(s.env) ?? s.env}。脚本在那台机器上执行，能访问的就是这个环境的路径（由管理员批准，应用不能自己加）。` : '');
+  const lark = s.larkUser ? '\n\n**⚠️ 以执行人本人的飞书身份运行**：每次执行，脚本会拿到执行人自己的飞书用户令牌（只能访问飞书），可以用 lark-cli 或飞书接口以这个人的身份做任何他有权限做的事。审核时请逐条确认代码调用了哪些飞书操作，尤其是写操作（发消息、改文档、改表格），以及不会把令牌打印或写到别处。' : '';
   const sec = s.secrets?.length ? `\n\n**使用的密钥**：${describeSecrets(c)}。审核时请确认代码只把密钥用在该用的地方，不会打印或发往别处。` : '';
   const time = s.timeoutMs === undefined ? '最长运行时间用默认值（管理员设定）' : `最长运行 ${fmtDuration(Math.round(s.timeoutMs / 1000))}`;
   const long = s.timeoutMs !== undefined && s.timeoutMs > LONG_RUN_MS ? `\n\n**⚠️ 长时间运行**：这个应用每次最长会运行 ${fmtDuration(Math.round(s.timeoutMs / 1000))}，请确认确实需要这么久（运行期间会一直占用一个运行名额）。` : '';
-  const code = `## 代码\n\n${how}${net}；${time}。${long}${sec}${interp}\n\n${FENCE}python\n${s.code.split(FENCE).join('``\u200b`')}\n${FENCE}`;
+  const code = `## 代码\n\n${how}${net}；${time}。${long}${lark}${sec}${interp}\n\n${FENCE}python\n${s.code.split(FENCE).join('``\u200b`')}\n${FENCE}`;
   const trial = opts.trial
     ? `## 试运行结果\n\n由认领人试运行时的输出：\n\n${FENCE}text\n${opts.trial.slice(0, 20000).split(FENCE).join('``​`')}\n${FENCE}`
     : '';

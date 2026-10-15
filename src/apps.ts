@@ -311,7 +311,7 @@ export class AppStore {
       paramsChanged: JSON.stringify(c.params) !== JSON.stringify(to.params), optionsChanged: JSON.stringify(c.options) !== JSON.stringify(to.options),
       newConfig: configParams(to.params).filter(p => !had.has(p.name)).map(p => p.label ?? p.name),
       newSecrets: (to.script.secrets ?? []).filter(n => !hadSec.has(n)),
-      network: !!to.script.network, services: to.script.services ? describeServices(to.script) : '',
+      network: !!to.script.network, services: to.script.services ? describeServices(to.script) : '', larkUser: !!to.script.larkUser,
     };
   }
 
@@ -372,7 +372,7 @@ export class AppStore {
       params: c ? runParams(c.params).map(p => ({ name: p.name, label: p.label ?? p.name, type: p.type, required: !!p.required })) : [],
       config: c ? configParams(c.params).map(p => ({ name: p.name, label: p.label ?? p.name, required: !!p.required, default: p.default ?? null })) : [],
       secrets: s?.secrets ?? [],
-      network: !!s?.network, services: s?.services ? describeServices(s) : '',
+      network: !!s?.network, services: s?.services ? describeServices(s) : '', larkUser: !!s?.larkUser,
       options: c?.options ?? null,
       installs: app.maintainerUnionId === viewer || this.deps.isAdmin(viewer) ? this.store.installsOf(app.id).length : undefined,
     };

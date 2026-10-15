@@ -9,14 +9,15 @@ import { startApi } from './api.ts';
 import { startWeb } from './web.ts';
 import { setTimezones } from './schedule-rule.ts';
 import { SecretVault } from './secrets.ts';
-import { setSecretVault, setExecutorHub, setWebUrl } from './engine.ts';
+import { setSecretVault, setExecutorHub, setWebUrl, setLarkUser } from './engine.ts';
+import { LarkUserVault, feishuOAuth, type LarkOAuth } from './lark-user.ts';
 import { ExecutorHub } from './executors.ts';
 import { seedAllowHosts, FEISHU_HOSTS } from './limits.ts';
 import { makePageShooter } from './page-shot.ts';
 
 export interface Amber { bot: AmberBot; store: Store; api: Server; web: Server; hub: ExecutorHub; close(): Promise<void> }
 
-export async function startAmber(cfg: AmberConfig, opts: { apiPort: number; webPort: number; client?: unknown; ws?: unknown; timers?: boolean }): Promise<Amber> {
+export async function startAmber(cfg: AmberConfig, opts: { apiPort: number; webPort: number; client?: unknown; ws?: unknown; timers?: boolean; larkOAuth?: LarkOAuth }): Promise<Amber> {
   setServices(cfg.services);
   setSandboxContext({ configDir: cfg.configDir });
   setTimezones(cfg.timezones);
@@ -32,6 +33,10 @@ export async function startAmber(cfg: AmberConfig, opts: { apiPort: number; webP
     store.audit(null, 'startup.unrunnable', u);
   }
   const bot = new AmberBot(cfg, store, { client: opts.client, ws: opts.ws, timers: opts.timers });
+  // Feishu user identity (D54): authorizations on Amber's own app; tests pass a fake Feishu OAuth.
+  const larkUser = new LarkUserVault(store, cfg.configDir, opts.larkOAuth ?? feishuOAuth(cfg.appId, cfg.appSecret), cfg.appId);
+  bot.larkUser = larkUser;
+  setLarkUser(larkUser, u => bot.remindLarkAuth(u));
   await bot.start();
   const hub = bot.hub;
   setExecutorHub(hub);

@@ -12,7 +12,8 @@
   "caller": {"unionId": "on_…", "chatId": "oc_…", "channel": "bot|web|agent|schedule|page", "city": "北京"},
   "runId": "…",
   "services": {"data-mcp": {"tokens": ["…", "…"], "tcpPort": 53127}},
-  "secrets": {"API_TOKEN": "…"}
+  "secrets": {"API_TOKEN": "…"},
+  "larkUser": {"accessToken": "u-…", "appId": "cli_…", "expiresAt": 1791400000000, "env": {"LARKSUITE_CLI_USER_ACCESS_TOKEN": "u-…", "LARKSUITE_CLI_APP_ID": "cli_…"}, "cli": "/…/lark-cli"}
 }
 ```
 
@@ -23,6 +24,7 @@
 | `runId` | 本次运行的 id |
 | `services` | 只有声明了服务时才有，见下面「调用数据服务」 |
 | `secrets` | 只有声明了密钥时才有，见下面「密钥」 |
+| `larkUser` | 只有声明了 `"larkUser": true` 时才有，见下面「以执行人的飞书身份运行」 |
 
 ## 输出
 
@@ -91,6 +93,23 @@ Content-Type: application/json
 
 在 `script` 里写 `"secrets": ["API_TOKEN"]`，只写名字（大写字母、数字、下划线，最多 10 个），脚本从输入的 `secrets` 里取值。值由创建人在私聊卡片或网站上填写，不进代码、不进草稿，agent 也拿不到。不要打印密钥，打印出来也会被遮成 `***`。用到密钥的应用总要人点确认卡才能执行。
 
+## 以执行人的飞书身份运行
+
+在 `script` 里写 `"larkUser": true`，脚本每次执行都会从输入的 `larkUser` 里拿到**执行人本人**的飞书用户令牌（`user_access_token`），有效期覆盖整次运行。用它调用什么由脚本自己决定，Amber 不限制动作。最常见的用法是把 `env` 合进环境变量，再用 `cli`（这台机器上 lark-cli 的完整路径，沙箱的 PATH 里不一定有它）调 lark-cli：
+
+```python
+import json, os, subprocess, sys
+inp = json.load(sys.stdin)
+env = {**os.environ, **inp["larkUser"]["env"]}
+r = subprocess.run([inp["larkUser"]["cli"], "minutes", "+search", "--query", "前采", "--as", "user"], env=env, capture_output=True, text=True, timeout=120)
+print(r.stdout)
+```
+
+- 执行人要先授权一次：私聊 Amber 发「授权飞书」，用自己的飞书账号点确认。没授权或授权失效时，执行会被拒绝，并提示去授权。
+- 执行人就是这次运行的人（见[可信身份](identity.md)第 1 节），定时任务以创建人的身份执行。agent 入口不代表任何人，不能执行这类应用。
+- 网络只能到飞书（`*.feishu.cn` 等），不能和 `"network": true` 一起用。目前只能在 Amber 本机运行，不能和 `env` 一起用。
+- 令牌不要打印，打印出来也会被遮成 `***`。不要把它写进文件或发到别处：审核时会逐条看脚本以执行人的身份做了什么。
+
 ## 草稿格式
 
 ```json
@@ -113,7 +132,7 @@ Content-Type: application/json
 | 参数类型 | `string`（可加 `maxLength`、`pattern`）或 `integer`（可加 `min`、`max`）；`"defaultFrom": "caller.city"` 表示不填时用执行人的办公城市 |
 | `"scope": "config"` | 配置项：值由创建人在网站上设置，执行人传不进来；不能用 `defaultFrom`，不要放机密 |
 | `script.kind` | 只能是 `script`；不要写 `sandbox` 字段（会被拒绝） |
-| `script.env`、`script.interpreter`、`script.secrets`、`script.network`、`script.services` | 见上文 |
+| `script.env`、`script.interpreter`、`script.secrets`、`script.network`、`script.services`、`script.larkUser` | 见上文 |
 | `options.confirm` | 执行前必须确认，会改数据、有风险时打开 |
 | `options.schedulable` | 允许定时执行，不写时默认 `true` |
 

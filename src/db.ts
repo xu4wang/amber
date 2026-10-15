@@ -412,6 +412,18 @@ export class Store {
       PRIMARY KEY (trigger_id, event_id)
     )`);
     this.db.exec(`CREATE INDEX IF NOT EXISTS trigger_deliveries_due ON trigger_deliveries(status, next_at)`);
+    // Feishu user identity (D54): one authorization per person; only the refresh token, encrypted (src/lark-user.ts).
+    // refresh_cipher '' = dead (Feishu rejected it): the row stays for the once-a-day reminder.
+    this.db.exec(`CREATE TABLE IF NOT EXISTS lark_user_auth (
+      union_id TEXT PRIMARY KEY,
+      open_id TEXT,
+      scopes TEXT NOT NULL,
+      refresh_cipher TEXT NOT NULL,
+      refresh_expires_at INTEGER,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL,
+      reminded_at INTEGER
+    )`);
     const runCols = (this.db.prepare(`PRAGMA table_info(runs)`).all() as { name: string }[]).map(c => c.name);
     if (!runCols.includes('schedule_id')) this.db.exec('ALTER TABLE runs ADD COLUMN schedule_id TEXT');
     // Where a login link lands (a page app it was sent for); fixed server side, never taken from the URL.
@@ -1138,6 +1150,34 @@ export class Store {
       WHERE action = 'executor.dispatch' AND json_extract(detail, '$.jobId') IN (${ids.map(() => '?').join(',')})`).all(...ids) as { job?: string; run?: string }[];
     for (const r of rows) if (r.job && r.run) out.set(r.job, r.run);
     return out;
+  }
+
+  // Feishu user identity (D54). Only src/lark-user.ts reads or writes these.
+  larkUserRow(unionId: string): { union_id: string; open_id: string | null; scopes: string; refresh_cipher: string; refresh_expires_at: number | null; updated_at: number; reminded_at: number | null } | undefined {
+    return this.db.prepare('SELECT union_id, open_id, scopes, refresh_cipher, refresh_expires_at, updated_at, reminded_at FROM lark_user_auth WHERE union_id = ?').get(unionId) as any;
+  }
+  upsertLarkUser(r: { unionId: string; openId: string | null; scopes: string; refreshCipher: string; refreshExpiresAt: number | null; at: number }): void {
+    this.db.prepare(`INSERT INTO lark_user_auth (union_id, open_id, scopes, refresh_cipher, refresh_expires_at, created_at, updated_at, reminded_at) VALUES (?,?,?,?,?,?,?,NULL)
+      ON CONFLICT(union_id) DO UPDATE SET open_id = excluded.open_id, scopes = excluded.scopes, refresh_cipher = excluded.refresh_cipher,
+        refresh_expires_at = excluded.refresh_expires_at, updated_at = excluded.updated_at, reminded_at = NULL`)
+      .run(r.unionId, r.openId, r.scopes, r.refreshCipher, r.refreshExpiresAt, r.at, r.at);
+  }
+  updateLarkUserRefresh(unionId: string, refreshCipher: string, refreshExpiresAt: number | null, at: number): void {
+    this.db.prepare(`UPDATE lark_user_auth SET refresh_cipher = ?, refresh_expires_at = ?, updated_at = ? WHERE union_id = ? AND refresh_cipher != ''`).run(refreshCipher, refreshExpiresAt, at, unionId);
+  }
+  markLarkUserDead(unionId: string): void {
+    this.db.prepare(`UPDATE lark_user_auth SET refresh_cipher = '', updated_at = ? WHERE union_id = ?`).run(Date.now(), unionId);
+  }
+  deleteLarkUser(unionId: string): boolean {
+    const r = this.larkUserRow(unionId);
+    this.db.prepare('DELETE FROM lark_user_auth WHERE union_id = ?').run(unionId);
+    return !!r && r.refresh_cipher !== '';
+  }
+  /** Takes the reminder slot when the last reminder is older than `everyMs` (or there was none). Only dead authorizations are reminded. */
+  claimLarkUserReminder(unionId: string, everyMs: number): boolean {
+    const now = Date.now();
+    return this.db.prepare(`UPDATE lark_user_auth SET reminded_at = ? WHERE union_id = ? AND refresh_cipher = '' AND (reminded_at IS NULL OR reminded_at < ?)`)
+      .run(now, unionId, now - everyMs).changes > 0;
   }
 
   audit(actorUnionId: string | null, action: string, detail: Record<string, unknown>): void {

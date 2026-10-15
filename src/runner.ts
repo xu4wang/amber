@@ -24,6 +24,9 @@ export interface Script {
   interpreter?: string;
   /** Where it runs (D50): "<executor>/<environment>" — an approved executor on the machine that holds the data. Default: on Amber's machine. */
   env?: string;
+  /** Runs as the person who runs it on Feishu (D54): the run gets that person's user_access_token on stdin, for lark-cli
+   *  or the Feishu OpenAPI. Reviewed with the code. No internet: the network reaches Feishu only. */
+  larkUser?: boolean;
 }
 
 /** Splits script.env into executor and environment names. */
@@ -67,6 +70,9 @@ export interface ScriptInput {
   services?: Record<string, { tokens: string[]; tcpPort?: number }>;
   /** Command secret name -> value, only the names the script declared (D48). */
   secrets?: Record<string, string>;
+  /** Only for scripts that declare larkUser (D54): the caller's own Feishu user token, valid for the whole run.
+   *  `env` is ready to pass to lark-cli (user identity); `cli` is lark-cli's absolute path on this machine. */
+  larkUser?: { accessToken: string; appId: string; expiresAt: number; env: Record<string, string>; cli?: string };
 }
 
 export interface ScriptResult { ok: boolean; content: string; error?: string }
@@ -106,6 +112,12 @@ export function validateScript(s: unknown): Script {
       if (!parseEnv(env)) throw new Error('env 要写成 "执行端名/环境名"，例如 "ledger-mac/台账"（执行端名：小写字母、数字、连字符）');
       for (const name of Object.keys(services)) if (SERVICES[name]?.executor !== true) throw new Error(`服务 ${name} 不允许在执行端上调用（管理员可以在 Amber 配置里为它打开 executor）`);
     }
+    if (x.larkUser !== undefined && x.larkUser !== true && x.larkUser !== false) throw new Error('larkUser 只能写 true 或 false');
+    const larkUser = x.larkUser === true;
+    // The token works on Feishu only if it can reach nothing else (D54).
+    if (larkUser && x.network) throw new Error('以执行人飞书身份运行的脚本不能开放外网（令牌只能在飞书上用）');
+    // Executors merge their environment's own allow list into the run's; v1 keeps the token on Amber's machine.
+    if (larkUser && env) throw new Error('以执行人飞书身份运行的脚本目前只能在 Amber 本机运行，不能指定 env');
     if (x.sandbox !== undefined) throw new Error('应用不再声明 sandbox：能访问哪些文件由运行环境决定。需要访问数据时，用 env 选择一个运行环境');
     let interpreter: string | undefined;
     if (x.interpreter !== undefined) {
@@ -114,7 +126,7 @@ export function validateScript(s: unknown): Script {
       if (!/\/python(3(\.\d+)?)?$/.test(p)) throw new Error('interpreter 只能是 Python 解释器（路径以 python、python3 或 python3.x 结尾）');
       interpreter = String(x.interpreter).trim();
     }
-    return { kind: 'script', lang: 'python', code: x.code, network: !!x.network, ...(declared ? { services } : {}), ...(timeoutMs ? { timeoutMs } : {}), ...(secrets.length ? { secrets } : {}), ...(interpreter ? { interpreter } : {}), ...(env ? { env } : {}) };
+    return { kind: 'script', lang: 'python', code: x.code, network: !!x.network, ...(declared ? { services } : {}), ...(timeoutMs ? { timeoutMs } : {}), ...(secrets.length ? { secrets } : {}), ...(interpreter ? { interpreter } : {}), ...(env ? { env } : {}), ...(larkUser ? { larkUser } : {}) };
   }
   throw new Error('脚本类型只能是 script');
 }
