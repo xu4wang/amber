@@ -6,7 +6,7 @@ import { randomUUID } from 'node:crypto';
 import type { Store, CommandRow, ScopeType } from './db.ts';
 import type { Caller, Block } from './engine.ts';
 import { ENV_NOT_GLOBAL, visibleCommands, findVisible, findManageable, runCommand, AmberError, secretVault, lineOf, dropOrphanSettings, runParams } from './engine.ts';
-import { cardFooter, withFooter, Mentions, reassignCard, cloneCard, listCard, formCard, runningCard, resultCard, errorCard, infoCard, retireConfirmCard, closedCard, secretFormCard, secretPickCard, executorApprovalCard, executorDecidedCard, executorListCard, executorFollowCard } from './cards.ts';
+import { cardFooter, withFooter, Mentions, reassignCard, cloneCard, listCard, formCard, runningCard, trialRunningCard, resultCard, errorCard, infoCard, retireConfirmCard, closedCard, secretFormCard, secretPickCard, executorApprovalCard, executorDecidedCard, executorListCard, executorFollowCard } from './cards.ts';
 import { ExecutorHub } from './executors.ts';
 import { AppStore } from './apps.ts';
 import type { AmberConfig } from './config.ts';
@@ -18,6 +18,7 @@ import type { Deps } from './agent.ts';
 import { Scheduler, CREATOR_LEFT } from './scheduler.ts';
 import { newToken, hashToken, LOGIN_TTL_MS } from './web.ts';
 import { formatAtDefault } from './schedule-rule.ts';
+import { getLimits, timeoutLabel } from './limits.ts';
 import type { LarkUserVault, AuthOutcome } from './lark-user.ts';
 
 const LARK_AUTH_VERBS = ['授权飞书', '撤销飞书授权', '飞书授权状态'];
@@ -781,6 +782,9 @@ export class AmberBot {
     this.expireLoginCard(h, sentId);
   }
 
+  /** Drafts whose trial run is under way (one at a time per draft). */
+  private trialsRunning = new Set<string>();
+
   /** Feishu user identity (D54), set by app.ts. */
   larkUser?: LarkUserVault;
 
@@ -970,15 +974,24 @@ export class AmberBot {
     const raw = (card: object) => ({ card: { type: 'raw', data: this.footed(card) } });
     try {
       if (value.a === 'claim_try') {
-        // Trial runs can take longer than the callback window: answer now, patch the card when done.
-        this.flow.checkClaimer(String(value.c), caller);
+        // Trial runs can take longer than the callback window: answer now, patch the card when done. Until then
+        // the card says it is running (no buttons), and another click on the same draft does not start a second run.
+        const id = String(value.c);
+        this.flow.checkClaimer(id, caller);
+        if (this.trialsRunning.has(id)) return { toast: { type: 'info', content: '试运行还在进行中，结果会更新在这张卡片上，不用重复点击' } };
+        const draft = this.store.getCommand(id);
+        this.trialsRunning.add(id);
         setTimeout(async () => {
           let card: object;
-          try { card = await this.flow.onClaimAction('claim_try', String(value.c), caller, { city: () => this.cityOf(caller.unionId), signer: this.signer }, d.action?.form_value ?? {}); }
+          try { card = await this.flow.onClaimAction('claim_try', id, caller, { city: () => this.cityOf(caller.unionId), signer: this.signer }, d.action?.form_value ?? {}); }
           catch (e) { card = errorCard('Amber', e instanceof AmberError ? e.message : '试运行出错'); }
+          finally { this.trialsRunning.delete(id); }
           if (messageId) await this.patch(messageId, card);
         }, 300);
-        return { toast: { type: 'info', content: '试运行中，结果会更新在这张卡片上' } };
+        return {
+          toast: { type: 'info', content: '试运行已开始，结果会更新在这张卡片上' },
+          ...(draft ? raw(trialRunningCard(draft.name, caller.openId, formatAtDefault(Date.now()), timeoutLabel(draft.script.timeoutMs, getLimits(this.store)))) : {}),
+        };
       }
       if (value.a === 'claim_submit') {
         // Creating the review doc and the approval can outlast the callback window. Wait briefly so

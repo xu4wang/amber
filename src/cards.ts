@@ -260,6 +260,11 @@ export function runningCard(name: string, whoOpenId?: string): object {
   return shell(`Amber · ${name}`, 'wathet', [{ tag: 'markdown', content: `⏳ 正在以 ${person(whoOpenId)} 的身份执行……` }]);
 }
 
+/** A trial run takes a while: shown on the claim card at once, so nobody clicks again wondering whether it started. */
+export function trialRunningCard(name: string, whoOpenId: string | undefined, startedAt: string, maxRun: string): object {
+  return shell(`试运行中：${name}`, 'wathet', [{ tag: 'markdown', content: `⏳ ${person(whoOpenId)} 于 ${startedAt} 开始试运行（以本人的身份执行）。\n结果出来后会更新在这张卡片上，**不用重复点击**。这个应用每次最长运行 ${maxRun}。` }]);
+}
+
 export function resultCard(name: string, whoOpenId: string | undefined, blocks: Block[], runId: string, elapsedMs: number, cmdId: string, sharedSecrets = false, mentions?: Mentions): object {
   return shell(`Amber · ${name}`, 'green', [
     ...renderBlocks(blocks, mentions),
