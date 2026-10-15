@@ -584,13 +584,28 @@ export class Store {
   }
 
   /** A draft or a revision under review with this name (only one version may be in progress at a time). */
-  nameInProgress(chatId: string, line: string): boolean {
-    return !!this.db.prepare(`SELECT 1 FROM commands WHERE chat_id = ? AND COALESCE(line, name) = ? AND status IN ('pending','draft')`).get(chatId, line);
+  nameInProgress(chatId: string, line: string, except: string[] = []): boolean {
+    return (this.db.prepare(`SELECT id FROM commands WHERE chat_id = ? AND COALESCE(line, name) = ? AND status IN ('pending','draft')`).all(chatId, line) as { id: string }[]).some(r => !except.includes(r.id));
   }
 
   /** A draft or a revision under review with this name here, whatever its line. */
-  nameDraftInProgress(chatId: string, name: string): boolean {
-    return !!this.db.prepare(`SELECT 1 FROM commands WHERE chat_id = ? AND name = ? AND status IN ('pending','draft')`).get(chatId, name);
+  nameDraftInProgress(chatId: string, name: string, except: string[] = []): boolean {
+    return (this.db.prepare(`SELECT id FROM commands WHERE chat_id = ? AND name = ? AND status IN ('pending','draft')`).all(chatId, name) as { id: string }[]).some(r => !except.includes(r.id));
+  }
+
+  /** Unclaimed drafts with this name here that only this person may claim (p2p drafts). */
+  draftsForClaimer(chatId: string, name: string, claimer: string): string[] {
+    return (this.db.prepare(`SELECT id FROM commands WHERE chat_id = ? AND name = ? AND status = 'draft' AND expected_claimer = ?`).all(chatId, name, claimer) as { id: string }[]).map(r => r.id);
+  }
+
+  /** Draft → rejected, only if nobody has claimed it meanwhile. */
+  supersedeDraft(id: string): boolean {
+    return this.db.prepare(`UPDATE commands SET status = 'rejected' WHERE id = ? AND status = 'draft'`).run(id).changes > 0;
+  }
+
+  /** Undo supersedeDraft when the replacement could not be delivered. */
+  restoreDraft(id: string): void {
+    this.db.prepare(`UPDATE commands SET status = 'draft' WHERE id = ? AND status = 'rejected'`).run(id);
   }
 
   /** Active apps in a chat with this name, whatever their line (several people may each have one). */

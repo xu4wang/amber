@@ -162,4 +162,4 @@ print(r.stdout)
 | `options.confirm` | 执行前必须确认，会改数据、有风险时打开 |
 | `options.schedulable` | 允许定时执行，不写时默认 `true` |
 
-用同一个名字、在同一个群（或私聊）提交，就是已有应用的新版本。提交用 `amber submit draft.json --label <bot 名>`，见[agent 接入](cli-and-skill.md)。
+用同一个名字、在同一个群（或私聊）提交，就是已有应用的新版本。同名的上一版还停在认领卡上、没提交审核时，私聊草稿重新提交会替换它（只限同一个认领人）；群里的草稿和审核中的版本不会被替换，要先丢弃或等审核结束。提交用 `amber submit draft.json --label <bot 名>`，见[agent 接入](cli-and-skill.md)。
