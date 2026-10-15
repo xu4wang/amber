@@ -4,7 +4,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { makeEnv, activate, script, GROUP } from './env.ts';
+import { makeEnv, activate, script, urlButton, GROUP } from './env.ts';
 import { runCommand } from '../src/engine.ts';
 
 const FAKE = join(import.meta.dirname, 'fake-claude.py');
@@ -64,6 +64,11 @@ test('llm: a declared service answered by Amber, text in and text out', async ()
     assert.equal(audit.filter(a => JSON.parse(a.detail).persist === true).length, 1, 'kept sessions are marked');
     assert.ok(audit.every(a => !a.detail.includes('群里说了很多话') && !a.detail.includes('summary[')));
     assert.deepEqual(audit.map(a => JSON.parse(a.detail).status).sort(), [200, 200, 400, 400, 404]);
+    // Admins find them on the website under 执行.
+    await env.dm(env.alice, '登录');
+    const cookie = (await fetch(urlButton(env.fake.sent.at(-1)!.card)!, { redirect: 'manual' })).headers.get('set-cookie')!.split(';')[0];
+    const rows = (await (await fetch(`http://127.0.0.1:${env.webPort}/web/api/audit?cat=run`, { headers: { cookie } })).json()).rows;
+    assert.ok(rows.some((x: any) => x.action === 'llm.call'));
   } finally { await env.close(); }
 });
 
