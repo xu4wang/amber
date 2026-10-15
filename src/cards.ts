@@ -280,6 +280,20 @@ export function errorCard(name: string, message: string, cmdId?: string): object
   ]);
 }
 
+/** The guide (assist.ts) is reading an unmatched message. */
+export function assistThinkingCard(): object {
+  return shell('Amber', 'wathet', [{ tag: 'markdown', content: '🤔 没有对上命令或应用名，正在理解你的意思……' }]);
+}
+
+/** The guide's suggestion: its words as plain text, then where to go from here. */
+export function assistCard(reply: string, next: string, docsUrl: string): object {
+  return shell('Amber · 你可能想要', 'blue', [
+    ...(reply ? [{ tag: 'markdown', content: sanitizeMarkdown(reply, 400) }] : []),
+    { tag: 'markdown', content: next },
+    { tag: 'markdown', content: `<font color="grey">这是大模型根据你的话给出的建议，可能不准。发「帮助」看你能用的应用，或查看[使用手册](${docsUrl})。</font>`, text_size: 'notation' },
+  ]);
+}
+
 export function infoCard(title: string, markdown: string): object {
   return shell(`Amber · ${title}`, 'blue', [{ tag: 'markdown', content: sanitizeMarkdown(markdown) }]);
 }

@@ -7,6 +7,13 @@ with open('calls.jsonl', 'a') as f:   # in the working directory Amber gave it
     f.write(json.dumps({'args': args, 'env': sorted(os.environ.keys()), 'configDir': os.environ.get('CLAUDE_CONFIG_DIR'), 'cwd': os.getcwd()}) + '\n')
 model = args[args.index('--model') + 1] if '--model' in args else ''
 system = args[args.index('--system-prompt') + 1] if '--system-prompt' in args else ''
+if '@@' in prompt:   # the guide's tests put the model's answer in the user's words: @@{...}@@
+    import re
+    m = re.search(r'@@(.*?)@@', prompt, re.S)
+    with open('prompts.jsonl', 'a') as f:
+        f.write(json.dumps({'prompt': prompt, 'system': system, 'model': model}) + '\n')
+    print(json.dumps({'type': 'result', 'is_error': False, 'result': m.group(1) if m else ''}))
+    sys.exit(0)
 if 'SLEEP' in prompt:
     time.sleep(30)
 if 'FAIL' in prompt:

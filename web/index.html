@@ -528,7 +528,8 @@ function renderTree() {
       ITEMS.set('set:card-footer', { kind: 'set' });
       ITEMS.set('set:run-limits', { kind: 'set-limits' });
       ITEMS.set('set:allow-hosts', { kind: 'set-hosts' });
-      admin += node('settings', '系统设置', '<div class="leaf" data-key="set:run-limits" data-search="运行限制 时限 并发"><span class="name">运行限制</span></div><div class="leaf" data-key="set:allow-hosts" data-search="网络白名单 代理 域名"><span class="name">网络白名单</span></div><div class="leaf" data-key="set:card-footer" data-search="卡片页脚 footer"><span class="name">卡片页脚</span></div>');
+      if (SETTINGS.assistant) ITEMS.set('set:assistant', { kind: 'set-assist' });
+      admin += node('settings', '系统设置', '<div class="leaf" data-key="set:run-limits" data-search="运行限制 时限 并发"><span class="name">运行限制</span></div><div class="leaf" data-key="set:allow-hosts" data-search="网络白名单 代理 域名"><span class="name">网络白名单</span></div><div class="leaf" data-key="set:card-footer" data-search="卡片页脚 footer"><span class="name">卡片页脚</span></div>' + (SETTINGS.assistant ? '<div class="leaf" data-key="set:assistant" data-search="智能引导 大模型 自然语言"><span class="name">智能引导</span></div>' : ''));
     }
     ITEMS.set('audit', { kind: 'audit' });
     admin += '<div class="leaf" data-key="audit" data-search="审计日志 audit"><span class="name">审计日志</span></div>';
@@ -580,6 +581,7 @@ function select(key, push = true) {
   else if (it.kind === 'exe') exePane(it);
   else if (it.kind === 'app') appPane(it);
   else if (it.kind === 'set') footerPane();
+  else if (it.kind === 'set-assist') assistPane();
   else if (it.kind === 'set-limits') limitsPane();
   else if (it.kind === 'set-hosts') hostsPane();
   else if (it.kind === 'audit') auditPane();
@@ -781,6 +783,21 @@ function footerPane() {
   });
 }
 
+// The guide: when a message to Amber matches no command or app, the large model suggests what was meant.
+function assistPane() {
+  const A = SETTINGS.assistant;
+  document.getElementById('pane').innerHTML = `${backBtn}
+    <div class="pane-head"><h1>智能引导</h1></div>
+    <div class="where">系统设置 · 管理员</div>
+    <p class="desc">有人在飞书里私聊或 @Amber 时，说的话没有对上任何命令或应用名（比如用自然语言描述想做的事、打错了命令），Amber 会把这句话和这个人在那里能用的应用清单交给大模型，回一张「你可能想要」的卡片：指向某个应用（附上预填好的表单，仍要本人点「执行」）、某个 Amber 命令，或者说明 Amber 能做什么。大模型只给建议，不执行任何操作。</p>
+    <div class="box">
+      <dl class="kv"><dt>当前</dt><dd>${A.enabled ? '已开启' : '已关闭：对不上时只回「没有找到应用」'}</dd><dt>模型</dt><dd>${esc(A.model)}</dd></dl>
+      <div class="field"><label>模型</label><div class="field-main"><select id="assist-model">${A.models.map(m => `<option value="${esc(m)}" ${m === A.model ? 'selected' : ''}>${esc(m)}</option>`).join('')}</select><p class="note">可选的是大模型服务配置里允许的模型。快的模型回得快，几秒钟就有结果。</p></div></div>
+      <div class="actions"><button class="btn primary" data-assist="save">保存模型</button> <button class="btn" data-assist="${A.enabled ? 'off' : 'on'}">${A.enabled ? '关闭智能引导' : '开启智能引导'}</button></div>
+      <p class="note">用户的原话会发给大模型服务商；不保存会话，审计只记是否给出了建议和耗时。每人每小时最多 20 次，超过后回到「没有找到应用」。</p>
+    </div>`;
+}
+
 const fmtDur = sec => { const m = Math.floor(sec / 60), s = sec % 60; return m === 0 ? `${s} 秒` : s === 0 ? `${m} 分钟` : `${m} 分 ${s} 秒`; };
 // How long a run may take and how many may run at once: Amber's own machine, each executor (default here,
 // or its own on the executor's page), and per person. Over a limit, a run is refused at once, not queued.
@@ -854,7 +871,7 @@ const AUDIT_LABEL = {
   'app.listing_request': '申请上架', 'app.listed': '已上架', 'app.delist': '下架', 'app.relist': '重新上架', 'app.install': '安装', 'app.upgrade': '升级', 'app.version': 'Store 新版本', 'app.maintainer': '更换维护人',
   'schedule.create': '创建定时任务', 'schedule.pause': '暂停定时任务', 'schedule.resume': '恢复定时任务', 'schedule.delete': '删除定时任务', 'schedule.takeover': '接手定时任务', 'schedule.rebind': '换绑定时任务',
   'executor.register': '执行端申请登记', 'executor.approve': '批准执行端', 'executor.reject': '拒绝执行端', 'executor.revoke': '撤销执行端', 'executor.follow': '执行端环境自动更新', 'executor.dispatch': '派发任务到执行端', 'executor.relay': '执行端转发服务请求',
-  'web.executor_decide': '网站上处理执行端', 'web.executor_limit': '修改执行端并发上限', 'web.run_limits': '修改运行限制', 'web.allow_hosts': '修改网络白名单', 'web.card_footer': '修改卡片页脚',
+  'web.executor_decide': '网站上处理执行端', 'web.executor_limit': '修改执行端并发上限', 'web.run_limits': '修改运行限制', 'web.allow_hosts': '修改网络白名单', 'web.card_footer': '修改卡片页脚', 'web.assistant': '修改智能引导', 'assist.call': '智能引导',
   'config.set': '设置配置项', 'secret.set': '设置密钥', 'secret.drop_all': '删除全部密钥',
   'web.login': '登录网站', 'web.logout': '退出网站', 'web.login_link': '发送登录链接', 'web.selftest_link': '自检登录链接',
   'app.dev_install': '开发模式安装', 'app.listing_approve': '上架审核通过', 'app.listing_reject': '上架审核驳回', 'app.listing_rejected': '上架被驳回', 'app.listing_check_failed': '上架审批状态查询失败',
@@ -1221,6 +1238,19 @@ document.addEventListener('click', async ev => {
     SETTINGS.limits.executors = { ...SETTINGS.limits.executors };
     if (r.limit === null) delete SETTINGS.limits.executors[it.e.name]; else SETTINGS.limits.executors[it.e.name] = r.limit;
     exePane(it);
+    return;
+  }
+  const asBtn = ev.target.closest('[data-assist]');
+  if (asBtn) {
+    const op = asBtn.dataset.assist;
+    if (op === 'off' && !confirm('关闭后，对不上命令时只回「没有找到应用」，不再给建议。确定吗？')) return;
+    asBtn.disabled = true;
+    const body = op === 'save' ? { model: document.getElementById('assist-model').value } : { enabled: op === 'on' };
+    const r = await post('/web/api/settings/assistant', body).catch(e => ({ ok: false, message: e.message }));
+    asBtn.disabled = false;
+    if (!r.ok) return alert(r.message || '保存失败');
+    SETTINGS.assistant = r.assistant;
+    assistPane();
     return;
   }
   const footerBtn = ev.target.closest('[data-footer]');
