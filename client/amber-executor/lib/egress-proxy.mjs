@@ -46,6 +46,9 @@ export function startEgressProxy(list          , o                          = {}
   const server         = createServer((_req, res) => { res.writeHead(403, { 'content-type': 'text/plain; charset=utf-8' }); res.end('只支持 HTTPS（CONNECT）'); });
   server.on('connection', s => { sockets.add(s); s.on('close', () => sockets.delete(s)); });
   server.on('connect', (req, client        , head        ) => {
+    // First, before any answer: a client that resets the connection (curl does, after a 403) emits 'error', and an
+    // unhandled socket error would take down the whole process the proxy runs in — Amber itself, or the executor.
+    client.on('error', () => {});
     const m = /^([^:\s]+):(\d{1,5})$/.exec(req.url ?? '');
     const host = m?.[1] ?? '', port = Number(m?.[2]);
     if (!m || !hostAllowed(host, port, list)) {

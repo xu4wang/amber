@@ -85,6 +85,30 @@ test('egress: the proxy refuses plain HTTP, caps open tunnels, and closes them a
   } finally { p.close(); echo.close(); }
 });
 
+test('egress: a client that resets after a refusal does not take the process down', async () => {
+  // In a child process: an unhandled socket error would kill it (as it would kill Amber or an executor).
+  const { execFileSync } = await import('node:child_process');
+  const src = new URL('../src/egress-proxy.ts', import.meta.url).href;
+  const code = `import { startEgressProxy } from ${JSON.stringify(src)};
+import { connect } from 'node:net';
+const p = await startEgressProxy(['*.feishu.cn'], { maxTunnels: 0 });
+const hit = (target) => new Promise(ok => {
+  const s = connect(p.port, '127.0.0.1', () => s.write('CONNECT ' + target + ' HTTP/1.1\\r\\n\\r\\n'));
+  s.on('error', () => {});
+  s.once('data', d => { const line = d.toString().split('\\r\\n')[0]; s.resetAndDestroy(); ok(line); });
+});
+const lines = [];
+for (let i = 0; i < 3; i++) lines.push(await hit('example.com:443'), await hit('open.feishu.cn:443'));
+await new Promise(r => setTimeout(r, 200));
+console.log(JSON.stringify(lines));
+p.close();`;
+  const out = execFileSync(process.execPath, ['--no-warnings', '--input-type=module', '-e', code], { encoding: 'utf8', timeout: 20000 });
+  const lines = JSON.parse(out.trim().split('\n').at(-1)!);
+  assert.equal(lines.length, 6, 'the process survived every reset');
+  assert.match(lines[0], / 403 /);
+  assert.match(lines[1], / 503 /);
+});
+
 test('egress: environment allow lists change like paths (direct + notice); executors check the list', async () => {
   const base = { workdir: '/w', follow: '/f.json', access: { readWrite: ['/w'] } };
   const d = followDiff({ e: { ...base, allowHosts: ['*.feishu.cn'] } }, { e: { ...base, allowHosts: ['*.feishu.cn', 'api.x.com'] } });
