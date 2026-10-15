@@ -14,11 +14,14 @@ import { LarkUserVault, feishuOAuth, type LarkOAuth } from './lark-user.ts';
 import { ExecutorHub } from './executors.ts';
 import { seedAllowHosts, FEISHU_HOSTS } from './limits.ts';
 import { makePageShooter } from './page-shot.ts';
+import { LlmService, LLM_SERVICE } from './llm.ts';
 
 export interface Amber { bot: AmberBot; store: Store; api: Server; web: Server; hub: ExecutorHub; close(): Promise<void> }
 
 export async function startAmber(cfg: AmberConfig, opts: { apiPort: number; webPort: number; client?: unknown; ws?: unknown; timers?: boolean; larkOAuth?: LarkOAuth }): Promise<Amber> {
-  setServices(cfg.services);
+  // The large-model service is Amber's own: scripts declare it like any service; Amber answers it (src/llm.ts).
+  const llm = cfg.llm ? new LlmService(cfg.llm, cfg.dataDir) : undefined;
+  setServices({ ...cfg.services, ...(llm ? { [LLM_SERVICE]: { audience: LLM_SERVICE, executor: true, builtin: true } } : {}) });
   setSandboxContext({ configDir: cfg.configDir });
   setTimezones(cfg.timezones);
   const store = new Store(cfg.dataDir);
@@ -39,6 +42,7 @@ export async function startAmber(cfg: AmberConfig, opts: { apiPort: number; webP
   setLarkUser(larkUser, u => bot.remindLarkAuth(u));
   await bot.start();
   const hub = bot.hub;
+  hub.llm = llm;
   setExecutorHub(hub);
   const api = startApi(opts.apiPort, cfg.machines, bot.flow, bot.agent, () => bot.signer.jwks(), { webUrl: cfg.webBaseUrl }, hub, bot.pages, bot.triggers);
   const web = startWeb(opts.webPort, store, {

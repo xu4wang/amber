@@ -195,7 +195,7 @@ export function startRelays(cfg, me, amberPub, jobId, services) {
     const reqId = randomBytes(16).toString('hex');
     let r;
     try {
-      r = await call(cfg, me, '/v1/executor/relay', { jobId, reqId, service: req.service, method: req.method, path: req.path, headers: req.headers, body: req.body.toString('base64') }, 75_000);
+      r = await call(cfg, me, '/v1/executor/relay', { jobId, reqId, service: req.service, method: req.method, path: req.path, headers: req.headers, body: req.body.toString('base64') }, req.service === 'llm' ? 300_000 : 75_000);   // the large model can take minutes
     } catch (e) {
       // Amber's refusals are not signed: keep their text in our log, give the script a fixed message only.
       log('relay refused', jobId, req.service, e.message);

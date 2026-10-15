@@ -145,6 +145,22 @@ amber trigger add --on app.review_started --to here --mention <你在群里的�
 - 收到的通知最后一行是 `amber-event <事件> event=… command=… spec=…`，按这些编号去查；通知里没有执行结果
 - `amber trigger list` 查看，`amber trigger pause <编号>` 暂停；恢复和删除让用户在网站「我的触发器」里做
 
+## 交给大模型处理（llm）
+
+应用要总结、改写、分类文字时，不要让脚本自己调大模型（没有凭证、也连不上），在 `script` 里声明 `"services": {"llm": {"calls": N}}`，运行时：
+
+```python
+s = inp["services"]["llm"]; tok = s["tokens"].pop(0)
+req = urllib.request.Request(f"http://127.0.0.1:{s['tcpPort']}/complete", data=json.dumps({"prompt": 文字, "system": 要求}).encode(),
+                             headers={"Authorization": "Amber " + tok, "Content-Type": "application/json"}, method="POST")
+text = json.load(urllib.request.build_opener(urllib.request.ProxyHandler({})).open(req, timeout=300))["text"]
+```
+
+- 每次调用用一张票据，calls 最多 20；一次最多约 15 万字，内容多就分批（先分段总结、再汇总），记得给最后的汇总留一次
+- `model` 可选 `sonnet`（默认）/ `haiku` / `opus`；单次默认 4 分钟超时，`timeoutMs` 要给足（几次调用加起来）
+- 大模型没有工具，只返回文字；交给它的文字会发给大模型服务商，别把密钥、令牌放进 prompt
+- 会话记录默认不保存；要保存（便于事后查看）就在请求里加 `"persist": true`，返回 `sessionId`。处理别人的消息或敏感数据时不要保存
+
 ## 做页面应用
 
 用户要一个能交互的网页（查数、看图表、读台账、写飞书）时，做成 Amber 页面应用，不要放 demo 网站：
