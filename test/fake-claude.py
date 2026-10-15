@@ -4,7 +4,7 @@ import json, os, sys, time
 prompt = sys.stdin.read()
 args = sys.argv[1:]
 with open('calls.jsonl', 'a') as f:   # in the working directory Amber gave it
-    f.write(json.dumps({'args': args, 'env': sorted(os.environ.keys()), 'cwd': os.getcwd()}) + '\n')
+    f.write(json.dumps({'args': args, 'env': sorted(os.environ.keys()), 'configDir': os.environ.get('CLAUDE_CONFIG_DIR'), 'cwd': os.getcwd()}) + '\n')
 model = args[args.index('--model') + 1] if '--model' in args else ''
 system = args[args.index('--system-prompt') + 1] if '--system-prompt' in args else ''
 if 'SLEEP' in prompt:

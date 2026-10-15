@@ -28,7 +28,7 @@ export interface AmberConfig {
   /** A headless Chrome (or chrome-headless-shell) for screenshots on page confirmation cards. Unset = no screenshots. */
   pageScreenshotChrome?: string;
   /** The built-in large-model service (service name "llm", src/llm.ts). Unset = scripts cannot declare llm. */
-  llm?: { command: string; models?: string[]; maxConcurrent?: number; timeoutMs?: number };
+  llm?: { command: string; models?: string[]; maxConcurrent?: number; timeoutMs?: number; configDir?: string };
 }
 
 function parseEnvFile(path: string): Record<string, string> {
