@@ -794,7 +794,7 @@ function assistPane() {
       <dl class="kv"><dt>当前</dt><dd>${A.enabled ? '已开启' : '已关闭：对不上时只回「没有找到应用」'}</dd><dt>模型</dt><dd>${esc(A.model)}</dd></dl>
       <div class="field"><label>模型</label><div class="field-main"><select id="assist-model">${A.models.map(m => `<option value="${esc(m)}" ${m === A.model ? 'selected' : ''}>${esc(m)}</option>`).join('')}</select><p class="note">可选的是大模型服务配置里允许的模型。快的模型回得快，几秒钟就有结果。</p></div></div>
       <div class="actions"><button class="btn primary" data-assist="save">保存模型</button> <button class="btn" data-assist="${A.enabled ? 'off' : 'on'}">${A.enabled ? '关闭智能引导' : '开启智能引导'}</button></div>
-      <p class="note">用户的原话会发给大模型服务商；不保存会话，审计只记是否给出了建议和耗时。每人每小时最多 20 次，超过后回到「没有找到应用」。</p>
+      <p class="note">用户的原话会发给大模型服务商（不保存会话）。每次对话（哪个群、谁、原话、给了什么建议）记在审计日志的「智能引导」类别里，供分析改进。每人每小时最多 20 次，超过后回到「没有找到应用」。</p>
     </div>`;
 }
 

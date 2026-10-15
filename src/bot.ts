@@ -745,7 +745,7 @@ export class AmberBot {
     const r = await this.client.im.v1.message.reply({ path: { message_id: messageId }, data: { msg_type: 'interactive', content: JSON.stringify(this.footed(assistThinkingCard())), reply_in_thread: inThread } }).catch(() => undefined) as any;
     const cardId: string | undefined = r?.data?.message_id;
     const apps = visibleCommands(this.store, caller);
-    const g = await a.guide(caller.unionId, text, apps);
+    const g = await a.guide(caller.unionId, text, apps, { chatId: caller.chatId, chatType: caller.chatType });
     if (!g) {
       if (cardId) await this.patch(cardId, errorCard('Amber', `没有对上命令或应用名。发「帮助」看${this.scopeLabel(caller)}能用的应用。`));
       return !!cardId;

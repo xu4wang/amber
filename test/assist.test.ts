@@ -59,11 +59,16 @@ test('the guide: a suggestion, checked; the app comes as a prefilled form and is
     n = replies().length;
     await env.dm(bob, 'FAIL 随便说说');
     await env.waitFor(() => /没有对上命令或应用名。发「帮助」/.test(FakeFeishu.text(fake.cardOf(replies()[n].id))) || undefined);
-    // Audit: whether it helped and how long, never the words.
+    // Audit: each exchange for later analysis — where, who, the words, the checked answer.
     const audit = env.amber.store.listAudit({ prefixes: ['assist.'], limit: 20 });
     assert.ok(audit.length >= 6);
-    assert.ok(audit.every(a => !a.detail.includes('帮我弄') && !a.detail.includes('随便说说')));
-    assert.ok(audit.some(a => JSON.parse(a.detail).kind === 'app'));
+    const hit = audit.map(a => ({ ...a, d: JSON.parse(a.detail) })).find(a => a.d.kind === 'app')!;
+    assert.equal(hit.actor, bob.unionId);
+    assert.equal(hit.d.chatId, env.dmChat(bob));
+    assert.equal(hit.d.chatType, 'p2p');
+    assert.match(hit.d.text, /帮我弄一下/);
+    assert.deepEqual([hit.d.app, hit.d.args, hit.d.reply], ['问候', { who: '小明' }, '你可能想用问候']);
+    assert.ok(audit.some(a => /随便说说/.test(JSON.parse(a.detail).text) && JSON.parse(a.detail).kind === null), 'the ones that got nothing too'); 
 
     // A real command still goes straight through, without the model.
     const calls = readFileSync(join(env.cfg.dataDir, 'llm-work', 'calls.jsonl'), 'utf8').trim().split('\n').length;
@@ -88,6 +93,10 @@ test('the guide: a suggestion, checked; the app comes as a prefilled form and is
     await env.dm(bob, answer({ kind: 'none', reply: '不该出现' }));
     assert.match(FakeFeishu.text(replies()[n].card), /没有找到应用/);
     assert.ok(env.amber.store.listAudit({ prefixes: ['web.assistant'], limit: 5 }).length >= 2);
+    // Admins find the exchanges under their own category on the website.
+    const rows = (await (await fetch(base + '/web/api/audit?cat=assist', { headers: { cookie: aliceCookie } })).json()).rows;
+    assert.ok(rows.length >= 6 && rows.every((r: any) => r.action === 'assist.call'));
+    assert.ok(rows.some((r: any) => /帮我弄一下/.test(r.detail)));
   } finally { await env.close(); }
 });
 

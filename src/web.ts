@@ -98,7 +98,8 @@ const JOB_KEEP_MS = 30 * 60_000;
 
 /** Groups of audit actions for the filter on the audit page (by action name prefix). */
 const AUDIT_CATEGORIES: Record<string, { label: string; prefixes: string[] }> = {
-  run: { label: '执行', prefixes: ['run.', 'agent.run', 'identity.', 'secret.use', 'request.', 'llm.', 'assist.'] },
+  run: { label: '执行', prefixes: ['run.', 'agent.run', 'identity.', 'secret.use', 'request.', 'llm.'] },
+  assist: { label: '智能引导', prefixes: ['assist.'] },
   app: { label: '应用与审核', prefixes: ['draft.', 'review.', 'command.', 'operator.', 'scope.', 'app.'] },
   schedule: { label: '定时任务', prefixes: ['schedule.'] },
   executor: { label: '执行端', prefixes: ['executor.', 'web.executor'] },

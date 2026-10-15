@@ -5,8 +5,8 @@
 // anything, and what it says is shown as plain text (no @, no links but the documentation).
 //
 // On by default when the large-model service is set up; an admin can turn it off or pick the model on the
-// website. The person's message goes to the model provider; nothing is kept (no session, the audit records
-// only whether it helped and how long it took).
+// website. The person's message goes to the model provider (no session is kept there). For later analysis the
+// audit keeps each exchange: where, who, what they wrote and what the guide answered (admins only).
 import type { Store, CommandRow } from './db.ts';
 import type { LlmService } from './llm.ts';
 import { runParams } from './engine.ts';
@@ -82,7 +82,7 @@ export class Assistant {
     return true;
   }
 
-  async guide(unionId: string, text: string, apps: CommandRow[]): Promise<Guide | undefined> {
+  async guide(unionId: string, text: string, apps: CommandRow[], where: { chatId: string; chatType: string } = { chatId: '', chatType: '' }): Promise<Guide | undefined> {
     const started = Date.now();
     const { model } = this.settings();
     const catalog = apps.slice(0, 80).map(c => ({
@@ -94,14 +94,21 @@ export class Assistant {
     const ac = new AbortController();
     const timer = setTimeout(() => ac.abort(), TIMEOUT_MS);
     let out: Guide | undefined;
-    let status = 0;
+    let status = 0, raw = '';
     try {
       const r = await this.llm.handle('POST', '/complete', Buffer.from(JSON.stringify({ prompt, system: SYSTEM, model })), ac.signal);
       status = r.status;
-      if (r.status === 200) out = parse(String(r.body.text ?? ''), apps);
+      if (r.status === 200) { raw = String(r.body.text ?? ''); out = parse(raw, apps); }
     } catch { /* treated as no answer */ }
     finally { clearTimeout(timer); }
-    this.store.audit(unionId, 'assist.call', { model, status, kind: out?.kind ?? null, ...(out?.kind === 'app' ? { command: out.cmd.id } : {}), ms: Date.now() - started });
+    // The exchange, for analysis: where and who (the actor), the words, and the checked answer (or the raw one when it did not check out).
+    this.store.audit(unionId, 'assist.call', {
+      chatId: where.chatId, chatType: where.chatType, text: text.slice(0, MAX_TEXT), model, status, ms: Date.now() - started,
+      kind: out?.kind ?? null, reply: out?.reply ?? null,
+      ...(out?.kind === 'app' ? { command: out.cmd.id, app: out.cmd.name, args: out.args } : {}),
+      ...(out?.kind === 'amber' ? { amberCommand: out.command } : {}),
+      ...(!out && raw ? { raw: raw.slice(0, 500) } : {}),
+    });
     return out;
   }
 }
