@@ -655,6 +655,9 @@ function cmdPane(key, { c, scope }) {
       ${c.installed ? `<p class="note">从 Amber Store 安装：「${esc(c.installed.name)}」第 ${esc(c.installed.version)} 版。</p>` : ''}
       ${c.listing ? '<p class="note">上架申请正在审核中。</p>' : ''}
       ${c.publishable ? '<p class="note">上架后，别人可以从 Amber Store 安装自己的一份，安装不再审批。上架要审核人审核一次。</p><button class="btn" data-publish="1">申请上架</button>' : ''}</div>` : ''}
+    ${c.canScope ? `<div class="manage"><h3 class="note">全局应用</h3>
+      <p class="note">${c.global ? '这是<b>全局应用</b>：Amber 所在的任何群和私聊都能使用，每个人以自己的身份执行。改回后只在创建它的群（或私聊）里可用。' : '现在只在创建它的群（或私聊）里可用。设为全局后，Amber 所在的任何群和私聊都能使用，每个人以自己的身份执行。'}只有管理员可以修改。</p>
+      <button class="btn" data-global="${c.global ? 'off' : 'on'}">${c.global ? '改回只在创建处可用' : '设为全局应用'}</button></div>` : ''}
     ${c.canManage ? `<div class="manage"><h3 class="note">管理</h3>
       <p class="note">要修改这个应用，跟你的 agent 说改什么，它会提交新版本，审核通过后自动替换。不再需要时可以下线：下线后不能再执行，它的定时任务会暂停。</p>
       <button class="btn" data-retire="1">下线这个应用</button></div>` : ''}`;
@@ -1395,6 +1398,21 @@ document.addEventListener('click', async ev => {
     const r = await post(`/web/api/commands/${encodeURIComponent(c.id)}/clone`, { scope, to: sel.value });
     cl.disabled = false;
     alert(r.ok ? '已私聊发出确认卡，对方接收后就是他自己的应用。' : (r.message || r.error));
+    return;
+  }
+  const gl = ev.target.closest('[data-global]');
+  if (gl) {
+    const { c, scope } = ITEMS.get(SEL);
+    const on = gl.dataset.global === 'on';
+    const warn = on && c.secrets.length ? `\n\n这个应用使用密钥（${c.secrets.map(x => x.name).join('、')}）：设为全局后，任何人执行都会用到同一份密钥。` : '';
+    if (!confirm(on ? `把「${c.name}」设为全局应用？Amber 所在的任何群和私聊都能使用。${warn}` : `把「${c.name}」改回只在创建处可用？其他地方将不能再使用它。`)) return;
+    gl.disabled = true;
+    const r = await post(`/web/api/commands/${encodeURIComponent(c.id)}/global`, { scope, global: on, confirm: true });
+    gl.disabled = false;
+    if (!r.ok) { alert(r.message || r.error); return; }
+    const key = SEL;
+    await reload(key);
+    if (!ITEMS.has(key)) welcome();
     return;
   }
   const ra = ev.target.closest('[data-reassign]');

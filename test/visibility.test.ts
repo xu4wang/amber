@@ -183,3 +183,48 @@ test('global: an app that runs in an executor environment cannot be made global,
     await env.waitFor(() => fake.sent.slice(before).some(s => /不能设为全局/.test(FakeFeishu.text(fake.cardOf(s.id)))) || undefined);
   } finally { await env.close(); }
 });
+
+test('global on the website: admins only, same rules as in Feishu, audited', async () => {
+  const env = await makeEnv();
+  const { fake, alice, bob } = env;   // alice is an admin; bob creates
+  const base = `http://127.0.0.1:${env.webPort}`;
+  const post = (cookie: string, path: string, body: unknown) => fetch(base + path, { method: 'POST', headers: { cookie, origin: base, 'content-type': 'application/json' }, body: JSON.stringify(body) }).then(async x => ({ status: x.status, body: await x.json() }));
+  const scope = 'group:' + GROUP;
+  try {
+    const id = await activate(env, { chatId: GROUP, chatType: 'group', name: '日报', params: [], script: script('print(1)') }, bob);
+    const bobCookie = await login(env, bob), aliceCookie = await login(env, alice);
+    const view = async (cookie: string) => (await (await fetch(`${base}/web/api/overview`, { headers: { cookie } })).json()).groups.flatMap((g: any) => g.commands).find((c: any) => c.id === id);
+    assert.equal((await view(bobCookie)).canScope, false, 'the creator manages it but does not decide global');
+    assert.equal((await view(aliceCookie)).canScope, true);
+    // Not an admin: refused, even the creator.
+    assert.equal((await post(bobCookie, `/web/api/commands/${id}/global`, { scope, global: true, confirm: true })).status, 403);
+    assert.equal(env.amber.store.getCommand(id)!.global, false);
+    // An admin, without confirming / with a bad value: refused.
+    assert.equal((await post(aliceCookie, `/web/api/commands/${id}/global`, { scope, global: true })).body.error, 'needs_confirm');
+    assert.equal((await post(aliceCookie, `/web/api/commands/${id}/global`, { scope, global: 'yes', confirm: true })).body.error, 'bad_request');
+    assert.equal(env.amber.store.getCommand(id)!.global, false);
+    // An admin makes it global, then back.
+    assert.equal((await post(aliceCookie, `/web/api/commands/${id}/global`, { scope, global: true, confirm: true })).body.ok, true);
+    assert.equal(env.amber.store.getCommand(id)!.global, true);
+    assert.equal((await post(aliceCookie, `/web/api/commands/${id}/global`, { scope, global: true, confirm: true })).body.error, 'not_needed');
+    assert.equal((await post(aliceCookie, `/web/api/commands/${id}/global`, { scope: 'global', global: false, confirm: true })).body.ok, true);
+    assert.equal(env.amber.store.getCommand(id)!.global, false);
+    const audit = env.amber.store.listAudit({ prefixes: ['scope.'], limit: 10 }).map(a => [a.action, JSON.parse(a.detail).via]);
+    assert.deepEqual(audit.map(a => a[0]).sort(), ['scope.demote', 'scope.promote']);
+    assert.ok(audit.every(a => a[1] === 'web'));
+    // Same name as another global app: refused.
+    fake.chats.set('oc_g2', { mode: 'group', name: 'g2', members: new Set(['BOT', bob.unionId, alice.unionId]) });
+    const other = await activate(env, { chatId: 'oc_g2', chatType: 'group', name: '日报', params: [], script: script('print(2)') }, bob);
+    env.amber.store.setGlobal(other, true);
+    assert.equal((await post(aliceCookie, `/web/api/commands/${id}/global`, { scope, global: true, confirm: true })).body.error, 'conflict');
+    // An app that runs in an executor environment: refused, and no button.
+    const { computeSpecHash } = await import('../src/db.ts');
+    const c = env.amber.store.getCommand(id)!;
+    const withEnv = { ...c, script: { ...c.script, env: 'box/e' } };
+    (env.amber.store as any).db.prepare('UPDATE commands SET script_json = ?, spec_hash = ? WHERE id = ?').run(JSON.stringify(withEnv.script), computeSpecHash(withEnv), id);
+    env.amber.store.setGlobal(other, false);
+    assert.equal((await view(aliceCookie)).canScope, false);
+    assert.equal((await post(aliceCookie, `/web/api/commands/${id}/global`, { scope, global: true, confirm: true })).body.error, 'env_not_global');
+    assert.equal(env.amber.store.getCommand(id)!.global, false);
+  } finally { await env.close(); }
+});
