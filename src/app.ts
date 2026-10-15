@@ -15,6 +15,7 @@ import { ExecutorHub } from './executors.ts';
 import { seedAllowHosts, FEISHU_HOSTS } from './limits.ts';
 import { makePageShooter } from './page-shot.ts';
 import { LlmService, LLM_SERVICE } from './llm.ts';
+import { Assistant } from './assist.ts';
 
 export interface Amber { bot: AmberBot; store: Store; api: Server; web: Server; hub: ExecutorHub; close(): Promise<void> }
 
@@ -43,6 +44,7 @@ export async function startAmber(cfg: AmberConfig, opts: { apiPort: number; webP
   await bot.start();
   const hub = bot.hub;
   hub.llm = llm;
+  if (llm) bot.assistant = new Assistant(store, llm);
   setExecutorHub(hub);
   const api = startApi(opts.apiPort, cfg.machines, bot.flow, bot.agent, () => bot.signer.jwks(), { webUrl: cfg.webBaseUrl }, hub, bot.pages, bot.triggers);
   const web = startWeb(opts.webPort, store, {
@@ -69,6 +71,8 @@ export async function startAmber(cfg: AmberConfig, opts: { apiPort: number; webP
     chatBots: c => bot.chatBots(c),
     pagesBaseUrl: cfg.pagesBaseUrl,
     larkUser,
+    assistant: bot.assistant,
+    llmModels: llm?.models,
   });
   if (cfg.pagesBaseUrl && cfg.pageScreenshotChrome) bot.pages.shoot = makePageShooter(cfg.pageScreenshotChrome, cfg.pagesBaseUrl, opts.webPort);
   const closeServer = (s: Server) => new Promise<void>(r => { s.close(() => r()); s.closeAllConnections(); });

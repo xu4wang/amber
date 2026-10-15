@@ -18,6 +18,8 @@ import type { AppStore } from './apps.ts';
 import { outputBlocks, type PageService } from './pages.ts';
 import type { TriggerService } from './triggers.ts';
 import type { LarkUserVault, AuthOutcome } from './lark-user.ts';
+import type { Assistant } from './assist.ts';
+import { saveAssistSettings } from './assist.ts';
 import { showFingerprint } from './exec-proto.ts';
 import { describeRule, formatAt, defaultTz, timezones } from './schedule-rule.ts';
 import { CARD_FOOTER_KEY, CARD_FOOTER_MAX, DEFAULT_CARD_FOOTER, cleanFooter } from './cards.ts';
@@ -70,6 +72,9 @@ export interface WebDeps {
   pagesBaseUrl?: string;
   /** Feishu user identity (D54): the logged-in person can authorize here too, not only in their private chat. */
   larkUser?: LarkUserVault;
+  /** The guide for unmatched messages (assist.ts): on/off and model, admins only. */
+  assistant?: Assistant;
+  llmModels?: string[];
 }
 
 /** An authorization started on the website, per person: the link to show, and how it ended. */
@@ -94,10 +99,11 @@ const JOB_KEEP_MS = 30 * 60_000;
 /** Groups of audit actions for the filter on the audit page (by action name prefix). */
 const AUDIT_CATEGORIES: Record<string, { label: string; prefixes: string[] }> = {
   run: { label: '执行', prefixes: ['run.', 'agent.run', 'identity.', 'secret.use', 'request.', 'llm.'] },
+  assist: { label: '智能引导', prefixes: ['assist.'] },
   app: { label: '应用与审核', prefixes: ['draft.', 'review.', 'command.', 'operator.', 'scope.', 'app.'] },
   schedule: { label: '定时任务', prefixes: ['schedule.'] },
   executor: { label: '执行端', prefixes: ['executor.', 'web.executor'] },
-  settings: { label: '设置、配置项与密钥', prefixes: ['web.card_footer', 'web.run_limits', 'web.allow_hosts', 'config.', 'secret.set', 'secret.delete', 'secret.drop'] },
+  settings: { label: '设置、配置项与密钥', prefixes: ['web.card_footer', 'web.assistant', 'web.run_limits', 'web.allow_hosts', 'config.', 'secret.set', 'secret.delete', 'secret.drop'] },
   page: { label: '页面应用', prefixes: ['page.'] },
   trigger: { label: '触发器', prefixes: ['trigger.'] },
   login: { label: '登录', prefixes: ['web.login', 'web.logout', 'web.selftest'] },
@@ -376,7 +382,8 @@ export function startWeb(port: number, store: Store, deps: WebDeps): import('nod
           if (!deps.isAdmin(who.unionId)) return json(res, 404, { ok: false, error: 'not_found' });
           const v = store.getSetting(CARD_FOOTER_KEY);
           return json(res, 200, { ok: true, cardFooter: v ?? null, defaultCardFooter: DEFAULT_CARD_FOOTER, max: CARD_FOOTER_MAX,
-            limits: getLimits(store), defaultLimits: DEFAULT_LIMITS, bounds: { timeout: TIMEOUT_BOUNDS, concurrency: CONCURRENCY_BOUNDS }, running: SLOTS.snapshot(), localAllowHosts: getLocalAllowHosts(store), globalAllowHosts: getGlobalAllowHosts(store), defaultGlobalAllowHosts: FEISHU_HOSTS });
+            limits: getLimits(store), defaultLimits: DEFAULT_LIMITS, bounds: { timeout: TIMEOUT_BOUNDS, concurrency: CONCURRENCY_BOUNDS }, running: SLOTS.snapshot(), localAllowHosts: getLocalAllowHosts(store), globalAllowHosts: getGlobalAllowHosts(store), defaultGlobalAllowHosts: FEISHU_HOSTS,
+            assistant: deps.assistant ? { ...deps.assistant.settings(), models: deps.llmModels ?? [] } : null });
         }
         for (const [id, j] of jobs) if (j.endedAt && Date.now() - j.endedAt > JOB_KEEP_MS) jobs.delete(id);
         const jm = req.method === 'GET' ? /^\/web\/api\/run-jobs\/([0-9a-f]{24})$/.exec(url.pathname) : null;
@@ -623,6 +630,17 @@ export function startWeb(port: number, store: Store, deps: WebDeps): import('nod
           const after = saveLimits(store, { ...before, executors });
           store.audit(who.unionId, 'web.executor_limit', { executor: e.id, name: e.name, before: before.executors[e.name] ?? null, after: after.executors[e.name] ?? null });
           return json(res, 200, { ok: true, limit: after.executors[e.name] ?? null, default: after.maxConcurrentExecutor });
+        }
+        if (url.pathname === '/web/api/settings/assistant') {
+          // The guide for unmatched messages: on/off and which model. Only when the large-model service is set up.
+          if (!deps.isAdmin(who.unionId)) throw new AmberError('forbidden', '只有管理员可以修改智能引导');
+          if (!deps.assistant) throw new AmberError('not_found', '大模型服务没有开启，智能引导不可用');
+          const before = deps.assistant.settings();
+          let after;
+          try { after = saveAssistSettings(store, deps.llmModels ?? [], { enabled: body.enabled, model: body.model }); }
+          catch (e) { throw new AmberError('bad_request', (e as Error).message); }
+          store.audit(who.unionId, 'web.assistant', { before, after });
+          return json(res, 200, { ok: true, assistant: { ...after, models: deps.llmModels ?? [] } });
         }
         if (url.pathname === '/web/api/settings/card-footer') {
           // The line at the bottom of every card. null = back to the default (the project link); "" = no footer.

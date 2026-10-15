@@ -6,7 +6,7 @@ import { randomUUID } from 'node:crypto';
 import type { Store, CommandRow, ScopeType } from './db.ts';
 import type { Caller, Block } from './engine.ts';
 import { ENV_NOT_GLOBAL, visibleCommands, findVisible, findManageable, runCommand, AmberError, secretVault, lineOf, dropOrphanSettings, runParams } from './engine.ts';
-import { cardFooter, withFooter, Mentions, reassignCard, cloneCard, listCard, formCard, runningCard, trialRunningCard, resultCard, errorCard, infoCard, retireConfirmCard, closedCard, secretFormCard, secretPickCard, executorApprovalCard, executorDecidedCard, executorListCard, executorFollowCard } from './cards.ts';
+import { cardFooter, withFooter, Mentions, reassignCard, cloneCard, listCard, formCard, runningCard, trialRunningCard, resultCard, assistThinkingCard, assistCard, errorCard, infoCard, retireConfirmCard, closedCard, secretFormCard, secretPickCard, executorApprovalCard, executorDecidedCard, executorListCard, executorFollowCard } from './cards.ts';
 import { ExecutorHub } from './executors.ts';
 import { AppStore } from './apps.ts';
 import type { AmberConfig } from './config.ts';
@@ -19,6 +19,7 @@ import { Scheduler, CREATOR_LEFT } from './scheduler.ts';
 import { newToken, hashToken, LOGIN_TTL_MS } from './web.ts';
 import { formatAtDefault } from './schedule-rule.ts';
 import { getLimits, timeoutLabel } from './limits.ts';
+import { Assistant, ASSIST_DOCS } from './assist.ts';
 import type { LarkUserVault, AuthOutcome } from './lark-user.ts';
 
 const LARK_AUTH_VERBS = ['授权飞书', '撤销飞书授权', '飞书授权状态'];
@@ -714,6 +715,7 @@ export class AmberBot {
     try {
       cmd = findVisible(this.store, caller, parts[0].replace(/^\//, ''));
     } catch (e) {
+      if (e instanceof AmberError && e.code === 'not_found' && await this.guide(text, caller, msg.message_id, inThread)) return;
       await this.replyCard(msg.message_id, inThread, errorCard('Amber', e instanceof AmberError ? e.message : '出错了'));
       return;
     }
@@ -734,6 +736,27 @@ export class AmberBot {
     const cardMessageId: string | undefined = sent?.data?.message_id;
     const final = await this.execute(cmd, raw, caller);
     if (cardMessageId) await this.patch(cardMessageId, final);
+  }
+
+  /** Nothing matched: let the guide suggest what the person meant (assist.ts). False when it is off or had no answer. */
+  private async guide(text: string, caller: Caller, messageId: string, inThread: boolean): Promise<boolean> {
+    const a = this.assistant;
+    if (!a || !a.take(caller.unionId)) return false;
+    const r = await this.client.im.v1.message.reply({ path: { message_id: messageId }, data: { msg_type: 'interactive', content: JSON.stringify(this.footed(assistThinkingCard())), reply_in_thread: inThread } }).catch(() => undefined) as any;
+    const cardId: string | undefined = r?.data?.message_id;
+    const apps = visibleCommands(this.store, caller);
+    const g = await a.guide(caller.unionId, text, apps, { chatId: caller.chatId, chatType: caller.chatType });
+    if (!g) {
+      if (cardId) await this.patch(cardId, errorCard('Amber', `没有对上命令或应用名。发「帮助」看${this.scopeLabel(caller)}能用的应用。`));
+      return !!cardId;
+    }
+    const next = g.kind === 'app' ? `👉 应用「${g.cmd.name}」：下面的表单已按你的话预填，核对后点「执行」。`
+      : g.kind === 'amber' ? `👉 发送：**${g.command}**`
+      : `👉 发「帮助」看${this.scopeLabel(caller)}能用的应用。`;
+    const card = assistCard(g.reply, next, ASSIST_DOCS);
+    if (cardId) await this.patch(cardId, card); else await this.replyCard(messageId, inThread, card);
+    if (g.kind === 'app') await this.replyCard(messageId, inThread, formCard(g.cmd, g.args));
+    return true;
   }
 
   /** D34: website login by chatting with Amber. The link only ever appears in the person's own
@@ -781,6 +804,9 @@ export class AmberBot {
     this.store.audit(caller.unionId, 'web.login_link', inGroup ? { requestedIn: caller.chatId } : {});
     this.expireLoginCard(h, sentId);
   }
+
+  /** The guide for unmatched messages (assist.ts), set by app.ts when the large-model service is on. */
+  assistant?: Assistant;
 
   /** Drafts whose trial run is under way (one at a time per draft). */
   private trialsRunning = new Set<string>();
