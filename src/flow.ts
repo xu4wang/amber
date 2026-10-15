@@ -291,11 +291,14 @@ export class Flow {
     if (claimerId) prev = same.find(c => c.ownerUnionId === claimerId);
     else if (same.length === 1) prev = same[0];
     else if (same.length > 1) throw new AmberError('ambiguous', `这里有好几个叫「${d.name}」的应用，提交时请带上 claimer（让你固化的那个人的邮箱），Amber 才知道是谁的那个的新版本`);
+    // The claimer's own unclaimed drafts of this name here give way to the new submission. Only drafts
+    // that this one person may claim (p2p): a group draft may be anyone's, and one under review stays.
+    const supersedes = claimerId && d.chatType === 'p2p' ? this.store.draftsForClaimer(d.chatId, d.name, claimerId) : [];
     // A brand-new app takes its name as its line when that is free here; otherwise a line of its own.
-    const line = prev ? prev.line : this.store.activeByName(d.chatId, d.name) || this.store.nameInProgress(d.chatId, d.name) ? `${d.name}#${randomUUID().slice(0, 8)}` : d.name;
-    if (prev && this.store.nameInProgress(d.chatId, line)) throw new AmberError('name_taken', `「${d.name}」已有一个版本在认领或审核中，请等它结束（或在认领卡上丢弃）后再提交`);
+    const line = prev ? prev.line : this.store.activeByName(d.chatId, d.name) || this.store.nameInProgress(d.chatId, d.name, supersedes) ? `${d.name}#${randomUUID().slice(0, 8)}` : d.name;
+    if (prev && this.store.nameInProgress(d.chatId, line, supersedes)) throw new AmberError('name_taken', `「${d.name}」已有一个版本在认领或审核中，请等它结束（或在认领卡上丢弃）后再提交`);
     // A brand-new app: one in progress per name here at a time.
-    if (!prev && this.store.nameDraftInProgress(d.chatId, d.name)) throw new AmberError('name_taken', `「${d.name}」已有一个版本在认领或审核中，请等它结束（或在认领卡上丢弃）后再提交`);
+    if (!prev && this.store.nameDraftInProgress(d.chatId, d.name, supersedes)) throw new AmberError('name_taken', `「${d.name}」已有一个版本在认领或审核中，请等它结束（或在认领卡上丢弃）后再提交`);
     if ((d as any).sideEffect !== undefined) throw new AmberError('bad_options', '已不区分读写：请用 options.confirm（执行前确认）/ options.schedulable（允许定时）');
     // D47: read-only data commands are usually wanted on a schedule, so a draft that does not say
     // otherwise is schedulable. It is still shown on the claim card and reviewed like any option.
@@ -313,6 +316,9 @@ export class Flow {
     // claim card so they notice it (D46). It grants nothing: any group member may still claim.
     let notifyOpenId: string | undefined;
     if (d.chatType !== 'p2p' && claimerId) notifyOpenId = await this.openIdOf(claimerId);
+    // Replace them now, in the same tick as the name checks above: a claim click handled while the claim
+    // card is being sent must not find them still claimable next to the new draft.
+    const superseded = supersedes.filter(id => this.store.supersedeDraft(id));
     const row = this.store.insertCommand({
       scopeType: d.chatType, chatId: d.chatId, ownerUnionId: expectedClaimer ?? '', name: d.name, description: d.description ?? '',
       params: d.params ?? [], script: d.script, options, status: 'draft', line,
@@ -328,10 +334,16 @@ export class Flow {
     } catch (e: any) {
       const code = e?.response?.data?.code;
       this.store.setStatus(row.id, 'rejected');
+      for (const id of superseded) this.store.restoreDraft(id);
       throw new AmberError('claim_card_failed', code === 230002 || code === 232011 ? 'Amber 机器人不在这个群里，请先把 Amber 拉进群' : `认领卡发送失败：${code ?? e?.message}`);
     }
     if (claimMessageId) this.store.setMeta(row.id, { claimMessageId });
-    log('draft submitted', row.id, row.name, d.chatType, d.chatId);
+    for (const id of superseded) {
+      this.store.audit(null, 'draft.superseded', { id, by: row.id, submittedBy: d.submittedBy });
+      const old = this.store.getMeta(id).claimMessageId;
+      if (old) await this.patch(old, shell(`已被新版本替换：${row.name}`, 'grey', [{ tag: 'markdown', content: '这份草稿已被重新提交的版本替换，请在新的认领卡上操作。' }]));
+    }
+    log('draft submitted', row.id, row.name, d.chatType, d.chatId, superseded.length ? `supersedes ${superseded.join(',')}` : '');
     return { id: row.id, claimMessageId };
   }
 

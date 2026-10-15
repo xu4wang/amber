@@ -20,6 +20,7 @@ export class FakeFeishu {
   approvalCode = 'APPROVAL-CODE';
   approvalDelayMs = 0;                         // slow approval creation, to test the card callback window
   approvalFails = false;
+  sendFails = false;
 
   id(prefix: string): string { return `${prefix}_${(++this.n).toString().padStart(6, '0')}`; }
   userByEmail(e: string) { return this.users.find(u => u.email === e); }
@@ -40,6 +41,7 @@ export class FakeFeishu {
   }
 
   private record(to: Sent['to'], content: string, inThread?: boolean): { data: { message_id: string } } {
+    if (this.sendFails) this.fail(230099, 'send failed');
     const target = to.chatId ? this.chats.get(to.chatId) : undefined;
     if (to.chatId && (!target || !target.members.has('BOT'))) this.fail(230002, 'Bot/User can NOT be out of the chat.');
     const card = JSON.parse(content);

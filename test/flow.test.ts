@@ -222,3 +222,62 @@ test('a slow 提交审核 answers within the callback window and finishes in the
     assert.equal(env.fake.approvals.size, 1);
   } finally { await env.close(); }
 });
+
+test('resubmitting replaces the claimer\'s own unclaimed p2p draft; drafts under review, in groups or of others stay', async () => {
+  const env = await makeEnv();
+  try {
+    const dm = 'oc_agentdm';
+    env.fake.chats.set(dm, { mode: 'p2p', name: '', members: new Set(['BOT', env.bob.unionId]) });
+    const draft = (claimer: string, out: string) => ({ chatId: dm, chatType: 'p2p', claimer, name: '日报', params: [], script: script(`print("${out}")`) });
+    const a = await env.submit(draft(env.bob.email, 'v1'));
+    assert.equal(a.ok, true);
+    // Someone else's draft of the same name is not theirs to replace.
+    const other = await env.submit(draft(env.carol.email, 'x'));
+    assert.equal(other.error, 'name_taken');
+    assert.equal(env.amber.store.getCommand(a.id)!.status, 'draft');
+    // The claimer's own resubmission replaces it, and the old claim card says so.
+    const b = await env.submit(draft(env.bob.email, 'v2'));
+    assert.equal(b.ok, true, JSON.stringify(b));
+    assert.equal(env.amber.store.getCommand(a.id)!.status, 'rejected');
+    assert.equal(env.amber.store.getCommand(b.id)!.line, '日报', 'the replacement keeps the name as its line');
+    assert.match(FakeFeishu.text(env.fake.cardOf(a.claimMessageId)), /已被新版本替换/);
+    assert.match(JSON.stringify(await env.click(env.bob, a.claimMessageId, { a: 'claim_try', c: a.id })), /已失效/);
+    // Once it is under review it is not replaced.
+    await env.click(env.bob, b.claimMessageId, { a: 'claim_try', c: b.id });
+    await env.waitFor(() => button(env.fake.cardOf(b.claimMessageId), 'claim_submit'));
+    await env.click(env.bob, b.claimMessageId, { a: 'claim_submit', c: b.id });
+    assert.equal(env.amber.store.getCommand(b.id)!.status, 'pending');
+    const c = await env.submit(draft(env.bob.email, 'v3'));
+    assert.equal(c.error, 'name_taken');
+    assert.equal(env.amber.store.getCommand(b.id)!.status, 'pending');
+    // A new version of an active app: its unclaimed draft is replaced too, and still replaces the active one.
+    await env.approveLatest();
+    const v4 = await env.submit(draft(env.bob.email, 'v4'));
+    const v5 = await env.submit(draft(env.bob.email, 'v5'));
+    assert.equal(v5.ok, true, JSON.stringify(v5));
+    assert.equal(env.amber.store.getCommand(v4.id)!.status, 'rejected');
+    assert.equal(env.amber.store.getMeta(v5.id).replaces, b.id);
+    // Group drafts may be claimed by anyone, so they are never replaced.
+    const g1 = await env.submit({ chatId: GROUP, chatType: 'group', claimer: env.bob.email, name: '日报', params: [], script: HELLO });
+    assert.equal(g1.ok, true);
+    const g2 = await env.submit({ chatId: GROUP, chatType: 'group', claimer: env.bob.email, name: '日报', params: [], script: HELLO });
+    assert.equal(g2.error, 'name_taken');
+    assert.equal(env.amber.store.getCommand(g1.id)!.status, 'draft');
+  } finally { await env.close(); }
+});
+
+test('a replacement whose claim card cannot be sent leaves the old draft claimable', async () => {
+  const env = await makeEnv();
+  try {
+    const dm = 'oc_agentdm';
+    const draft = (out: string) => ({ chatId: dm, chatType: 'p2p', claimer: env.bob.email, name: '日报', params: [], script: script(`print("${out}")`) });
+    const a = await env.submit(draft('v1'));
+    env.fake.sendFails = true;
+    const b = await env.submit(draft('v2'));
+    assert.equal(b.error, 'claim_card_failed');
+    assert.equal(env.amber.store.getCommand(a.id)!.status, 'draft');
+    env.fake.sendFails = false;
+    await env.click(env.bob, a.claimMessageId, { a: 'claim_try', c: a.id });
+    await env.waitFor(() => button(env.fake.cardOf(a.claimMessageId), 'claim_submit'));
+  } finally { await env.close(); }
+});
