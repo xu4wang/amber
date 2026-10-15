@@ -27,6 +27,8 @@ export interface AmberConfig {
   pagesBaseUrl?: string;
   /** A headless Chrome (or chrome-headless-shell) for screenshots on page confirmation cards. Unset = no screenshots. */
   pageScreenshotChrome?: string;
+  /** The built-in large-model service (service name "llm", src/llm.ts). Unset = scripts cannot declare llm. */
+  llm?: { command: string; models?: string[]; maxConcurrent?: number; timeoutMs?: number };
 }
 
 function parseEnvFile(path: string): Record<string, string> {
@@ -66,5 +68,6 @@ export function loadConfig(): AmberConfig {
     webBaseUrl: String(fileCfg.webBaseUrl ?? `http://localhost:${process.env.AMBER_WEB_PORT ?? 7342}`).replace(/\/$/, ''),
     ...(fileCfg.pagesBaseUrl ? { pagesBaseUrl: String(fileCfg.pagesBaseUrl).replace(/\/$/, '') } : {}),
     ...(fileCfg.pageScreenshotChrome ? { pageScreenshotChrome: String(fileCfg.pageScreenshotChrome) } : {}),
+    ...(fileCfg.llm && typeof fileCfg.llm === 'object' && fileCfg.llm.command ? { llm: fileCfg.llm } : {}),
   };
 }

@@ -26,6 +26,7 @@ import type { Signer } from './identity.ts';
 import type { Script, ScriptInput, ScriptResult } from './runner.ts';
 import { parseEnv, serviceDef, runScript } from './runner.ts';
 import { startRelayPorts } from './relay-port.ts';
+import type { LlmService } from './llm.ts';
 import { request as httpRequest } from 'node:http';
 import { EXECUTOR_NAME, ENV_NAME, fingerprint, verifyRequest, pubFromB64, showFingerprint, REQUEST_SKEW_MS, type JobEnvelope } from './exec-proto.ts';
 import { AmberError } from './engine.ts';
@@ -106,6 +107,8 @@ export interface CallGrant { tickets: Record<string, string[]>; issue(service: s
 interface PendingJob { runId?: string; grant?: CallGrant; usedTickets?: Set<string>; executorId: string | null; picked: boolean; resolve: (r: ScriptResult) => void; timer: NodeJS.Timeout;
   /** Service requests in flight for this job; cancelled when the job ends (D52). */
   inflight?: Set<import('node:http').ClientRequest>;
+  /** Built-in service calls (llm) in flight; aborted when the job ends. */
+  aborts?: Set<AbortController>;
   /** Relay calls left per declared service (D52): at most the declared count, one per token. */
   calls: Record<string, number> }
 
@@ -124,6 +127,8 @@ export class ExecutorHub {
   pickupMs = PICKUP_MS;
   onlineMs = ONLINE_MS;
   maxJobs = MAX_JOBS_PER_EXECUTOR;
+  /** The built-in large-model service, when configured (src/llm.ts). */
+  llm?: LlmService;
 
   constructor(store: Store, signer: Signer) {
     this.store = store;
@@ -330,6 +335,19 @@ export class ExecutorHub {
     j.calls[name]--;
     const inflight = j.inflight ?? (j.inflight = new Set());
     this.store.audit(null, 'executor.relay', { jobId: b.jobId, ...(j.runId ? { runId: j.runId } : {}), executor: executorId ?? 'amber', service: name, method, path: path.split('?')[0] });
+    // Amber's own service: answered here. The audit has sizes and the outcome, never the text.
+    if (d.builtin) {
+      if (!this.llm) return { ok: false, error: 'service_unavailable', message: `服务 ${name} 没有配置` };
+      const ac = new AbortController();
+      const aborts = j.aborts ?? (j.aborts = new Set());
+      aborts.add(ac);
+      const t0 = Date.now();
+      try {
+        const r = await this.llm.handle(method, path, body, ac.signal);
+        this.store.audit(null, 'llm.call', { ...(j.runId ? { runId: j.runId } : {}), executor: executorId ?? 'amber', status: r.status, inBytes: body.length, outChars: typeof r.body.text === 'string' ? r.body.text.length : 0, ms: Date.now() - t0, ...(r.body.persist === true ? { persist: true, sessionId: r.body.sessionId ?? null } : {}), ...(r.status !== 200 ? { error: r.body.error } : {}) });
+        return { ok: true, status: r.status, contentType: 'application/json; charset=utf-8', body: Buffer.from(JSON.stringify(r.body)).toString('base64') };
+      } finally { aborts.delete(ac); }
+    }
     return await new Promise(resolve => {
       const req = httpRequest({ ...(d.unixSocket ? { socketPath: d.unixSocket } : { host: '127.0.0.1', port: d.tcpPort }), method, path, headers: { ...headers, 'content-length': String(body.length) }, timeout: RELAY_TIMEOUT_MS }, res => {
         const chunks: Buffer[] = [];
@@ -352,6 +370,7 @@ export class ExecutorHub {
     this.jobs.delete(jobId);
     // A job that ended (result, timeout, revocation) stops its service requests too.
     for (const req of j.inflight ?? []) req.destroy(new Error('job ended'));
+    for (const ac of j.aborts ?? []) ac.abort();
     j.resolve(r);
   }
 

@@ -79,6 +79,7 @@ AMBER_LARK_APP_SECRET=xxxxxxxxxxxxxxxx
   "webBaseUrl": "http://amber.example.com",
   "pagesBaseUrl": "http://pages.amber.example.com",
   "pageScreenshotChrome": "/path/to/chrome-headless-shell",
+  "llm": { "command": "/path/to/claude", "models": ["sonnet", "haiku"], "maxConcurrent": 2, "timeoutMs": 240000 },
   "timezones": [
     { "tz": "Asia/Shanghai", "label": "北京时间" },
     { "tz": "Asia/Bangkok", "label": "曼谷时间" }
@@ -96,6 +97,7 @@ AMBER_LARK_APP_SECRET=xxxxxxxxxxxxxxxx
 | `services` | 脚本可以调用的本机服务，Amber 会为它们签发执行身份凭证，见 [identity.md](identity.md)。例子里的 `data-mcp` 是企业内部的数仓应用，Amber 把它作为可信服务访问。`"executor": true` 表示允许在执行端上运行的应用调用它：请求由执行端转给 Amber，Amber 核对后转给这个服务（见 [执行端](executor.md#调用-amber-上登记的服务)）；默认不允许 |
 | `pagesBaseUrl` | 可选。[页面应用](pages.md)的文件从这个地址提供，必须是和 `webBaseUrl` 不同的域名（页面拿不到 Amber 网站的登录，也调用不了网站的接口）。指向同一个 Amber 网站端口即可，Amber 按域名区分。配成同一个域名时 Amber 拒绝启动。不配就不能发布页面 |
 | `pageScreenshotChrome` | 可选。一个无头 Chrome（`chrome-headless-shell` 或 Chrome 本体）的路径，用来给页面确认卡片截首屏图。截图时浏览器只能访问这个页面自己的文件，页面在这里也调用不了应用。不配就没有截图，其他不受影响。飞书应用需要有上传图片的权限 |
+| `llm` | 可选。开启内置的大模型服务，脚本声明 `"services": {"llm": …}` 就能把文字交给大模型处理（见[脚本约定](script.md#交给大模型处理llm)）。`command` 是 Claude Code 命令行的绝对路径，以运行 Amber 的系统用户已登录的身份调用。<br>每次调用都会：<ul><li>关掉所有工具</li><li>不读设置文件</li><li>默认不保存会话（脚本可以按次要求保存）</li><li>在 Amber 数据目录下一个空目录里运行</li><li>只带 `HOME`、`PATH`、`LANG` 三个环境变量</li></ul>`models` 是脚本可选的模型，第一个是默认；`maxConcurrent` 是同时运行的调用数，默认 2，多出来的排队；`timeoutMs` 是每次调用的时限，默认 240000。注意：会和这台机器上其他使用 Claude 的程序共用额度。不配就不提供这个服务 |
 | `webBaseUrl` | **必填**。网站的外部地址，用来生成登录链接、做跨站请求检查，并通过 `/v1/info` 告诉 agent（不填只会是 localhost，登录链接在别的电脑上打不开） |
 | `timezones` | 可选。定时任务可选的时区（IANA 名称加显示名），**第一个是默认时区**；网站下拉框、卡片上的时间说明都用它。不配就只用 Amber 服务器所在的时区，显示为「服务器时间」 |
 | `dataDir` | 可选，数据目录，默认是 `~/.config/amber/data` |

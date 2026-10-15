@@ -42,12 +42,13 @@ export const MAX_SERVICE_CALLS = 20;
 export function serviceNames(s: Pick<Script, 'services'>): string[] { return Object.keys(s.services ?? {}); }
 /** Human-readable "name（N 次）" list for cards and review documents. */
 export function describeServices(s: Pick<Script, 'services'>): string {
-  return Object.entries(s.services ?? {}).map(([n, u]) => `${n}（每次执行最多 ${u.calls} 次调用）`).join('、');
+  return Object.entries(s.services ?? {}).map(([n, u]) => n === 'llm' ? `大模型 llm（把文字交给 Amber 的大模型处理，文字会发给大模型服务商；每次执行最多 ${u.calls} 次）` : `${n}（每次执行最多 ${u.calls} 次调用）`).join('、');
 }
 
 /** Local services a script may call (config: services). Only these addresses are reachable from the sandbox. */
 /** executor: may be called from scripts on executors, through Amber's relay (D52). */
-export interface ServiceDef { audience: string; tcpPort?: number; unixSocket?: string; executor?: boolean }
+/** builtin: answered by Amber itself (the llm service), not forwarded anywhere. */
+export interface ServiceDef { audience: string; tcpPort?: number; unixSocket?: string; executor?: boolean; builtin?: boolean }
 let SERVICES: Record<string, ServiceDef> = {};
 export function setServices(s: Record<string, ServiceDef>): void { SERVICES = s; }
 export function knownServices(): string[] { return Object.keys(SERVICES); }
