@@ -65,7 +65,7 @@ export function specSummary(c: CommandRow): string {
   const run = c.params.filter(p => p.scope !== 'config'), cfg = c.params.filter(p => p.scope === 'config');
   const params = run.length ? run.map(desc).join('、') : '无';
   const s = c.script;
-  const how = `${scriptLabel(s.kind)}${s.network ? '，可访问外网' : ''}${s.services && Object.keys(s.services).length ? `，以执行人身份调用：${describeServices(s)}（不能访问外网）` : ''}${s.timeoutMs !== undefined && s.timeoutMs > LONG_RUN_MS ? `，⚠️ 每次最长运行 ${fmtDuration(Math.round(s.timeoutMs / 1000))}` : ''}`;
+  const how = `${scriptLabel(s.kind)}${s.network ? '，可访问外网' : ''}${s.services && Object.keys(s.services).length ? `，以执行人身份调用：${describeServices(s)}（不能访问外网）` : ''}${s.larkUser ? '，⚠️ 以执行人本人的飞书身份运行（可调用任意 lark-cli/飞书接口，网络只能到飞书）' : ''}${s.timeoutMs !== undefined && s.timeoutMs > LONG_RUN_MS ? `，⚠️ 每次最长运行 ${fmtDuration(Math.round(s.timeoutMs / 1000))}` : ''}`;
   return [
     `**名称**：${sanitizeMarkdown(c.name, 40)}`,
     `**说明**：${sanitizeMarkdown(c.description || '（无）', 200)}`,

@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { startAmber, type Amber } from '../src/app.ts';
 import type { AmberConfig } from '../src/config.ts';
 import { FakeFeishu, fakeWs, type User } from './fake-feishu.ts';
+import type { LarkOAuth } from '../src/lark-user.ts';
 
 export const GROUP = 'oc_testgroup1';
 
@@ -71,7 +72,7 @@ export function urlButton(card: any): string | undefined {
   return m?.[1];
 }
 
-export async function makeEnv(over: Partial<AmberConfig> = {}): Promise<Env> {
+export async function makeEnv(over: Partial<AmberConfig> = {}, extra: { larkOAuth?: LarkOAuth } = {}): Promise<Env> {
   const dir = mkdtempSync(join(tmpdir(), 'amber-test-'));
   const fake = new FakeFeishu();
   const mk = (name: string, city?: string): User => ({ email: `${name}@example.com`, unionId: `on_${name}`, openId: `ou_${name}`, name, city });
@@ -93,7 +94,7 @@ export async function makeEnv(over: Partial<AmberConfig> = {}): Promise<Env> {
   mkdirSync(cfg.dataDir, { recursive: true });
   const origLog = console.log;
   console.log = () => {};   // keep test output clean
-  const amber = await startAmber(cfg, { apiPort, webPort, client: fake, ws: fakeWs, timers: false });
+  const amber = await startAmber(cfg, { apiPort, webPort, client: fake, ws: fakeWs, timers: false, ...(extra.larkOAuth ? { larkOAuth: extra.larkOAuth } : {}) });
   await new Promise(r => setTimeout(r, 50));
   const bot = amber.bot as any;
   const msgChat = new Map<string, string>();
