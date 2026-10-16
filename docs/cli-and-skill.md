@@ -73,6 +73,8 @@ amber page publish <目录> [--name 名字]      发布或更新页面应用，�
 amber trigger add --on 事件 [--app 应用] [--to me|here] [--mention 机器人]
                                              某件事发生时通知 --user；见下面「触发器」
 amber trigger list                           --user 的触发器
+amber secret get <应用> <密钥名> --out 文件    把 --user 某个应用的一个密钥写进本机文件（600），值不打印；
+                                             每次都要创建人在私聊卡片上允许，见下面「读取密钥」
 amber trigger pause <编号>                   立即暂停（恢复、删除在网站上做）
 amber info                                   本机连的 Amber 服务、网站地址
 amber config set-url <地址>                  设置本机的 Amber 服务地址
@@ -184,3 +186,18 @@ amber trigger add --on run.failed --app 注册商户数 --user zhangsan@example.
 | POST | `/v1/pages` | `name`、`files`（`[{"path": "index.html", "data": "<base64>"}, …]`），必须带 `user`；请求体最大 16MB |
 | GET | `/v1/info` | 无，返回网站地址 `webUrl` 和本机名字 |
 | GET | `/v1/keys` | 无，返回公钥，见 [identity.md](identity.md) |
+
+## 读取密钥
+
+agent 需要把某个密钥放到自己机器上时（比如用户的 gitlab 令牌存在他的「密钥保管箱」应用里），用：
+
+```text
+amber secret get 密钥保管箱 KEY1 --user 用户邮箱 --out ./secrets/gitlab_token
+```
+
+- `--user` 写**应用创建人**的邮箱。Amber 私聊他发一张确认卡，写明哪台机器、哪个 agent（`--label`）、读哪个应用的哪个密钥；他点「允许」才放行，**每次都要确认**，10 分钟内有效。别人（包括管理员）点不了。
+- 命令行为这次请求临时生成一对 X25519 密钥，只把公钥交给 Amber；Amber 用它把值加密后交回，只有这个进程能解开。所以值不经过飞书、不出现在网络上（哪怕是 http）、也不进 agent 的对话。拿到后写进 `--out` 指定的文件（权限 600，已存在要加 `--force`），只打印路径和字节数。
+- 只能取一次；必须由发起请求的那台机器来取；命令最多等 300 秒（`--timeout` 可改），等不到就重新运行（私钥只在那个进程里）。
+- 审计记录谁允许、哪台机器、读了哪个应用的哪个密钥，不记值。
+- 想知道哪个密钥是什么：`amber show <应用>` 会列出配置项，比如保管箱的「说明」。
+

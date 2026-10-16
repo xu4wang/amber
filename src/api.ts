@@ -83,7 +83,10 @@ export function startApi(port: number, machines: Record<string, string>, flow: F
         const label = typeof input.submittedBy === 'string' && input.submittedBy.trim() ? input.submittedBy.trim().slice(0, 40) : '你的 agent';
         return reply(200, { ok: true, ...(await flow.submitDraft({ ...input, submittedBy: label, machine })) });
       }
+      // A sealed secret, once, to the machine that asked for it (the request names no chat).
+      if (path === '/v1/secrets/fetch') return reply(200, { ok: true, box: agent.secretFetch({ machine }, String(body.requestId ?? '')) });
       const ctx = await agent.context(body as AgentContext, machine);
+      if (path === '/v1/secrets/read') return reply(200, { ok: true, ...(await agent.secretRead(ctx, String(body.command ?? ''), String(body.secret ?? ''), body.publicKey)) });
       if (path === '/v1/commands/list') return reply(200, { ok: true, commands: agent.list(ctx) });
       if (path === '/v1/commands/show') return reply(200, { ok: true, command: agent.show(ctx, String(body.command ?? '')) });
       if (path === '/v1/commands/retire') return reply(200, { ok: true, ...(await agent.commandChange(ctx, String(body.command ?? ''), 'retire')) });

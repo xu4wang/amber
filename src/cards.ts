@@ -307,10 +307,10 @@ function argLines(c: CommandRow, args: Record<string, string>): string {
 
 /** Agent asked to run a command / create a schedule on someone's behalf; the click decides who. */
 export function requestCard(o: {
-  kind: 'run' | 'schedule' | 'schedule_resume' | 'schedule_delete' | 'retire' | 'scope_global' | 'scope_local'; reqId: string; cmd: CommandRow; args: Record<string, string>;
-  requestedBy: string; targetOpenId?: string; ruleText?: string; nextText?: string; scheduleId?: string; schedules?: number;
+  kind: 'run' | 'schedule' | 'schedule_resume' | 'schedule_delete' | 'retire' | 'scope_global' | 'scope_local' | 'secret_read'; reqId: string; cmd: CommandRow; args: Record<string, string>;
+  requestedBy: string; targetOpenId?: string; ruleText?: string; nextText?: string; scheduleId?: string; schedules?: number; machine?: string;
 }): object {
-  const danger = o.cmd.options.confirm || o.kind === 'schedule_delete' || o.kind === 'retire';
+  const danger = o.cmd.options.confirm || o.kind === 'schedule_delete' || o.kind === 'retire' || o.kind === 'secret_read';
   const who = o.targetOpenId ? person(o.targetOpenId) : '你';
   const by = sanitizeMarkdown(o.requestedBy, 80);
   const name = sanitizeMarkdown(o.cmd.name, 40);
@@ -337,6 +337,11 @@ export function requestCard(o: {
       ? `**${by}** 请求把应用「**${name}**」（${o.cmd.id}）设为**全局**：Amber 所在的任何群和私聊都能使用。`
       : `**${by}** 请求把应用「**${name}**」（${o.cmd.id}）改回**只在创建处可用**。` });
     els.push({ tag: 'markdown', content: '<font color="grey">只有管理员可以确认。</font>' });
+  } else if (o.kind === 'secret_read') {
+    title = `请确认读取密钥：${o.cmd.name}`;
+    ok = '允许读取';
+    els.push({ tag: 'markdown', content: `机器 **${sanitizeMarkdown(o.machine ?? '?', 60)}** 上的 **${by}** 请求读取你的应用「**${name}**」（${o.cmd.id}）的密钥 **${sanitizeMarkdown(o.args.secret ?? '', 40)}**。` });
+    els.push({ tag: 'markdown', content: '<font color="grey">允许后，密钥的值会加密交给发起请求的那个命令行（只有它能解开），由它写进那台机器上的文件；值不会显示在飞书里，也不会交给 agent 的对话。请求方的名字是它自己报的，请确认机器和用途都对再点。10 分钟内有效，只能取一次。只有应用的创建人可以确认。</font>' });
   } else if (o.kind === 'schedule_resume') {
     title = `请确认恢复定时任务：${o.cmd.name}`;
     ok = '恢复';
