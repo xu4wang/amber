@@ -15,7 +15,10 @@ usage:
   amber schedule list
   amber schedule pause <id>                    stops it at once
   amber schedule resume <id> | delete <id>     the creator confirms on a card
-  amber submit draft.json                      submit a new command for review (same name = new version)
+  amber submit draft.json                      submit a new command for review (same name = new version);
+                                               the file may leave out chatId/claimer (this chat and --user are
+                                               used) and keep its code in a file ("codeFile": "app.py"), e.g.
+                                               amber submit samples/weather/app.json --user me@example.com
   amber retire <command>                       take a command offline; its creator or an admin confirms on a card
   amber global <command> | local <command>     make a command usable everywhere / only where it was made;
                                                an admin confirms on a card
@@ -318,6 +321,20 @@ def main(argv):
         if len(pos) < 2:
             raise Usage()
         draft = json.load(open(pos[1], encoding="utf-8"))
+        # The code may live in a file next to the definition (samples/*/app.json: "codeFile": "app.py").
+        sc = draft.get("script") or {}
+        if "codeFile" in sc:
+            with open(os.path.join(os.path.dirname(os.path.abspath(pos[1])), sc.pop("codeFile")), encoding="utf-8") as f:
+                sc["code"] = f.read()
+        # Where and for whom, when the file does not say: this conversation and --user (as for every other command).
+        if not draft.get("chatId"):
+            c = context(opts)
+            draft["chatId"], draft["chatType"] = c["chatId"], c["chatType"]
+            if c.get("replyTo"):
+                draft.setdefault("originMessageId", c["replyTo"])
+                draft.setdefault("inThread", True)
+        if not draft.get("claimer") and opts.get("user"):
+            draft["claimer"] = opts["user"]
         label = opts.get("label") or os.environ.get("AMBER_LABEL")
         if label:
             draft["submittedBy"] = label

@@ -1,0 +1,25 @@
+{
+  "name": "天气",
+  "description": "城市当前天气，以及未来 24 小时气温折线图；不填城市时用你的飞书办公城市",
+  "params": [
+    {
+      "name": "city",
+      "label": "城市",
+      "type": "string",
+      "defaultFrom": "caller.city",
+      "default": "曼谷",
+      "maxLength": 64
+    }
+  ],
+  "script": {
+    "kind": "script",
+    "lang": "python",
+    "network": true,
+    "timeoutMs": 20000,
+    "codeFile": "app.py"
+  },
+  "options": {
+    "confirm": false,
+    "schedulable": false
+  }
+}

@@ -1,0 +1,39 @@
+{
+  "name": "群聊日报",
+  "description": "以执行人本人的飞书身份，读过去 N 小时自己所在的群（跳过外部群和设了免打扰的群）的消息；「包含私聊」选「是」时再加上和真人的私聊（不含和机器人的、外部的、免打扰的）。交给大模型总结成日报，写进执行人自己空间的飞书文档，并关闭文档的链接分享（只有本人可见）。结果里只给统计和文档链接。消息记录不保存会话。每次约需 2–3 分钟。",
+  "params": [
+    {
+      "name": "hours",
+      "label": "回看小时数",
+      "type": "integer",
+      "default": "24",
+      "min": 1,
+      "max": 72
+    },
+    {
+      "name": "include_p2p",
+      "label": "包含私聊（是/否）",
+      "type": "string",
+      "default": "否",
+      "pattern": "^(是|否)$",
+      "maxLength": 1
+    }
+  ],
+  "script": {
+    "kind": "script",
+    "lang": "python",
+    "network": false,
+    "services": {
+      "llm": {
+        "calls": 7
+      }
+    },
+    "timeoutMs": 600000,
+    "larkUser": true,
+    "codeFile": "app.py"
+  },
+  "options": {
+    "confirm": false,
+    "schedulable": true
+  }
+}
