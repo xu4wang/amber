@@ -1152,7 +1152,7 @@ async function loadSource() {
       <dt>运行方式</dt><dd>${esc(how)}，${esc(net)}${esc(larkNote)}，最长运行 ${esc(sc.timeoutLabel)}</dd>${sc.interpreter ? `
       <dt>解释器</dt><dd>${esc(sc.interpreter)}</dd>` : ''}${sc.env ? `
       <dt>执行位置</dt><dd>执行端 ${esc(sc.env)}</dd>` : ''}${(sc.secrets || []).length ? `
-      <dt>密钥</dt><dd>${esc(sc.secrets.join('、'))}（值不在代码里，运行时由 Amber 交给脚本）</dd>` : ''}
+      <dt>密钥</dt><dd>${esc(sc.secrets.join('、'))}（值不在代码里，运行时由 Amber 交给脚本${sc.secretsOptional ? '；可以只设置一部分，脚本只拿到已设置的' : ''}）</dd>` : ''}
       <dt>语言</dt><dd>${esc(sc.lang)}</dd>
       <dt>版本</dt><dd>第 ${x.history.length + 1} 版 · <code>${esc(x.specHash)}</code></dd>
       <dt>生效时间</dt><dd>${fmtTime(x.createdAt)}</dd>

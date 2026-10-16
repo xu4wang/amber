@@ -88,9 +88,9 @@ export class SecretVault {
 export { redact } from './exec-proto.ts';
 
 /** One line for cards, review documents and approvals: which secrets a command uses and who shares them. */
-export function describeSecrets(c: { scopeType: string; script: { secrets?: string[] } }): string {
+export function describeSecrets(c: { scopeType: string; script: { secrets?: string[]; secretsOptional?: boolean } }): string {
   const names = c.script.secrets ?? [];
   if (!names.length) return '';
   const who = '只有创建人自己会用到；设为全局应用后，所有执行人共用同一份';
-  return `${names.join('、')}（值不参与审核，由创建人或管理员设置；${who}）`;
+  return `${names.join('、')}（值不参与审核，由创建人或管理员设置${c.script.secretsOptional ? '；可以只设置一部分，执行时只拿到已设置的' : ''}；${who}）`;
 }

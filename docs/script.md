@@ -119,6 +119,8 @@ Content-Type: application/json
 
 在 `script` 里写 `"secrets": ["API_TOKEN"]`，只写名字（大写字母、数字、下划线，最多 10 个），脚本从输入的 `secrets` 里取值。值由创建人在私聊卡片或网站上填写，不进代码、不进草稿，agent 也拿不到（除非创建人每次在确认卡上允许 `amber secret get` 读取，见[agent 接入](cli-and-skill.md#读取密钥)）。不要打印密钥，打印出来也会被遮成 `***`。用到密钥的应用总要人点确认卡才能执行。
 
+默认所有声明的密钥都设置了才能执行。像「密钥保管箱」这种只是用来存放、可能只填一部分的应用，再写 `"secretsOptional": true`：一个都没填也能执行，脚本只拿到已经设置的那些。
+
 ## 以执行人的飞书身份运行
 
 在 `script` 里写 `"larkUser": true`，脚本每次执行都会从输入的 `larkUser` 里拿到**执行人本人**的飞书用户令牌（`user_access_token`），有效期覆盖整次运行。用它调用什么由脚本自己决定，Amber 不限制动作。最常见的用法是把 `env` 合进环境变量，再用 `cli`（这台机器上 lark-cli 的完整路径，沙箱的 PATH 里不一定有它）调 lark-cli：

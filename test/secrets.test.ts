@@ -145,3 +145,34 @@ test('secrets vault: ciphertext is bound to its command and name', async () => {
     assert.deepEqual(vault.values({ chatId: GROUP, name: '甲' }, ['API_TOKEN', 'MISSING']), { missing: ['MISSING'] });
   } finally { await env.close(); }
 });
+
+test('secrets: secretsOptional lets an app (a vault) run with only some set, getting just those', async () => {
+  const { validateScript } = await import('../src/runner.ts');
+  const { secretVault, runCommand } = await import('../src/engine.ts');
+  assert.throws(() => validateScript({ kind: 'script', lang: 'python', code: 'print(1)', secretsOptional: true }), /和 secrets 一起用/);
+  assert.throws(() => validateScript({ kind: 'script', lang: 'python', code: 'print(1)', secrets: ['A'], secretsOptional: 'yes' }), /只能写 true 或 false/);
+  assert.equal(validateScript({ kind: 'script', lang: 'python', code: 'print(1)', secrets: ['A'], secretsOptional: true }).secretsOptional, true);
+  const env = await makeEnv();
+  try {
+    const { bob } = env;
+    const vault = script('import json,sys\ninp=json.load(sys.stdin)\nprint("got=" + ",".join(sorted((inp.get("secrets") or {}).keys())))', { secrets: ['KEY1', 'KEY2', 'KEY3'], secretsOptional: true });
+    // None set: the trial still runs (nothing is required).
+    const id = await activate(env, { chatId: GROUP, chatType: 'group', name: '保管箱', params: [], script: vault }, bob);
+    const c = env.amber.store.getCommand(id)!;
+    const caller = { unionId: bob.unionId, openId: bob.openId, chatId: GROUP, chatType: 'group' as const, channel: 'bot' as const };
+    let r = await runCommand(env.amber.store, c, {}, caller, { signer: env.amber.bot.signer });
+    assert.equal(r.ok, true, r.error);
+    assert.match(r.markdown, /got=$/m);
+    // Nothing counts as missing (agents are not told to ask for them).
+    const shown = await env.api('POST', '/v1/commands/show', { chatId: GROUP, chatType: 'group', label: 'T', user: bob.email, command: '保管箱' });
+    assert.deepEqual(shown.body.command.secretsMissing, []);
+    // Some set: the run gets exactly those.
+    secretVault()!.set({ chatId: GROUP, name: '保管箱' }, 'KEY2', 'value-two-222', bob.unionId);
+    r = await runCommand(env.amber.store, c, {}, caller, { signer: env.amber.bot.signer });
+    assert.match(r.markdown, /got=KEY2$/m);
+    // Without the flag, a missing one still stops the run.
+    const strict = await env.submit({ chatId: GROUP, chatType: 'group', name: '严格', params: [], script: script('print(1)', { secrets: ['KEY1'] }) });
+    await env.click(bob, strict.claimMessageId, { a: 'claim_try', c: strict.id });
+    await env.waitFor(() => /还没设置密钥/.test(FakeFeishu.text(env.fake.cardOf(strict.claimMessageId))) || undefined);
+  } finally { await env.close(); }
+});
