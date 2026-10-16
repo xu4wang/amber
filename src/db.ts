@@ -134,7 +134,7 @@ export interface ListingRow {
   reason: string | null; createdAt: number;
 }
 
-export type RequestKind = 'run' | 'schedule' | 'schedule_resume' | 'schedule_delete' | 'retire' | 'scope_global' | 'scope_local' | 'reassign' | 'clone';
+export type RequestKind = 'run' | 'schedule' | 'schedule_resume' | 'schedule_delete' | 'retire' | 'scope_global' | 'scope_local' | 'reassign' | 'clone' | 'secret_read';
 export type RequestStatus = 'awaiting' | 'running' | 'done' | 'failed' | 'canceled' | 'expired';
 export interface RequestRow {
   id: string; kind: RequestKind; commandId: string | null; specHash: string | null; chatId: string; chatType: ScopeType;

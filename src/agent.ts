@@ -7,8 +7,9 @@
 //      card in the chat; whoever clicks it is the identity, taken from the Feishu event.
 import type { Store, CommandRow, RequestRow, RequestKind, ScopeType } from './db.ts';
 import type { Caller, Block } from './engine.ts';
-import { ENV_NOT_GLOBAL, visibleCommands, findVisible, findManageable, runCommand, validateArgs, AmberError, missingSecrets, runParams, configParams, configValues, missingConfig, missingConfigMessage } from './engine.ts';
+import { ENV_NOT_GLOBAL, visibleCommands, findVisible, findManageable, runCommand, validateArgs, AmberError, missingSecrets, secretVault, lineOf, runParams, configParams, configValues, missingConfig, missingConfigMessage } from './engine.ts';
 import type { Signer } from './identity.ts';
+import { checkPublicKey, seal, type SealedBox } from './secret-box.ts';
 import { requestCard, runningCard, resultCard, errorCard, closedCard, person, sanitizeMarkdown, type Mentions } from './cards.ts';
 import { parseRule, validateRule, nextRun, describeRule, formatAt, defaultTz } from './schedule-rule.ts';
 import type { Scheduler } from './scheduler.ts';
@@ -48,6 +49,8 @@ export interface AgentContext {
 interface Ctx { chatId: string; chatType: ScopeType; user?: { unionId: string; openId?: string; email: string }; replyTo?: string; inThread: boolean; requestedBy: string; machine: string }
 
 const REQUEST_TTL_MS = 24 * 3600_000;
+/** Reading a secret: the card is good for 10 minutes, and the sealed value waits 10 minutes to be fetched. */
+const SECRET_READ_TTL_MS = 10 * 60_000;
 const REQUESTS_PER_CHAT_10MIN = 10;
 
 export function needsPerson(c: CommandRow): boolean {
@@ -204,6 +207,68 @@ export class AgentGate {
     return { mode: 'confirm_card', requestId: req.id, status: 'awaiting', message: `已发出确认卡片，需要${ctx.user ? ` ${ctx.user.email}（须是${who}）` : who}点确认。用 amber wait ${req.id} 查看结果。` };
   }
 
+  /** Sealed secret values waiting for the machine that asked: in memory only, handed out once. */
+  private sealed = new Map<string, { machine: string; box: SealedBox; at: number }>();
+
+  /**
+   * `amber secret get`: read one secret of an app, for the agent to save on its machine. Only the app's creator
+   * can allow it, on a card in their private chat with Amber, each time. The value is sealed to the public key
+   * the asking client made for this request and fetched once by the same machine (secretFetch).
+   */
+  async secretRead(ctx: Ctx, command: string, secret: string, publicKey: unknown): Promise<object> {
+    if (!ctx.user) throw new AmberError('user_required', '读取密钥要用 --user 写应用创建人的邮箱：确认卡发给他');
+    let pub: string;
+    try { pub = checkPublicKey(publicKey); } catch (e) { throw new AmberError('bad_request', (e as Error).message); }
+    const name = String(secret ?? '').trim();
+    // The creator's apps: those usable here, and their private-chat ones (a vault is usually installed there).
+    const seen = new Map<string, CommandRow>();
+    for (const c of [...visibleCommands(this.store, this.viewer(ctx)), ...this.store.listActiveP2pByOwner(ctx.user.unionId)]) seen.set(c.id, c);
+    const matches = [...seen.values()].filter(c => c.id === command || c.name === command);
+    if (!matches.length) throw new AmberError('not_found', `没有找到 ${ctx.user.email} 的应用「${command}」`);
+    if (matches.length > 1) throw new AmberError('ambiguous', `有 ${matches.length} 个叫「${command}」的应用，请改用应用 id：${matches.map(c => c.id).join('、')}`);
+    const cmd = matches[0];
+    if (cmd.ownerUnionId !== ctx.user.unionId) throw new AmberError('forbidden', '只有应用的创建人可以允许读取它的密钥：--user 要写创建人');
+    if (!(cmd.script.secrets ?? []).includes(name)) throw new AmberError('not_found', `应用「${cmd.name}」没有声明密钥 ${name}${cmd.script.secrets?.length ? `（有：${cmd.script.secrets.join('、')}）` : ''}`);
+    if (!secretVault()?.info(lineOf(cmd), [name])[0]?.set) throw new AmberError('secret_missing', `应用「${cmd.name}」的密钥 ${name} 还没有设置`);
+    const req = await this.post(ctx, 'secret_read', cmd, { secret: name, publicKey: pub, machine: ctx.machine }, { target: ctx.user.unionId, targetOpenId: ctx.user.openId, toCreatorDm: true });
+    return { mode: 'confirm_card', requestId: req.id, status: 'awaiting', message: `已私聊 ${ctx.user.email} 发出确认卡，对方允许后取回（10 分钟内有效）。` };
+  }
+
+  /** The sealed value of an allowed secret read, once, to the machine that asked. */
+  secretFetch(ctx: { machine: string }, requestId: string): SealedBox {
+    const s = this.sealed.get(requestId);
+    if (!s || s.machine !== ctx.machine) throw new AmberError('not_found', '没有可取的密钥（还没允许、已经取过、过期，或不是这台机器发起的）');
+    this.sealed.delete(requestId);
+    if (Date.now() - s.at > SECRET_READ_TTL_MS) throw new AmberError('expired', '已经过了 10 分钟，请重新发起');
+    this.store.audit(null, 'secret.read_fetched', { request: requestId, machine: ctx.machine });
+    return s.box;
+  }
+
+  private async onSecretReadClick(ok: boolean, req: RequestRow, clicker: Caller): Promise<object> {
+    const cmd = this.store.getCommand(req.commandId ?? '');
+    if (!cmd) throw new AmberError('not_found', '应用不存在');
+    if (req.targetUnionId !== clicker.unionId || cmd.ownerUnionId !== clicker.unionId) throw new AmberError('forbidden', '只有应用的创建人可以确认');
+    const actor = clicker.unionId;
+    if (Date.now() - req.createdAt > SECRET_READ_TTL_MS) {
+      this.store.transitionRequest(req.id, 'awaiting', 'expired');
+      return closedCard('请求已过期', 'grey', '这个读取请求已超过 10 分钟，请让 agent 重新发起。');
+    }
+    if (!ok) {
+      if (!this.store.transitionRequest(req.id, 'awaiting', 'canceled', { actorUnionId: actor })) throw new AmberError('closed', '这个请求已经处理过了');
+      this.store.audit(actor, 'request.cancel', { id: req.id });
+      return closedCard('已拒绝', 'grey', `${person(clicker.openId)} 拒绝了读取密钥（${req.id}）。`);
+    }
+    if (cmd.status !== 'active') throw new AmberError('not_found', '应用已下线');
+    const name = req.args.secret ?? '';
+    const got = secretVault()?.values(lineOf(cmd), [name]);
+    if (!got || !('values' in got)) throw new AmberError('secret_missing', `密钥 ${name} 已经不在了`);
+    if (!this.store.transitionRequest(req.id, 'awaiting', 'done', { actorUnionId: actor })) throw new AmberError('closed', '这个请求已经处理过了');
+    this.sealed.set(req.id, { machine: req.args.machine ?? '', box: seal(req.args.publicKey ?? '', Buffer.from(got.values[name], 'utf8')), at: Date.now() });
+    for (const [id, s] of this.sealed) if (Date.now() - s.at > SECRET_READ_TTL_MS) this.sealed.delete(id);
+    this.store.audit(actor, 'secret.read', { request: req.id, command: cmd.id, name: cmd.name, secret: name, machine: req.args.machine ?? null, requestedBy: req.requestedBy });
+    return closedCard('已允许读取', 'green', `${person(clicker.openId)} 允许读取「${sanitizeMarkdown(cmd.name, 40)}」的密钥 **${sanitizeMarkdown(name, 40)}**。值已加密交给机器 ${sanitizeMarkdown(req.args.machine ?? '?', 60)} 上发起请求的命令行，10 分钟内取一次有效。`);
+  }
+
   private cleanArgs(args: unknown): Record<string, string> {
     const out: Record<string, string> = {};
     if (args && typeof args === 'object') for (const [k, v] of Object.entries(args)) if (v !== undefined && v !== null) out[k] = String(v).slice(0, 2000);
@@ -222,7 +287,7 @@ export class AgentGate {
     const card = requestCard({
       kind, reqId: req.id, cmd, args, requestedBy: ctx.requestedBy, targetOpenId: o.targetOpenId ?? ctx.user?.openId,
       ruleText: rule ? describeRule(rule) : undefined, nextText: rule ? formatAt(nextRun(rule, Date.now()), rule.tz) : undefined, scheduleId: o.scheduleId,
-      schedules: o.schedules,
+      schedules: o.schedules, machine: args.machine,
     });
     // p2p: Amber cannot post into the agent's private chat, so the card goes to the person's chat with Amber.
     const to = ctx.chatType === 'p2p' || o.toCreatorDm ? { unionId: target! } : ctx.replyTo ? { replyTo: ctx.replyTo, inThread: ctx.inThread } : { chatId: ctx.chatId };
@@ -321,6 +386,7 @@ export class AgentGate {
     }
     const s = req.scheduleId ? this.store.getSchedule(req.scheduleId) : undefined;
     if (req.kind === 'retire' || req.kind === 'scope_global' || req.kind === 'scope_local') return this.onCommandChangeClick(ok, req, clicker, cardChatId);
+    if (req.kind === 'secret_read') return this.onSecretReadClick(ok, req, clicker);
     // Who may click.
     if (req.kind === 'schedule_resume' || req.kind === 'schedule_delete') {
       if (!s) throw new AmberError('not_found', '定时任务已不存在');
