@@ -176,3 +176,22 @@ test('secrets: secretsOptional lets an app (a vault) run with only some set, get
     await env.waitFor(() => /还没设置密钥/.test(FakeFeishu.text(env.fake.cardOf(strict.claimMessageId))) || undefined);
   } finally { await env.close(); }
 });
+
+test('secrets: in the private chat, 设置密钥 on a claim card sends the form as a new message and keeps the claim card', async () => {
+  const env = await makeEnv();
+  try {
+    const { bob, fake } = env;
+    fake.chats.set('oc_dmbob', { mode: 'p2p', name: '', members: new Set(['BOT', bob.unionId]) });
+    const r = await env.submit({ chatId: 'oc_dmbob', chatType: 'p2p', claimer: bob.email, name: '箱', params: [], script: script('print(1)', { secrets: ['KEY1'], secretsOptional: true }) });
+    const before = fake.sent.length;
+    const dmClaim = fake.sent.find(s => s.id === r.claimMessageId)!;
+    // The click comes from bob's private chat with Amber.
+    const res = await (env.amber.bot as any).onCardAction({ event_id: 'ev-x', operator: { union_id: bob.unionId, open_id: bob.openId }, action: { value: { a: 'sec_form', c: r.id }, form_value: {} },
+      context: { open_chat_id: env.dmChat(bob), open_message_id: dmClaim.id } });
+    assert.equal(res.card, undefined, 'the claim card is not replaced');
+    assert.match(JSON.stringify(res), /回到认领卡/);
+    const form = fake.sent.slice(before).find(s => s.to.unionId === bob.unionId && /设置密钥/.test(FakeFeishu.text(s.card)));
+    assert.ok(form, 'the form as a new private message');
+    assert.ok(button(fake.cardOf(r.claimMessageId), 'claim_try'), 'claim card still offers 试运行');
+  } finally { await env.close(); }
+});
