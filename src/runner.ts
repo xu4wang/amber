@@ -20,6 +20,8 @@ export interface Script {
   kind: ScriptKind; lang: 'python'; code: string; network?: boolean; services?: Record<string, ServiceUse>; timeoutMs?: number;
   /** Names of the command secrets this script needs (D48). Reviewed with the code; values are set separately. */
   secrets?: string[];
+  /** The secrets may be set only in part (a vault): a run gets those that are set; none is required. Reviewed with the code. */
+  secretsOptional?: boolean;
   /** Absolute path of the Python interpreter to use (e.g. a venv with packages), reviewed with the code. Default: the system Python. */
   interpreter?: string;
   /** Where it runs (D50): "<executor>/<environment>" — an approved executor on the machine that holds the data. Default: on Amber's machine. */
@@ -107,6 +109,9 @@ export function validateScript(s: unknown): Script {
       if (new Set(secrets).size !== secrets.length) throw new Error('secrets 里有重复的名称');
       if (secrets.length > MAX_SECRETS) throw new Error(`一个应用最多声明 ${MAX_SECRETS} 个密钥`);
     }
+    if (x.secretsOptional !== undefined && x.secretsOptional !== true && x.secretsOptional !== false) throw new Error('secretsOptional 只能写 true 或 false');
+    if (x.secretsOptional === true && !secrets.length) throw new Error('secretsOptional 要和 secrets 一起用');
+    const secretsOptional = x.secretsOptional === true;
     let env: string | undefined;
     if (x.env !== undefined) {
       env = String(x.env).trim();
@@ -127,7 +132,7 @@ export function validateScript(s: unknown): Script {
       if (!/\/python(3(\.\d+)?)?$/.test(p)) throw new Error('interpreter 只能是 Python 解释器（路径以 python、python3 或 python3.x 结尾）');
       interpreter = String(x.interpreter).trim();
     }
-    return { kind: 'script', lang: 'python', code: x.code, network: !!x.network, ...(declared ? { services } : {}), ...(timeoutMs ? { timeoutMs } : {}), ...(secrets.length ? { secrets } : {}), ...(interpreter ? { interpreter } : {}), ...(env ? { env } : {}), ...(larkUser ? { larkUser } : {}) };
+    return { kind: 'script', lang: 'python', code: x.code, network: !!x.network, ...(declared ? { services } : {}), ...(timeoutMs ? { timeoutMs } : {}), ...(secrets.length ? { secrets } : {}), ...(secretsOptional ? { secretsOptional } : {}), ...(interpreter ? { interpreter } : {}), ...(env ? { env } : {}), ...(larkUser ? { larkUser } : {}) };
   }
   throw new Error('脚本类型只能是 script');
 }

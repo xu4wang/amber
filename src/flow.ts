@@ -133,7 +133,7 @@ export function claimCard(c: CommandRow, trial?: { by?: string; blocks?: Block[]
     els.push(...renderBlocks(trial.blocks));
   }
   els.push({ tag: 'markdown', content: '<font color="grey">试运行就是以你的身份真实执行一次。</font>' });
-  if (c.script.secrets?.length) els.push({ tag: 'markdown', content: '<font color="grey">这个应用需要密钥：先点「设置密钥」，Amber 会私聊你填写，再试运行。</font>' });
+  if (c.script.secrets?.length) els.push({ tag: 'markdown', content: c.script.secretsOptional ? '<font color="grey">这个应用的密钥可以只填一部分，也可以先不填：点「设置密钥」，Amber 会私聊你填写。</font>' : '<font color="grey">这个应用需要密钥：先点「设置密钥」，Amber 会私聊你填写，再试运行。</font>' });
   const buttons: unknown[] = [];
   if (trial?.blocks) buttons.push(btn('提交审核', { a: 'claim_submit', c: c.id }, 'primary'));
   // Secrets are typed in the clicker's private chat with Amber, never on this card (D48).

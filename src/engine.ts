@@ -53,9 +53,9 @@ export const LARK_AUTH_HINT = '私聊 Amber 发「授权飞书」';
 export function secretVault(): SecretVault | undefined { return VAULT; }
 
 /** Declared secret names that have no value yet (all of them when no vault is configured). */
-export function missingSecrets(c: { chatId: string; name: string; line?: string; script: { secrets?: string[] } }): string[] {
+export function missingSecrets(c: { chatId: string; name: string; line?: string; script: { secrets?: string[]; secretsOptional?: boolean } }): string[] {
   const names = c.script.secrets ?? [];
-  if (!names.length) return [];
+  if (!names.length || c.script.secretsOptional) return [];
   if (!VAULT) return names;
   return VAULT.info(lineOf(c), names).filter(i => !i.set).map(i => i.name);
 }
@@ -189,11 +189,13 @@ export async function runCommand(store: Store, cmd: CommandRow, rawArgs: Record<
     if (missing.length) throw new AmberError('missing_config', opts.trial ? `试运行需要填写配置项：${missing.join('、')}` : missingConfigMessage(missing));
     config = await validateArgs(configParams(cmd.params), raw);
   }
-  // Command secrets (D48): all declared names must be set before anything runs.
+  // Command secrets (D48): all declared names must be set before anything runs — unless the app says they may be
+  // set in part (secretsOptional): then it gets those that are set.
   let secrets: Record<string, string> | undefined;
   if (script.secrets?.length) {
     if (!VAULT) throw new AmberError('no_vault', '密钥存储不可用');
-    const got = VAULT.values(lineOf(cmd), script.secrets);
+    const names = script.secretsOptional ? VAULT.info(lineOf(cmd), script.secrets).filter(i => i.set).map(i => i.name) : script.secrets;
+    const got = VAULT.values(lineOf(cmd), names);
     if ('missing' in got) throw new AmberError('missing_secret', `还没设置密钥：${got.missing.join('、')}。请应用创建人或管理员先设置（私聊 Amber 发「设置密钥 ${cmd.name}」，或在网站的应用页面设置）`);
     secrets = got.values;
   }
