@@ -201,9 +201,10 @@ export class AmberBot {
     if (!c) throw new AmberError('not_found', '应用不存在');
     await this.checkSecretEditor(c, caller.unionId);
     if (a === 'sec_form') {
-      if (caller.chatType === 'p2p') return { card: { type: 'raw', data: this.footed(this.secretCard(c)) } };
+      // A draft's form comes from its claim card: send it as a new message so the claim card (试运行 / 提交审核) stays.
+      if (caller.chatType === 'p2p' && c.status !== 'draft') return { card: { type: 'raw', data: this.footed(this.secretCard(c)) } };
       await this.flow.send({ unionId: caller.unionId }, this.secretCard(c));
-      return { toast: { type: 'info', content: '已私聊你填写密钥' } };
+      return { toast: { type: 'info', content: caller.chatType === 'p2p' ? '密钥表单已发在下面，填好后回到认领卡试运行' : '已私聊你填写密钥' } };
     }
     // sec_save: only from the private chat, only declared names, empty = unchanged.
     if (caller.chatType !== 'p2p') throw new AmberError('p2p_only', '密钥只能在和 Amber 的私聊里填写');
