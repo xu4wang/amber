@@ -86,6 +86,7 @@ Amber 是**琥珀**。琥珀把一瞬间的东西封存起来，过很多年取�
 | [触发器](docs/triggers.md) | 某件事发生时私聊通知你，或在群里 @机器人让 agent 接着处理 |
 | [以你本人的飞书身份运行](docs/lark-identity.md) | 读自己的妙记、群消息，写自己的文档；怎么授权飞书 |
 | [应用的分享](docs/sharing.md) | 四种分享方式的区别和怎么选 |
+| [示例应用](docs/samples.md) | 仓库 [`samples/`](samples/) 里的天气、密钥保管箱、群聊日报：怎么安装、怎么用 |
 | [常见问题](docs/faq.md) | 使用中的常见疑问 |
 | [审核指南](docs/review.md) · [管理员手册](docs/admin.md) | 给审核人和管理员 |
 | [安装与部署](docs/install.md) | 环境要求、配置文件、launchd 常驻、nginx、运维 |

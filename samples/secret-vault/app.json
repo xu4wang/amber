@@ -1,0 +1,37 @@
+{
+  "name": "密钥保管箱",
+  "description": "存放最多 10 个密码（KEY1–KEY10），在「说明」配置项里写明各是什么。需要时让自己的 agent 用 amber secret get 取到它所在机器的文件里，每次都由你在私聊确认卡上允许；值不经过聊天。执行本应用只显示说明和哪些 KEY 已填，从不显示值。",
+  "params": [
+    {
+      "name": "note",
+      "label": "说明（各 KEY 是什么）",
+      "type": "string",
+      "scope": "config",
+      "maxLength": 1000
+    }
+  ],
+  "script": {
+    "kind": "script",
+    "lang": "python",
+    "network": false,
+    "timeoutMs": 15000,
+    "secrets": [
+      "KEY1",
+      "KEY2",
+      "KEY3",
+      "KEY4",
+      "KEY5",
+      "KEY6",
+      "KEY7",
+      "KEY8",
+      "KEY9",
+      "KEY10"
+    ],
+    "secretsOptional": true,
+    "codeFile": "app.py"
+  },
+  "options": {
+    "confirm": false,
+    "schedulable": false
+  }
+}

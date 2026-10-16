@@ -64,7 +64,8 @@ amber schedule list
 amber schedule pause <编号>                  立即暂停
 amber schedule resume <编号>                 恢复，需要创建人在卡片上确认
 amber schedule delete <编号>                 删除，需要创建人在卡片上确认
-amber submit draft.json                      提交新应用草稿（同名即新版本）
+amber submit draft.json                      提交新应用草稿（同名即新版本）；文件里可以不写会话和认领人（用当前会话和 --user），
+                                             代码可以放在单独文件里（"codeFile": "app.py"），比如 amber submit samples/weather/app.json --user 邮箱
 amber retire <应用>                          下线应用，需要创建人或管理员在卡片上确认
 amber global <应用>                          设为全局，需要管理员在卡片上确认
 amber local <应用>                           取消全局，需要管理员在卡片上确认
