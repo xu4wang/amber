@@ -29,6 +29,9 @@ export interface Script {
   /** Runs as the person who runs it on Feishu (D54): the run gets that person's user_access_token on stdin, for lark-cli
    *  or the Feishu OpenAPI. Reviewed with the code. No internet: the network reaches Feishu only. */
   larkUser?: boolean;
+  /** The output may be handed to the agent that asked (`amber read`), after the person it runs as allows it on a card in
+   *  their private chat with Amber (or has allowed that agent for a while). Reviewed with the code: it should only read. */
+  toAgent?: boolean;
 }
 
 /** Splits script.env into executor and environment names. */
@@ -124,6 +127,8 @@ export function validateScript(s: unknown): Script {
     if (larkUser && x.network) throw new Error('以执行人飞书身份运行的脚本不能开放外网（令牌只能在飞书上用）');
     // Executors merge their environment's own allow list into the run's; v1 keeps the token on Amber's machine.
     if (larkUser && env) throw new Error('以执行人飞书身份运行的脚本目前只能在 Amber 本机运行，不能指定 env');
+    if (x.toAgent !== undefined && x.toAgent !== true && x.toAgent !== false) throw new Error('toAgent 只能写 true 或 false');
+    const toAgent = x.toAgent === true;
     if (x.sandbox !== undefined) throw new Error('应用不再声明 sandbox：能访问哪些文件由运行环境决定。需要访问数据时，用 env 选择一个运行环境');
     let interpreter: string | undefined;
     if (x.interpreter !== undefined) {
@@ -132,7 +137,7 @@ export function validateScript(s: unknown): Script {
       if (!/\/python(3(\.\d+)?)?$/.test(p)) throw new Error('interpreter 只能是 Python 解释器（路径以 python、python3 或 python3.x 结尾）');
       interpreter = String(x.interpreter).trim();
     }
-    return { kind: 'script', lang: 'python', code: x.code, network: !!x.network, ...(declared ? { services } : {}), ...(timeoutMs ? { timeoutMs } : {}), ...(secrets.length ? { secrets } : {}), ...(secretsOptional ? { secretsOptional } : {}), ...(interpreter ? { interpreter } : {}), ...(env ? { env } : {}), ...(larkUser ? { larkUser } : {}) };
+    return { kind: 'script', lang: 'python', code: x.code, network: !!x.network, ...(declared ? { services } : {}), ...(timeoutMs ? { timeoutMs } : {}), ...(secrets.length ? { secrets } : {}), ...(secretsOptional ? { secretsOptional } : {}), ...(interpreter ? { interpreter } : {}), ...(env ? { env } : {}), ...(larkUser ? { larkUser } : {}), ...(toAgent ? { toAgent } : {}) };
   }
   throw new Error('脚本类型只能是 script');
 }

@@ -36,6 +36,13 @@ usage:
                                                read one secret of --user's app into FILE (mode 600); --user is
                                                the app's creator and allows it on a card in their private chat,
                                                every time. The value is never printed. Waits up to 300 s.
+  amber read <command> [name=value ...] [--out FILE] [--session ID] [--timeout SECONDS]
+                                               run a command that hands its output to the agent (toAgent) as --user
+                                               and print the output (or write it to FILE, mode 600). Only in --user's
+                                               private chat with you; they allow it on a card in their private chat
+                                               with Amber, once or for this agent session for a while (the session id
+                                               is --session, else $CLAUDE_CODE_SESSION_ID / $CODEX_THREAD_ID).
+                                               Waits up to 600 s.
   amber envs [--mine]                          approved run environments to name in script.env ("executor/env");
                                                --mine: only those exported from this bot ($BOTMUX_LARK_APP_ID)
   amber info                                   the Amber service this machine uses, and its website
@@ -101,7 +108,7 @@ def call(method, path, body=None, timeout=150):
 
 def parse(argv):
     opts, pos, args = {}, [], {}
-    flags = {"--chat", "--chat-type", "--user", "--reply-to", "--label", "--at", "--tz", "--timeout", "--name", "--on", "--app", "--to", "--mention", "--out"}
+    flags = {"--chat", "--chat-type", "--user", "--reply-to", "--label", "--at", "--tz", "--timeout", "--name", "--on", "--app", "--to", "--mention", "--out", "--session"}
     i = 0
     while i < len(argv):
         a = argv[i]
@@ -168,12 +175,12 @@ def _hkdf(ikm, salt, info, n):
     return out[:n]
 
 
-def open_box(priv, box):
+def open_box(priv, box, info=b"amber-secret-read/1"):
     epk, nonce, ct, tag = (base64.b64decode(box[k]) for k in ("epk", "nonce", "ct", "tag"))
-    keys = _hkdf(_x25519(priv, epk), nonce, b"amber-secret-read/1", 64)
+    keys = _hkdf(_x25519(priv, epk), nonce, info, 64)
     enc, mac = keys[:32], keys[32:]
     if not hmac.compare_digest(hmac.new(mac, epk + nonce + ct, hashlib.sha256).digest(), tag):
-        raise SystemExit("amber: 收到的密钥校验失败（被改动过或不是给这次请求的），没有写入")
+        raise SystemExit("amber: 收到的内容校验失败（被改动过或不是给这次请求的），已丢弃")
     ks = b""
     i = 0
     while len(ks) < len(ct):
@@ -213,24 +220,88 @@ def secret_get(opts, pos, ctx):
     if not f.get("ok"):
         return out(f, opts)
     value = open_box(priv, f["box"])
+    write_private(path, value, opts.get("force"))
+    print("已写入 %s（%d 字节，权限 600）。值没有打印。" % (path, len(value)))
+    return 0
+
+
+def write_private(path, data, force):
+    """Writes data to path with mode 600, never replacing a file unless force."""
     d = os.path.dirname(path)
     os.makedirs(d, exist_ok=True)
     tmp = os.path.join(d, ".%s.%d.tmp" % (os.path.basename(path), os.getpid()))
     try:
         fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
         with os.fdopen(fd, "wb") as fh:
-            fh.write(value)
-        if opts.get("force"):
+            fh.write(data)
+        if force:
             os.replace(tmp, path)
         else:
             try:
                 os.link(tmp, path)   # never replaces a file that appeared meanwhile
             except FileExistsError:
-                raise SystemExit("amber: %s 已存在；要覆盖请加 --force（这次取到的值已丢弃，需要时重新发起）" % path)
+                raise SystemExit("amber: %s 已存在；要覆盖请加 --force" % path)
     finally:
         if os.path.exists(tmp):
             os.unlink(tmp)
-    print("已写入 %s（%d 字节，权限 600）。值没有打印。" % (path, len(value)))
+
+
+def agent_session(opts):
+    """The agent's own session id (Claude Code or Codex set it for the commands they run); a grant covers it only."""
+    for v in (opts.get("session"), os.environ.get("CLAUDE_CODE_SESSION_ID"), os.environ.get("CODEX_THREAD_ID"), os.environ.get("CODEX_SESSION_ID")):
+        if v and v.strip():
+            return v.strip()[:80]
+    return None
+
+
+# --- amber read: a toAgent command's output, sealed to a key pair made for this one request ---
+def agent_read(opts, pos, args, ctx):
+    if len(pos) < 2:
+        raise Usage()
+    if not ctx.get("user"):
+        raise SystemExit("amber: 要用 --user 写数据主人的邮箱：以他的身份执行，确认卡发给他")
+    path = os.path.abspath(opts["out"]) if opts.get("out") else None
+    if path and os.path.exists(path) and not opts.get("force"):
+        raise SystemExit("amber: %s 已存在；要覆盖请加 --force" % path)
+    priv = os.urandom(32)
+    pub = base64.b64encode(_x25519(priv, (9).to_bytes(32, "little"))).decode()
+    body = dict(ctx, command=pos[1], args=args, publicKey=pub)
+    session = agent_session(opts)
+    if session:
+        body["session"] = session
+    r = call("POST", "/v1/reads", body)
+    if not r.get("ok"):
+        return out(r, opts)
+    rid = r["requestId"]
+    if r.get("mode") == "confirm_card":
+        print("已私聊 %s 发出确认卡（请求 %s），等对方允许……" % (ctx["user"], rid), file=sys.stderr)
+    deadline = time.time() + float(opts.get("timeout") or 600)
+    while True:
+        r = call("GET", "/v1/requests/%s?wait=%d" % (rid, max(1, min(50, int(deadline - time.time())))), timeout=70)
+        if not r.get("ok") or r.get("status") not in ("awaiting", "running") or time.time() >= deadline:
+            break
+    if not r.get("ok"):
+        return out(r, opts)
+    st = r.get("status")
+    if st != "done":
+        print({"awaiting": "等不到确认（超时）。私钥只在这个进程里，请重新运行这条命令。", "running": "还在执行（超时）。私钥只在这个进程里，结果取不回了，请稍后重新运行。",
+               "canceled": "对方拒绝了。", "expired": "请求已过期（10 分钟）。"}.get(st, "失败：%s" % (r.get("error") or st)), file=sys.stderr)
+        return 3 if st in ("awaiting", "running") else 1
+    f = call("POST", "/v1/reads/fetch", {"requestId": rid})
+    if not f.get("ok"):
+        return out(f, opts)
+    res = json.loads(open_box(priv, f["box"], b"amber-agent-read/1").decode("utf-8"))
+    if not res.get("ok"):
+        print("执行失败：%s" % res.get("error"), file=sys.stderr)
+        return 1
+    text = res.get("markdown") or ""
+    if path:
+        write_private(path, text.encode("utf-8"), opts.get("force"))
+        print("已写入 %s（%d 字节，权限 600）。" % (path, len(text.encode("utf-8"))))
+    elif opts.get("json"):
+        print(json.dumps(res, ensure_ascii=False, indent=2))
+    else:
+        print(text)
     return 0
 
 
@@ -365,6 +436,8 @@ def main(argv):
     ctx = context(opts)
     if cmd == "secret":
         return secret_get(opts, pos, ctx)
+    if cmd == "read":
+        return agent_read(opts, pos, args, ctx)
     if cmd == "page":
         if len(pos) < 3 or pos[1] != "publish":
             raise Usage()

@@ -77,6 +77,8 @@ amber trigger list                           --user 的触发器
 amber secret get <应用> <密钥名> --out 文件    把 --user 某个应用的一个密钥写进本机文件（600），值不打印；
                                              每次都要创建人在私聊卡片上允许，见下面「读取密钥」
 amber trigger pause <编号>                   立即暂停（恢复、删除在网站上做）
+amber read <应用> [参数名=值 ...] [--out 文件]  以 --user 的身份执行声明了 toAgent 的应用，把结果打印出来（或写进文件）；
+                                             只能在 --user 和 agent 的私聊里用，他在私聊卡片上允许，见下面「读取个人数据」
 amber info                                   本机连的 Amber 服务、网站地址
 amber config set-url <地址>                  设置本机的 Amber 服务地址
 ```
@@ -185,6 +187,8 @@ amber trigger add --on run.failed --app 注册商户数 --user zhangsan@example.
 | POST | `/v1/triggers/list` | 无，必须带 `user` |
 | POST | `/v1/triggers/<编号>/pause` | 无，必须带 `user` |
 | POST | `/v1/pages` | `name`、`files`（`[{"path": "index.html", "data": "<base64>"}, …]`），必须带 `user`；请求体最大 16MB |
+| POST | `/v1/reads` | `command`、`args`、`publicKey`（32 字节 X25519 公钥的 base64）、`session`（可选，agent 的会话编号），必须带 `user`，`chatType` 必须是 `p2p` |
+| POST | `/v1/reads/fetch` | `requestId`（不带会话上下文）：取回加密的结果，只能取一次，必须由发起请求的机器来取 |
 | GET | `/v1/info` | 无，返回网站地址 `webUrl` 和本机名字 |
 | GET | `/v1/keys` | 无，返回公钥，见 [identity.md](identity.md) |
 
@@ -201,4 +205,23 @@ amber secret get 密钥保管箱 KEY1 --user 用户邮箱 --out ./secrets/gitlab
 - 只能取一次；必须由发起请求的那台机器来取；命令最多等 300 秒（`--timeout` 可改），等不到就重新运行（私钥只在那个进程里）。
 - 审计记录谁允许、哪台机器、读了哪个应用的哪个密钥，不记值。
 - 想知道哪个密钥是什么：`amber show <应用>` 会列出配置项，比如保管箱的「说明」。
+
+## 读取个人数据
+
+共用的 agent 只有机器人的身份，读不到某个人的私聊、邮件这类个人数据；而以本人飞书身份运行的应用，结果平时只显示在飞书卡片上，不交给 agent（见上面「三档行为」）。声明了「结果可以交给 agent」（`"toAgent": true`）的应用是例外：agent 可以用 `amber read` 以用户的身份执行它，拿回结果接着处理。示例见[我的飞书数据](samples.md#我的飞书数据)。
+
+```text
+amber read 我的飞书数据 op=搜邮件 q=合同 --user 用户邮箱
+```
+
+- **只在私聊里**：只能在用户和 agent 的私聊里发起（`--chat-type p2p`），群里发起会被拒绝。数据读出来后会进入 agent 的对话，在群里就等于给了群里的每个人。
+- **用户确认**：Amber 私聊 `--user` 发一张确认卡，写明哪台机器、哪个 agent（`--label`）、哪个会话、执行哪个应用、参数是什么。他可以：
+  - **允许本次**：执行一次。
+  - **允许一段时间**：在卡上选 30 分钟、2 小时（默认）、8 小时或 24 小时。期间**同一个 agent 会话**（同一台机器、同名 agent、同一个私聊、同一个会话编号）用这个应用读取不再询问。确认后的卡片上有「撤销授权」按钮；Amber 重启时授权也会结束。
+  - **拒绝**。
+  确认卡 10 分钟内有效，只有 `--user` 本人能点。
+- **会话编号**：命令行自动带上 agent 的会话编号，依次取 `--session`、`$CLAUDE_CODE_SESSION_ID`（Claude Code）、`$CODEX_THREAD_ID` / `$CODEX_SESSION_ID`（Codex）。都没有时，授权按「机器 + agent 名 + 私聊」绑定，卡片上会注明。机器由 Amber 按来源 IP 判断；私聊编号、agent 名和会话编号都是 agent 自己报的（Amber 核实不了），卡片上都会列出来。所以「只在私聊里」防的是 agent 用错地方，防不了故意谎报的 agent；授权只放宽「不用每次点」，不放宽「读什么」：读什么由审核过的应用代码决定。只对你信任的 agent 选「允许一段时间」。
+- **加密回传**：命令行为这次请求临时生成一对 X25519 密钥，只把公钥交给 Amber。执行完，Amber 把结果加密后放 10 分钟，只有发起请求的那台机器能取、只能取一次、只有这个进程能解开。结果打印到标准输出，或用 `--out` 写进文件（权限 600）。命令最多等 600 秒（`--timeout` 可改）。
+- **记录**：每次执行都在用户自己的运行记录里（网站上可查）；审计记录谁允许、授权多久、哪台机器、哪个会话、每次读取，不记结果内容。每人 10 分钟内最多读取 30 次。
+- **应用要求**：只有草稿里声明了 `"toAgent": true` 并通过审核的应用能这样读，审核文档会醒目标出。这类应用应当只读，输出只包含完成任务需要的内容。
 
