@@ -226,7 +226,11 @@ function vegaLiteToChart(src: string): unknown[] | null {
   const ex = spec?.encoding?.x?.field, ey = spec?.encoding?.y?.field;
   if (!Array.isArray(values) || values.length === 0 || values.length > 500 || !ex || !ey) return null;
   if (mark !== 'bar' && mark !== 'line') return null;
-  const clean = values.map(v => ({ [ex]: v[ex], [ey]: v[ey] }));
+  // color = one series per value (a legend and its own colour). Bars of different series sit side by side in
+  // each category (grouped), not stacked: a stack would add up things like "used" and "time gone".
+  const cf = spec?.encoding?.color?.field;
+  const series = typeof cf === 'string' && cf && cf !== ex && cf !== ey ? cf : undefined;
+  const clean = values.map(v => ({ [ex]: v[ex], [ey]: v[ey], ...(series ? { [series]: v[series] } : {}) }));
   const horizontal = mark === 'bar' && spec.encoding.x.type === 'quantitative' && spec.encoding.y.type !== 'quantitative';
   const out: unknown[] = [];
   if (title) out.push({ tag: 'markdown', content: `**${sanitizeMarkdown(String(title), 80)}**` });
@@ -237,13 +241,16 @@ function vegaLiteToChart(src: string): unknown[] | null {
       type: mark,
       ...(horizontal ? { direction: 'horizontal' } : {}),
       data: { values: clean },
-      xField: ex,
-      yField: ey,
+      // Grouped bars: the category axis field becomes [category, series].
+      xField: series && mark === 'bar' && !horizontal ? [ex, series] : ex,
+      yField: series && mark === 'bar' && horizontal ? [ey, series] : ey,
+      ...(series ? { seriesField: series, legends: { visible: true, orient: 'top' } } : {}),
       label: { visible: true },
-      // Axis titles carry the units (vega-lite encoding.*.title, falling back to the field name).
+      // Axis titles carry the units (vega-lite encoding.*.title, falling back to the field name): encoding.y's
+      // title goes on the vertical (left) axis and encoding.x's on the horizontal (bottom) one, whichever is the value.
       axes: [
-        { orient: horizontal ? 'bottom' : 'left', title: { visible: true, text: String(spec.encoding.y.title ?? ey) } },
-        { orient: horizontal ? 'left' : 'bottom', title: { visible: true, text: String(spec.encoding.x.title ?? ex) } },
+        { orient: 'left', title: { visible: true, text: String(spec.encoding.y.title ?? ey) } },
+        { orient: 'bottom', title: { visible: true, text: String(spec.encoding.x.title ?? ex) } },
       ],
     },
   });
