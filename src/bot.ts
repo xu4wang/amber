@@ -1064,6 +1064,11 @@ export class AmberBot {
       if (value.a === 'req_ok' || value.a === 'req_no') {
         return raw(await this.agent.onClick(value.a === 'req_ok', String(value.r), caller, chatId, messageId));
       }
+      // `amber read`: allow for the time picked on the card, or end such a grant early.
+      if (value.a === 'ar_hours') {
+        return raw(await this.agent.onClick(true, String(value.r), caller, chatId, messageId, { hours: String(d.action?.form_value?.hours ?? '') }));
+      }
+      if (value.a === 'ar_revoke') return raw(this.agent.revokeGrant(String(value.g), caller));
       if (value.a === 'rs_ok' || value.a === 'rs_no') return raw(await this.onReassignClick(value, caller));
       if (value.a === 'pg_open') return await this.pageLink(String(value.p), caller);
       if (value.a === 'tg_ok' || value.a === 'tg_no') return raw(this.triggers.onClick(value.a === 'tg_ok', String(value.t), caller));

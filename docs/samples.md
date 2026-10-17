@@ -1,12 +1,13 @@
 # 示例应用
 
-仓库的 [`samples/`](https://github.com/xu4wang/amber/tree/main/samples) 目录里有三个完整的示例应用，都是线上实际在用的版本。可以直接装来用，也可以当作让 agent 写新应用时的参考：
+仓库的 [`samples/`](https://github.com/xu4wang/amber/tree/main/samples) 目录里有四个完整的示例应用，都是线上实际在用的版本。可以直接装来用，也可以当作让 agent 写新应用时的参考：
 
 | 示例 | 目录 | 演示了什么 |
 |---|---|---|
 | 天气 | `samples/weather/` | 参数、默认用执行人的办公城市、访问外网、输出图表 |
 | 密钥保管箱 | `samples/secret-vault/` | 密钥（可以只填一部分）、配置项、agent 经你确认后读取密钥 |
 | 群聊日报 | `samples/chat-digest/` | 以执行人本人的飞书身份运行、内置大模型服务、定时任务 |
+| 我的飞书数据 | `samples/my-lark-data/` | 结果交给 agent（`amber read`）：agent 经你确认后读你的消息、邮件、文档 |
 
 每个目录里有两个文件：
 
@@ -69,3 +70,19 @@ amber submit ~/amber/samples/weather/app.json --user 你的邮箱
 - **用法**：手动执行一次大约 1–3 分钟；更常见的是在网站「定时」页建一个每天的定时任务，比如 `工作日 09:00`，以你的身份自动跑，结果私聊发你。每个人建自己的，互不影响。
 - **隐私**：消息会发给大模型服务商（不保存会话）；文档只在你自己的云空间、关闭了链接分享。
 - **可以学到**：`"larkUser": true` 以执行人身份调用 lark-cli；`"services": {"llm": {"calls": 7}}` 调用大模型，内容多时分批、再汇总；整理后不到 12 万字一次处理；拉取失败时在结果里给出原因。
+
+## 我的飞书数据
+
+`samples/my-lark-data/`：让你自己的 agent 以**你本人的飞书身份**、只读地取你的飞书数据，拿回去接着处理。比如对 agent 说「看看我这周和张三的私聊里答应了什么」「把合同那封邮件的要点整理一下」。
+
+- **装法**：管理员可以把它设为全局应用（每个人读的都是自己的数据，互不影响）；也可以装在你自己的私聊里。
+- **前提**（管理员）：Amber 的飞书应用开通了这些用户身份权限：`im:chat:read`、`im:message:readonly`、`im:message.group_msg:get_as_user`、`im:message.p2p_msg:get_as_user`、`search:message`（搜消息）、`mail:user_mailbox.message:readonly`、`mail:user_mailbox.message.subject:read`、`mail:user_mailbox.message.address:read`、`mail:user_mailbox.message.body:read`（邮件）、`docx:document:readonly`（文档）。新开通权限后，已授权过的人要重新发一次「授权飞书」。
+- **你自己**：授权飞书一次（私聊 Amber 发 `授权飞书`）。
+- **参数**：
+  - 操作：`搜消息`、`会话记录`、`找会话`、`搜邮件`、`读邮件`、`读文档`。
+  - 内容：搜消息、搜邮件时写关键词；会话记录写群的 `oc_…` 或私聊对方的 `ou_…`（先用「找会话」查）；读邮件写邮件 id（先用「搜邮件」查）；读文档写文档链接。
+  - 回看小时数（搜消息、会话记录，默认 24，最多 720）；最多条数（默认 30，最多 100）。
+- **用法**：agent 在和你的私聊里运行，比如 `amber read 我的飞书数据 op=搜邮件 q=合同 --user 你的邮箱`。Amber 私聊你发确认卡，你选「允许本次」或「允许一段时间」（这个 agent 会话在选定时长内不再询问）。结果加密交给 agent，见[读取个人数据](cli-and-skill.md#读取个人数据)。在飞书或网站上执行也可以，结果只显示给你自己。
+- **只读**：只调用搜索、列表、读取类的命令，不发消息、不改文档、不动邮件。输出最多约 6 万字，超出截断并注明；单条消息、邮件摘要过长时截断。
+- **可以学到**：`"toAgent": true` 把结果交给 agent；一个应用用「操作」参数提供几种只读查询；对 lark-cli 输出做容错解析。
+

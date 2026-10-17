@@ -137,6 +137,7 @@ print(r.stdout)
 - 执行人就是这次运行的人（见[可信身份](identity.md)第 1 节），定时任务以创建人的身份执行。agent 入口不代表任何人，不能执行这类应用。
 - 网络只能到飞书（`*.feishu.cn` 等），不能和 `"network": true` 一起用。目前只能在 Amber 本机运行，不能和 `env` 一起用。
 - 令牌不要打印，打印出来也会被遮成 `***`。不要把它写进文件或发到别处：审核时会逐条看脚本以执行人的身份做了什么。
+- 想让 agent 拿到结果接着处理（比如读用户的邮件再总结），在 `script` 里再写 `"toAgent": true`：agent 用 `amber read` 发起，执行人在私聊卡片上允许后以他的身份执行，输出加密交给那个 agent。这类应用要只读，见[读取个人数据](cli-and-skill.md#读取个人数据)。
 
 ## 草稿格式
 
@@ -160,7 +161,7 @@ print(r.stdout)
 | 参数类型 | `string`（可加 `maxLength`、`pattern`）或 `integer`（可加 `min`、`max`）；`"defaultFrom": "caller.city"` 表示不填时用执行人的办公城市 |
 | `"scope": "config"` | 配置项：值由创建人在网站上设置，执行人传不进来；不能用 `defaultFrom`，不要放机密 |
 | `script.kind` | 只能是 `script`；不要写 `sandbox` 字段（会被拒绝） |
-| `script.env`、`script.interpreter`、`script.secrets`、`script.network`、`script.services`、`script.larkUser` | 见上文 |
+| `script.env`、`script.interpreter`、`script.secrets`、`script.network`、`script.services`、`script.larkUser`、`script.toAgent` | 见上文 |
 | `options.confirm` | 执行前必须确认，会改数据、有风险时打开 |
 | `options.schedulable` | 允许定时执行，不写时默认 `true` |
 

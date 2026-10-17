@@ -7,6 +7,8 @@
 import { createHmac, createPublicKey, diffieHellman, generateKeyPairSync, hkdfSync, randomBytes } from 'node:crypto';
 
 const INFO = 'amber-secret-read/1';
+/** `amber read`: an app's output for the agent that asked. */
+export const READ_INFO = 'amber-agent-read/1';
 
 export interface SealedBox { epk: string; nonce: string; ct: string; tag: string }
 
@@ -27,13 +29,14 @@ function keystream(key: Buffer, nonce: Buffer, n: number): Buffer {
   return Buffer.concat(out).subarray(0, n);
 }
 
-export function seal(publicKeyB64: string, plaintext: Buffer): SealedBox {
+/** info: what the box is for, so a box made for one purpose never opens as another. */
+export function seal(publicKeyB64: string, plaintext: Buffer, info: string = INFO): SealedBox {
   const peer = createPublicKey({ key: { kty: 'OKP', crv: 'X25519', x: Buffer.from(publicKeyB64, 'base64').toString('base64url') }, format: 'jwk' });
   const eph = generateKeyPairSync('x25519');
   const epk = Buffer.from(eph.publicKey.export({ format: 'jwk' }).x!, 'base64url');
   const shared = diffieHellman({ privateKey: eph.privateKey, publicKey: peer });
   const nonce = randomBytes(16);
-  const keys = Buffer.from(hkdfSync('sha256', shared, nonce, INFO, 64));
+  const keys = Buffer.from(hkdfSync('sha256', shared, nonce, info, 64));
   const encKey = keys.subarray(0, 32), macKey = keys.subarray(32);
   const ks = keystream(encKey, nonce, plaintext.length);
   const ct = Buffer.alloc(plaintext.length);

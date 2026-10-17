@@ -5,12 +5,13 @@
 //   2. commands that need no identity (no services, no confirm) — run directly as "agent@machine";
 //   3. anything else (needs a person's identity, confirm, schedules) — Amber posts a confirmation
 //      card in the chat; whoever clicks it is the identity, taken from the Feishu event.
+import { randomUUID } from 'node:crypto';
 import type { Store, CommandRow, RequestRow, RequestKind, ScopeType } from './db.ts';
 import type { Caller, Block } from './engine.ts';
 import { ENV_NOT_GLOBAL, visibleCommands, findVisible, findManageable, runCommand, validateArgs, AmberError, missingSecrets, secretVault, lineOf, runParams, configParams, configValues, missingConfig, missingConfigMessage } from './engine.ts';
 import type { Signer } from './identity.ts';
-import { checkPublicKey, seal, type SealedBox } from './secret-box.ts';
-import { requestCard, runningCard, resultCard, errorCard, closedCard, person, sanitizeMarkdown, type Mentions } from './cards.ts';
+import { checkPublicKey, seal, READ_INFO, type SealedBox } from './secret-box.ts';
+import { requestCard, agentReadDoneCard, runningCard, resultCard, errorCard, closedCard, person, sanitizeMarkdown, type Mentions } from './cards.ts';
 import { parseRule, validateRule, nextRun, describeRule, formatAt, defaultTz } from './schedule-rule.ts';
 import type { Scheduler } from './scheduler.ts';
 import { MAX_PER_CHAT } from './scheduler.ts';
@@ -52,6 +53,15 @@ const REQUEST_TTL_MS = 24 * 3600_000;
 /** Reading a secret: the card is good for 10 minutes, and the sealed value waits 10 minutes to be fetched. */
 const SECRET_READ_TTL_MS = 10 * 60_000;
 const REQUESTS_PER_CHAT_10MIN = 10;
+/** `amber read`: the card is good for 10 minutes, and so is the sealed result once it is ready. */
+const AGENT_READ_TTL_MS = 10 * 60_000;
+/** 「允许一段时间」: the same agent session (machine, name, chat, session id) may read with the same app without asking
+ *  again, for as long as the person picked on the card. */
+export const AGENT_READ_GRANT_HOURS = ['0.5', '2', '8', '24'];
+export const AGENT_READ_GRANT_DEFAULT = '2';
+const AGENT_READS_PER_USER_10MIN = 30;
+
+interface ReadGrant { id: string; unionId: string; commandId: string; machine: string; label: string; chatId: string; session: string; until: number }
 
 export function needsPerson(c: CommandRow): boolean {
   // Commands with secrets (D48) always need a person: an agent alone never gets to use them.
@@ -269,6 +279,130 @@ export class AgentGate {
     return closedCard('已允许读取', 'green', `${person(clicker.openId)} 允许读取「${sanitizeMarkdown(cmd.name, 40)}」的密钥 **${sanitizeMarkdown(name, 40)}**。值已加密交给机器 ${sanitizeMarkdown(req.args.machine ?? '?', 60)} 上发起请求的命令行，10 分钟内取一次有效。`);
   }
 
+  /** Sealed `amber read` results waiting for the machine that asked: in memory only, handed out once. */
+  private readBoxes = new Map<string, { machine: string; box: SealedBox; at: number }>();
+  /** 「允许 2 小时」 grants. In memory only: a restart ends them all (the safe direction). */
+  private grants = new Map<string, ReadGrant>();
+  private readTimes = new Map<string, number[]>();
+
+  /**
+   * `amber read`: run an app that declares toAgent as the person the agent works for, and hand the output to that
+   * agent — sealed to a key pair the asking client made for this request, fetched once by the same machine. The person
+   * allows it on a card in their private chat with Amber, once or for this agent for 2 hours. Only from the person's
+   * private chat with the agent: in a group the data would be in front of everyone there.
+   */
+  async agentRead(ctx: Ctx, command: string, args: Record<string, string>, publicKey: unknown, sessionId?: unknown): Promise<object> {
+    // The agent's own session (Claude Code: $CLAUDE_CODE_SESSION_ID, Codex: $CODEX_THREAD_ID): a grant covers that session only. Self-reported, like the name.
+    const session = typeof sessionId === 'string' && /^[A-Za-z0-9_.:-]{1,80}$/.test(sessionId.trim()) ? sessionId.trim() : '';
+    if (!ctx.user) throw new AmberError('user_required', '读取要用 --user 写数据主人的邮箱：以他的身份执行，确认卡发给他');
+    if (ctx.chatType !== 'p2p') throw new AmberError('forbidden', '个人数据只能在本人和机器人的私聊里读取：在群里读出来，群里的人都能看到');
+    let pub: string;
+    try { pub = checkPublicKey(publicKey); } catch (e) { throw new AmberError('bad_request', (e as Error).message); }
+    const cmd = findVisible(this.store, this.viewer(ctx), command);
+    if (!cmd.script.toAgent) throw new AmberError('forbidden', `「${cmd.name}」没有声明结果可以交给 agent（script.toAgent），不能用 amber read；用 amber run（结果只显示在飞书卡片上）`);
+    const cleanArgs = this.cleanArgs(args);
+    await precheck(this.store, cmd, cleanArgs);
+    const now = Date.now();
+    const times = (this.readTimes.get(ctx.user.unionId) ?? []).filter(t => now - t < 10 * 60_000);
+    if (times.length >= AGENT_READS_PER_USER_10MIN) throw new AmberError('rate_limited', `10 分钟内最多读取 ${AGENT_READS_PER_USER_10MIN} 次，请稍后再试`);
+    times.push(now); this.readTimes.set(ctx.user.unionId, times);
+    const extra = { args: JSON.stringify(cleanArgs), publicKey: pub, machine: ctx.machine, session };
+    const grant = this.findGrant(ctx.user.unionId, cmd.id, ctx.machine, ctx.requestedBy, ctx.chatId, session);
+    if (grant) {
+      const req = this.store.insertRequest({
+        kind: 'agent_read', commandId: cmd.id, specHash: cmd.specHash, chatId: ctx.chatId, chatType: ctx.chatType, targetUnionId: ctx.user.unionId,
+        args: extra, rule: null, scheduleId: null, requestedBy: ctx.requestedBy, replyTo: null, inThread: false,
+      });
+      this.store.transitionRequest(req.id, 'awaiting', 'running', { actorUnionId: ctx.user.unionId });
+      this.store.audit(ctx.user.unionId, 'agentread.granted', { request: req.id, grant: grant.id, command: cmd.id, name: cmd.name, machine: ctx.machine, requestedBy: ctx.requestedBy });
+      this.startRead(req, cmd, ctx.user.unionId);
+      return { mode: 'granted', requestId: req.id, status: 'running', message: `${ctx.user.email} 已允许这个 agent 读取（到 ${formatAt(grant.until, defaultTz())}），正在执行。` };
+    }
+    const req = await this.post(ctx, 'agent_read', cmd, extra, { target: ctx.user.unionId, targetOpenId: ctx.user.openId, toCreatorDm: true });
+    return { mode: 'confirm_card', requestId: req.id, status: 'awaiting', message: `已私聊 ${ctx.user.email} 发出确认卡，对方允许后执行并取回结果（10 分钟内有效）。` };
+  }
+
+  private findGrant(unionId: string, commandId: string, machine: string, label: string, chatId: string, session: string): ReadGrant | undefined {
+    const now = Date.now();
+    for (const [id, g] of this.grants) {
+      if (g.until <= now) { this.grants.delete(id); continue; }
+      if (g.unionId === unionId && g.commandId === commandId && g.machine === machine && g.label === label && g.chatId === chatId && g.session === session) return g;
+    }
+    return undefined;
+  }
+
+  /** Runs an allowed read as the person, in the background, and seals the outcome for the machine that asked. */
+  private startRead(req: RequestRow, cmd: CommandRow, unionId: string): void {
+    let args: Record<string, string> = {};
+    try { args = JSON.parse(req.args.args ?? '{}'); } catch { /* checked when the request was made */ }
+    const caller: Caller = { unionId, chatId: req.chatId, chatType: req.chatType, channel: 'agent' };
+    setTimeout(async () => {
+      let payload: object;
+      try {
+        findVisible(this.store, caller, cmd.id);
+        const r = await runCommand(this.store, cmd, args, caller, { city: () => this.deps.cityOf(unionId), signer: this.deps.signer }, { viaForm: true, asPerson: true });
+        payload = r.ok ? { ok: true, markdown: r.markdown, runId: r.runId } : { ok: false, error: r.error ?? 'failed', runId: r.runId };
+        this.store.audit(unionId, 'agentread.run', { request: req.id, runId: r.runId, ok: r.ok, command: cmd.id, machine: req.args.machine ?? null, requestedBy: req.requestedBy, bytes: r.markdown.length });
+        this.readBoxes.set(req.id, { machine: req.args.machine ?? '', box: seal(req.args.publicKey ?? '', Buffer.from(JSON.stringify(payload), 'utf8'), READ_INFO), at: Date.now() });
+        for (const [id, b] of this.readBoxes) if (Date.now() - b.at > AGENT_READ_TTL_MS) this.readBoxes.delete(id);
+        this.store.transitionRequest(req.id, 'running', 'done', { runId: r.runId });
+      } catch (e) {
+        // Reasons only (no data): not authorized on Feishu, app offline, at the run limit …
+        this.store.transitionRequest(req.id, 'running', 'failed', { error: e instanceof AmberError ? e.message : `出错了：${(e as Error).message}` });
+      }
+    }, 10);
+  }
+
+  /** The sealed result of an `amber read`, once, to the machine that asked. */
+  readFetch(ctx: { machine: string }, requestId: string): SealedBox {
+    const s = this.readBoxes.get(requestId);
+    if (!s || s.machine !== ctx.machine) throw new AmberError('not_found', '没有可取的结果（还没完成、已经取过、过期，或不是这台机器发起的）');
+    this.readBoxes.delete(requestId);
+    if (Date.now() - s.at > AGENT_READ_TTL_MS) throw new AmberError('expired', '结果已经放了超过 10 分钟，请重新发起');
+    this.store.audit(null, 'agentread.fetched', { request: requestId, machine: ctx.machine });
+    return s.box;
+  }
+
+  private async onAgentReadClick(ok: boolean, req: RequestRow, clicker: Caller, hours?: string): Promise<object> {
+    if (req.targetUnionId !== clicker.unionId) throw new AmberError('forbidden', '只有被读取数据的本人可以确认');
+    const actor = clicker.unionId;
+    if (Date.now() - req.createdAt > AGENT_READ_TTL_MS) {
+      this.store.transitionRequest(req.id, 'awaiting', 'expired');
+      return closedCard('请求已过期', 'grey', '这个读取请求已超过 10 分钟，请让 agent 重新发起。');
+    }
+    if (!ok) {
+      if (!this.store.transitionRequest(req.id, 'awaiting', 'canceled', { actorUnionId: actor })) throw new AmberError('closed', '这个请求已经处理过了');
+      this.store.audit(actor, 'request.cancel', { id: req.id });
+      return closedCard('已拒绝', 'grey', `${person(clicker.openId)} 拒绝了这次读取（${req.id}），没有执行。`);
+    }
+    const cmd = this.store.getCommand(req.commandId ?? '');
+    if (!cmd || cmd.status !== 'active' || cmd.specHash !== req.specHash) {
+      this.store.transitionRequest(req.id, 'awaiting', 'failed', { error: 'command_changed' });
+      return closedCard('没有执行', 'grey', '应用在请求之后已下线或换了新版本，请让 agent 重新发起。');
+    }
+    if (!this.store.transitionRequest(req.id, 'awaiting', 'running', { actorUnionId: actor })) throw new AmberError('closed', '这个请求已经处理过了');
+    let grant: ReadGrant | undefined;
+    if (hours !== undefined) {
+      const h = AGENT_READ_GRANT_HOURS.includes(hours) ? Number(hours) : Number(AGENT_READ_GRANT_DEFAULT);
+      grant = { id: randomUUID().slice(0, 8), unionId: actor, commandId: cmd.id, machine: req.args.machine ?? '', label: req.requestedBy, chatId: req.chatId, session: req.args.session ?? '', until: Date.now() + h * 3600_000 };
+      this.grants.set(grant.id, grant);
+      this.store.audit(actor, 'agentread.grant', { grant: grant.id, request: req.id, command: cmd.id, name: cmd.name, machine: grant.machine, requestedBy: grant.label, chatId: grant.chatId, session: grant.session || null, until: grant.until });
+    }
+    this.store.audit(actor, 'agentread.allow', { request: req.id, command: cmd.id, name: cmd.name, machine: req.args.machine ?? null, requestedBy: req.requestedBy });
+    this.startRead(req, cmd, actor);
+    return agentReadDoneCard({ name: cmd.name, clickerOpenId: clicker.openId, machine: req.args.machine ?? '?', requestedBy: req.requestedBy, reqId: req.id, grant: grant ? { id: grant.id, until: grant.until, session: grant.session } : undefined });
+  }
+
+  /** The person ends a 「允许 2 小时」 early, from the button on that card. */
+  revokeGrant(id: string, clicker: Caller): object {
+    const g = this.grants.get(id);
+    if (g && g.unionId !== clicker.unionId) throw new AmberError('forbidden', '只有授权的本人可以撤销');
+    const had = !!g && g.until > Date.now();
+    this.grants.delete(id);
+    if (had) this.store.audit(clicker.unionId, 'agentread.revoke', { grant: id });
+    return closedCard('已撤销授权', 'grey', had ? `授权 ${id} 已撤销：这个 agent 之后读取要重新确认。` : `授权 ${id} 已经到期或撤销过了。`);
+  }
+
   private cleanArgs(args: unknown): Record<string, string> {
     const out: Record<string, string> = {};
     if (args && typeof args === 'object') for (const [k, v] of Object.entries(args)) if (v !== undefined && v !== null) out[k] = String(v).slice(0, 2000);
@@ -287,7 +421,7 @@ export class AgentGate {
     const card = requestCard({
       kind, reqId: req.id, cmd, args, requestedBy: ctx.requestedBy, targetOpenId: o.targetOpenId ?? ctx.user?.openId,
       ruleText: rule ? describeRule(rule) : undefined, nextText: rule ? formatAt(nextRun(rule, Date.now()), rule.tz) : undefined, scheduleId: o.scheduleId,
-      schedules: o.schedules, machine: args.machine,
+      schedules: o.schedules, machine: args.machine, session: kind === 'agent_read' ? args.session : undefined, chatId: ctx.chatId,
     });
     // p2p: Amber cannot post into the agent's private chat, so the card goes to the person's chat with Amber.
     const to = ctx.chatType === 'p2p' || o.toCreatorDm ? { unionId: target! } : ctx.replyTo ? { replyTo: ctx.replyTo, inThread: ctx.inThread } : { chatId: ctx.chatId };
@@ -367,7 +501,7 @@ export class AgentGate {
       requestId: r.id, kind: r.kind, status: r.status, scheduleId: r.scheduleId, error: r.error,
       // The output of a confirmed run belongs to the person who clicked: it is shown on the card in
       // Feishu (and on the website), never handed back to the agent. Only the outcome is.
-      ...(run ? { runStatus: run.status, resultIn: 'feishu_card' } : {}),
+      ...(run ? { runStatus: run.status, resultIn: r.kind === 'agent_read' ? 'sealed' : 'feishu_card' } : {}),
     };
   }
 
@@ -376,7 +510,7 @@ export class AgentGate {
    * A person clicked 确认 / 取消 on a request card. Returns the card to show right away; long work
    * (running the command) patches the card afterwards.
    */
-  async onClick(ok: boolean, reqId: string, clicker: Caller, cardChatId: string, messageId?: string): Promise<object> {
+  async onClick(ok: boolean, reqId: string, clicker: Caller, cardChatId: string, messageId?: string, opts: { hours?: string } = {}): Promise<object> {
     const req = this.store.getRequest(reqId);
     if (!req) throw new AmberError('not_found', '请求不存在');
     if (req.status !== 'awaiting') throw new AmberError('closed', '这个请求已经处理过了');
@@ -387,6 +521,7 @@ export class AgentGate {
     const s = req.scheduleId ? this.store.getSchedule(req.scheduleId) : undefined;
     if (req.kind === 'retire' || req.kind === 'scope_global' || req.kind === 'scope_local') return this.onCommandChangeClick(ok, req, clicker, cardChatId);
     if (req.kind === 'secret_read') return this.onSecretReadClick(ok, req, clicker);
+    if (req.kind === 'agent_read') return this.onAgentReadClick(ok, req, clicker, opts.hours);
     // Who may click.
     if (req.kind === 'schedule_resume' || req.kind === 'schedule_delete') {
       if (!s) throw new AmberError('not_found', '定时任务已不存在');

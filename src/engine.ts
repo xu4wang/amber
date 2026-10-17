@@ -166,7 +166,7 @@ export async function validateArgs(params: ParamDef[], raw: Record<string, strin
 export type Block = { kind: 'markdown'; text: string };
 export interface RunOutcome { runId: string; ok: boolean; blocks: Block[]; markdown: string; error?: string; elapsedMs: number; args: Record<string, string> }
 
-export async function runCommand(store: Store, cmd: CommandRow, rawArgs: Record<string, string | undefined>, caller: Caller, facts: CallerFacts = {}, opts: { trial?: boolean; viaForm?: boolean } = {}): Promise<RunOutcome> {
+export async function runCommand(store: Store, cmd: CommandRow, rawArgs: Record<string, string | undefined>, caller: Caller, facts: CallerFacts = {}, opts: { trial?: boolean; viaForm?: boolean; asPerson?: boolean } = {}): Promise<RunOutcome> {
   if (cmd.status !== 'active' && !(opts.trial && cmd.status === 'draft')) throw new AmberError('not_active', '应用未生效');
   if (computeSpecHash(cmd) !== cmd.specHash) throw new AmberError('spec_mismatch', '应用定义与审核通过的版本不一致，已拒绝执行');
   // The stored definition is re-validated with the same rules as a new draft, and only the validated
@@ -211,7 +211,9 @@ export async function runCommand(store: Store, cmd: CommandRow, rawArgs: Record<
     let larkUser: ScriptInput['larkUser'];
     if (script.larkUser) {
       if (!LARK_USER) throw new AmberError('no_lark_user', '飞书用户身份服务不可用');
-      if (caller.channel === 'agent' || !caller.unionId.startsWith('on_')) throw new AmberError('forbidden', '这个应用以执行人的飞书身份运行，只能由人执行（在飞书或网站上）');
+      // asPerson: an agent read (`amber read`) the person allowed on a card in their private chat with Amber, or allowed
+      // that agent for a while — the card click, not the agent, says who it runs as.
+      if ((caller.channel === 'agent' && !opts.asPerson) || !caller.unionId.startsWith('on_')) throw new AmberError('forbidden', '这个应用以执行人的飞书身份运行，只能由人执行（在飞书或网站上）');
       try {
         const t = await LARK_USER.vault.token(caller.unionId, script.timeoutMs ?? 0);
         const appId = LARK_USER.vault.appId;

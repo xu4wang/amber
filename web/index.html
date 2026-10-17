@@ -725,7 +725,7 @@ function schPane({ s, scope }) {
 function appPane({ a }) {
   const pane = document.getElementById('pane');
   const svc = a.network ? '可访问外网' : a.services ? `以执行人身份调用：${esc(a.services)}` : '不联网';
-  const lark = a.larkUser ? '；⚠️ 以执行人本人的飞书身份运行（网络只能到飞书）' : '';
+  const lark = (a.larkUser ? '；⚠️ 以执行人本人的飞书身份运行（网络只能到飞书）' : '') + (a.toAgent ? '；⚠️ 结果可以交给 agent（执行人在私聊卡片上允许后）' : '');
   pane.innerHTML = `${backBtn}
     <div class="pane-head"><h1>${esc(a.name)}</h1><span class="chip">v${esc(a.version ?? '?')}</span>${a.status === 'delisted' ? '<span class="chip warn">已下架</span>' : ''}</div>
     <div class="where">Amber Store · 维护人 ${esc(a.maintainer || '—')}${a.installs !== undefined ? ` · 已安装 ${esc(a.installs)} 份` : ''}</div>
@@ -1146,7 +1146,7 @@ async function loadSource() {
   const sc = x.script;
   const how = '沙盒脚本';
   const net = sc.network ? '可访问外网' : Object.keys(sc.services).length ? `以执行人身份调用：${Object.entries(sc.services).map(([n, u]) => `${n}（每次执行最多 ${u.calls} 次调用）`).join('、')}（不能访问外网）` : '不联网';
-  const larkNote = sc.larkUser ? '；⚠️ 以执行人本人的飞书身份运行（网络只能到飞书）' : '';
+  const larkNote = (sc.larkUser ? '；⚠️ 以执行人本人的飞书身份运行（网络只能到飞书）' : '') + (sc.toAgent ? '；⚠️ 结果可以交给 agent（执行人在私聊卡片上允许后）' : '');
   el.className = '';
   el.innerHTML = `<dl class="kv">
       <dt>运行方式</dt><dd>${esc(how)}，${esc(net)}${esc(larkNote)}，最长运行 ${esc(sc.timeoutLabel)}</dd>${sc.interpreter ? `

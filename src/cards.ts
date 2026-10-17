@@ -3,6 +3,7 @@ import { showFingerprint } from './exec-proto.ts';
 import { effectiveAccess, credentialPaths, type FollowChange } from './executors.ts';
 import type { Block } from './engine.ts';
 import type { SecretInfo } from './secrets.ts';
+import { formatAtDefault } from './schedule-rule.ts';
 
 /** Executor output is untrusted text: no @mentions, no raw tags, links shown as plain text. */
 export function sanitizeMarkdown(md: string, maxChars = 6000): string {
@@ -314,10 +315,10 @@ function argLines(c: CommandRow, args: Record<string, string>): string {
 
 /** Agent asked to run a command / create a schedule on someone's behalf; the click decides who. */
 export function requestCard(o: {
-  kind: 'run' | 'schedule' | 'schedule_resume' | 'schedule_delete' | 'retire' | 'scope_global' | 'scope_local' | 'secret_read'; reqId: string; cmd: CommandRow; args: Record<string, string>;
-  requestedBy: string; targetOpenId?: string; ruleText?: string; nextText?: string; scheduleId?: string; schedules?: number; machine?: string;
+  kind: 'run' | 'schedule' | 'schedule_resume' | 'schedule_delete' | 'retire' | 'scope_global' | 'scope_local' | 'secret_read' | 'agent_read'; reqId: string; cmd: CommandRow; args: Record<string, string>;
+  requestedBy: string; targetOpenId?: string; ruleText?: string; nextText?: string; scheduleId?: string; schedules?: number; machine?: string; session?: string; chatId?: string;
 }): object {
-  const danger = o.cmd.options.confirm || o.kind === 'schedule_delete' || o.kind === 'retire' || o.kind === 'secret_read';
+  const danger = o.cmd.options.confirm || o.kind === 'schedule_delete' || o.kind === 'retire' || o.kind === 'secret_read' || o.kind === 'agent_read';
   const who = o.targetOpenId ? person(o.targetOpenId) : '你';
   const by = sanitizeMarkdown(o.requestedBy, 80);
   const name = sanitizeMarkdown(o.cmd.name, 40);
@@ -349,6 +350,29 @@ export function requestCard(o: {
     ok = '允许读取';
     els.push({ tag: 'markdown', content: `机器 **${sanitizeMarkdown(o.machine ?? '?', 60)}** 上的 **${by}** 请求读取你的应用「**${name}**」（${o.cmd.id}）的密钥 **${sanitizeMarkdown(o.args.secret ?? '', 40)}**。` });
     els.push({ tag: 'markdown', content: '<font color="grey">允许后，密钥的值会加密交给发起请求的那个命令行（只有它能解开），由它写进那台机器上的文件；值不会显示在飞书里，也不会交给 agent 的对话。请求方的名字是它自己报的，请确认机器和用途都对再点。10 分钟内有效，只能取一次。只有应用的创建人可以确认。</font>' });
+  } else if (o.kind === 'agent_read') {
+    title = `请确认读取你的数据：${o.cmd.name}`;
+    ok = '允许本次';
+    let args: Record<string, string> = {};
+    try { args = JSON.parse(o.args.args ?? '{}'); } catch { /* shown as no arguments */ }
+    els.push({ tag: 'markdown', content: `机器 **${sanitizeMarkdown(o.machine ?? '?', 60)}** 上的 **${by}** 请求以你的身份执行「**${name}**」，并把结果交给它。` });
+    if (o.cmd.description) els.push({ tag: 'markdown', content: `<font color="grey">${sanitizeMarkdown(o.cmd.description, 200)}</font>` });
+    els.push({ tag: 'markdown', content: `**参数**\n${argLines(o.cmd, args)}` });
+    els.push({ tag: 'markdown', content: `<font color="grey">会话：${o.session ? sanitizeMarkdown(o.session, 80) : '（agent 没报会话编号）'} · 私聊 ${sanitizeMarkdown(o.chatId ?? '?', 60)}</font>` });
+    els.push({ tag: 'markdown', content: `<font color="grey">允许后以你本人的身份执行一次，结果加密交给发起请求的那个命令行（只有它能解开），会进入这个 agent 的对话。请求方的名字和会话是它自己报的，请确认机器和用途都对再点。「允许一段时间」：${o.session ? '这个 agent 会话' : '这台机器上同名的 agent'}在这个私聊里用这个应用读取，选定时长内不再询问，可以随时撤销。10 分钟内有效。</font>` });
+    els.push({
+      tag: 'form', name: 'ar', elements: [
+        { tag: 'select_static', name: 'hours', initial_option: AGENT_READ_DEFAULT_HOURS, placeholder: { tag: 'plain_text', content: '时长' }, width: 'default',
+          options: AGENT_READ_HOUR_CHOICES.map(([v, t]) => ({ text: { tag: 'plain_text', content: t }, value: v })) },
+        buttonRow([
+          btn('允许本次', { a: 'req_ok', r: o.reqId }, 'danger', { form_action_type: 'submit', name: 'once' }),
+          btn('允许一段时间', { a: 'ar_hours', r: o.reqId }, 'default', { form_action_type: 'submit', name: 'hours_ok' }),
+          btn('拒绝', { a: 'req_no', r: o.reqId }, 'default', { form_action_type: 'submit', name: 'no' }),
+        ]),
+      ],
+    });
+    els.push({ tag: 'markdown', content: `<font color="grey">请求 ${o.reqId} · 只有被请求人可以点 · 10 分钟内有效</font>`, text_size: 'notation' });
+    return shell(`Amber · ${title}`, 'red', els);
   } else if (o.kind === 'schedule_resume') {
     title = `请确认恢复定时任务：${o.cmd.name}`;
     ok = '恢复';
@@ -372,8 +396,23 @@ export function requestCard(o: {
       { tag: 'column', width: 'auto', elements: [btn('取消', { a: 'req_no', r: o.reqId })] },
     ],
   });
-  els.push({ tag: 'markdown', content: `<font color="grey">请求 ${o.reqId}${o.targetOpenId ? ' · 只有被请求人可以点' : ''} · 24 小时内有效</font>`, text_size: 'notation' });
+  els.push({ tag: 'markdown', content: `<font color="grey">请求 ${o.reqId}${o.targetOpenId ? ' · 只有被请求人可以点' : ''} · ${o.kind === 'secret_read' ? '10 分钟' : '24 小时'}内有效</font>`, text_size: 'notation' });
   return shell(`Amber · ${title}`, danger ? 'red' : 'orange', els);
+}
+
+/** Durations offered for 「允许一段时间」 (agent.ts AGENT_READ_GRANT_HOURS holds the same values). */
+const AGENT_READ_HOUR_CHOICES: [string, string][] = [['0.5', '30 分钟'], ['2', '2 小时'], ['8', '8 小时'], ['24', '24 小时']];
+const AGENT_READ_DEFAULT_HOURS = '2';
+
+/** `amber read` allowed: says where the result goes; with 「允许一段时间」, a button to end it early. */
+export function agentReadDoneCard(o: { name: string; clickerOpenId?: string; machine: string; requestedBy: string; reqId: string; grant?: { id: string; until: number; session: string } }): object {
+  const els: unknown[] = [{ tag: 'markdown', content: `${o.clickerOpenId ? person(o.clickerOpenId) : '你'}允许了 **${sanitizeMarkdown(o.requestedBy, 80)}**（机器 ${sanitizeMarkdown(o.machine, 60)}）读取「${sanitizeMarkdown(o.name, 40)}」。正在以你的身份执行，结果加密交给发起请求的命令行，10 分钟内取一次有效。` }];
+  if (o.grant) {
+    els.push({ tag: 'markdown', content: `**已允许到 ${formatAtDefault(o.grant.until)}**：${o.grant.session ? `这个 agent 会话（${sanitizeMarkdown(o.grant.session, 80)}）` : '这台机器上同名的 agent'}在这个私聊里用这个应用读取，不再询问。Amber 重启时授权也会结束。` });
+    els.push(btn('撤销授权', { a: 'ar_revoke', g: o.grant.id }, 'danger'));
+  }
+  els.push({ tag: 'markdown', content: `<font color="grey">请求 ${o.reqId} · 执行记录在网站「运行记录」里</font>`, text_size: 'notation' });
+  return shell(`Amber · 已允许读取：${o.name}`, 'green', els);
 }
 
 /** D44: retiring from Feishu asks once more; only the person who asked can confirm, for 5 minutes. */
