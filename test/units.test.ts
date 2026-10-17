@@ -173,3 +173,26 @@ test('startup: runs left running by a stopped process are marked failed', async 
     assert.deepEqual(st.failInterruptedRuns(), []);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
+
+test('charts: color makes series — grouped side by side (not stacked), with a legend; axis titles on the right axes', () => {
+  const chartOf = (spec: object) => (markdownWithCharts('```vega-lite\n' + JSON.stringify(spec) + '\n```') as any[]).find(e => e.tag === 'chart').chart_spec;
+  const rows = [{ a: 'x', k: '用量', v: 19 }, { a: 'x', k: '时间已过', v: 36 }, { a: 'y', k: '用量', v: 2 }, { a: 'y', k: '时间已过', v: 15 }];
+  // Horizontal bars: the category (y) groups by series.
+  const h = chartOf({ mark: 'bar', data: { values: rows }, encoding: { y: { field: 'a', type: 'nominal', title: '账号' }, x: { field: 'v', type: 'quantitative', title: '%' }, color: { field: 'k', type: 'nominal' } } });
+  assert.equal(h.direction, 'horizontal');
+  assert.deepEqual([h.yField, h.xField, h.seriesField], [['a', 'k'], 'v', 'k']);
+  assert.equal(h.legends.visible, true);
+  assert.deepEqual(h.data.values[1], { a: 'x', k: '时间已过', v: 36 }, 'the series value is kept');
+  assert.deepEqual(h.axes.map((x: any) => [x.orient, x.title.text]), [['left', '账号'], ['bottom', '%']], 'value axis is the bottom one');
+  // Vertical bars: the category (x) groups by series.
+  const v = chartOf({ mark: 'bar', data: { values: rows }, encoding: { x: { field: 'a', type: 'nominal', title: '账号' }, y: { field: 'v', type: 'quantitative', title: '%' }, color: { field: 'k', type: 'nominal' } } });
+  assert.deepEqual([v.xField, v.yField, v.seriesField], [['a', 'k'], 'v', 'k']);
+  assert.deepEqual(v.axes.map((x: any) => [x.orient, x.title.text]), [['left', '%'], ['bottom', '账号']]);
+  // Lines: one line per series.
+  const l = chartOf({ mark: 'line', data: { values: rows }, encoding: { x: { field: 'a', type: 'ordinal' }, y: { field: 'v', type: 'quantitative' }, color: { field: 'k', type: 'nominal' } } });
+  assert.deepEqual([l.xField, l.yField, l.seriesField], ['a', 'v', 'k']);
+  // No color: as before.
+  const n = chartOf({ mark: 'bar', data: { values: rows }, encoding: { y: { field: 'a', type: 'nominal' }, x: { field: 'v', type: 'quantitative' } } });
+  assert.deepEqual([n.yField, n.seriesField, n.legends], ['a', undefined, undefined]);
+  assert.deepEqual(n.data.values[0], { a: 'x', v: 19 });
+});
