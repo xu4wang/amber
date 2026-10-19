@@ -58,22 +58,34 @@ context options (defaults come from botmux environment variables):
   --json               print raw JSON
 
 exit codes: 0 done, 1 error, 2 usage, 3 still waiting for a person
-service address: $AMBER_URL, else ~/.config/amber-client.json {"url": "..."} (written by
+service address: $AMBER_URL, else ~/.config/amber-client.json, else amber-client.json next to this command
+{"url": "..."} (both written by
 `amber config set-url`). Each installation sets its own; nothing is built in.
 """
 import base64, hashlib, hmac, json, os, sys, time, urllib.request, urllib.error
 
 CONFIG = os.path.expanduser("~/.config/amber-client.json")
+# A copy next to this command: an agent in a sandbox that hides ~/.config can still read the directory it runs amber from.
+LOCAL_CONFIG = os.path.join(os.path.dirname(os.path.realpath(__file__)), "amber-client.json")
 
 
 def service_url():
     url = os.environ.get("AMBER_URL", "").strip()
-    if not url:
+    denied = []
+    for path in (CONFIG, LOCAL_CONFIG):
+        if url:
+            break
         try:
-            with open(CONFIG, encoding="utf-8") as f:
+            with open(path, encoding="utf-8") as f:
                 url = str(json.load(f).get("url", "")).strip()
+        except PermissionError:
+            denied.append(path)
         except (OSError, ValueError):
-            url = ""
+            pass
+    if not url and denied:
+        # Not "unset": the file is there but this process may not read it (typically an agent sandbox).
+        raise SystemExit("amber: 读不到配置文件 %s（权限被拒，多半是在沙盒里运行）。地址其实已经配置过，不用找人要：用 amber info 在沙盒外查看，"
+                         "或者设置环境变量 AMBER_URL=<地址>，或者把配置复制一份到 %s" % ("、".join(denied), LOCAL_CONFIG))
     if not url:
         raise SystemExit("amber: 还没配置 Amber 服务地址。请向部署 Amber 的人要地址，然后运行：amber config set-url http://<地址>"
                          "（或设置环境变量 AMBER_URL）")
@@ -354,10 +366,19 @@ def main(argv):
     if cmd == "config":
         if len(pos) < 3 or pos[1] != "set-url" or not pos[2].startswith(("http://", "https://")):
             raise Usage()
-        os.makedirs(os.path.dirname(CONFIG), exist_ok=True)
-        with open(CONFIG, "w", encoding="utf-8") as f:
-            json.dump({"url": pos[2].rstrip("/")}, f)
-        print("已设置 Amber 服务地址：%s" % pos[2].rstrip("/"))
+        written = []
+        # Both places: ~/.config for people, next to the command for agents in a sandbox that hides ~/.config.
+        for path in (CONFIG, LOCAL_CONFIG):
+            try:
+                os.makedirs(os.path.dirname(path), exist_ok=True)
+                with open(path, "w", encoding="utf-8") as f:
+                    json.dump({"url": pos[2].rstrip("/")}, f)
+                written.append(path)
+            except OSError:
+                pass
+        if not written:
+            raise SystemExit("amber: 写不了配置文件（%s、%s）。请在沙盒外运行，或者设置环境变量 AMBER_URL" % (CONFIG, LOCAL_CONFIG))
+        print("已设置 Amber 服务地址：%s（写入 %s）" % (pos[2].rstrip("/"), "、".join(written)))
         return 0
     if cmd == "info":
         r = call("GET", "/v1/info")
