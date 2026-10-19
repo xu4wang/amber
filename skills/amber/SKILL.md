@@ -181,4 +181,4 @@ text = json.load(urllib.request.build_opener(urllib.request.ProxyHandler({})).op
 
 `amber` 是一个只依赖 Python 3 标准库的脚本，一般装在 `~/.local/bin/amber`；PATH 里找不到时用完整路径。
 
-服务地址每个安装环境自己配置，skill 里不写死：`amber info` 能显示当前机器连的是哪个 Amber。如果提示「还没配置 Amber 服务地址」，**不要自己猜地址**，告诉用户需要部署 Amber 的人提供地址，再运行 `amber config set-url <地址>`（或设置环境变量 `AMBER_URL`）。
+服务地址每个安装环境自己配置，skill 里不写死：`amber info` 能显示当前机器连的是哪个 Amber。如果提示「读不到配置文件（权限被拒）」，说明地址已经配好、只是你在沙盒里读不到：按提示设置 `AMBER_URL`，或请用户在沙盒外运行一次 `amber config set-url`，**不用找人要地址**。如果提示「还没配置 Amber 服务地址」，**不要自己猜地址**，告诉用户需要部署 Amber 的人提供地址，再运行 `amber config set-url <地址>`（或设置环境变量 `AMBER_URL`）。

@@ -46,11 +46,11 @@ skill 在 agent 开新会话时加载，已经在跑的会话看不到。
 **服务地址**：命令行和 skill 里都不写死地址，每台机器装好后配置一次：
 
 ```sh
-amber config set-url http://amber.example.com    # 写入 ~/.config/amber-client.json
+amber config set-url http://amber.example.com    # 写入 ~/.config/amber-client.json，并在 amber 命令所在目录放一份
 amber info                                        # 检查：显示服务地址、网站地址、本机在 Amber 里的名字
 ```
 
-也可以用环境变量 `AMBER_URL`，它的优先级高于配置文件。只有 Amber 配置里 `machines` 列出的 IP 能访问。网站地址由服务端的 `webBaseUrl` 决定，agent 通过 `amber info` 获取，不需要另外配置。
+也可以用环境变量 `AMBER_URL`，它的优先级高于配置文件。命令行依次读 `AMBER_URL`、`~/.config/amber-client.json`、`amber` 命令所在目录里的 `amber-client.json`。后一份是给跑在沙盒里的 agent 用的：沙盒常常不让读 `~/.config`，但一定能读它运行的命令所在的目录。所以要在沙盒外运行一次 `set-url`（两处都会写）；只是读不到时，命令行会提示「读不到配置文件（权限被拒）」，而不是「还没配置」。只有 Amber 配置里 `machines` 列出的 IP 能访问。网站地址由服务端的 `webBaseUrl` 决定，agent 通过 `amber info` 获取，不需要另外配置。
 
 ## 命令
 
