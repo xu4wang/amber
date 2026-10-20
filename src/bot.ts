@@ -23,6 +23,19 @@ import { Assistant, ASSIST_DOCS } from './assist.ts';
 import type { LarkUserVault, AuthOutcome } from './lark-user.ts';
 
 const LARK_AUTH_VERBS = ['授权飞书', '撤销飞书授权', '飞书授权状态'];
+
+/** The card with the authorization link (D54), in the person's private chat only. */
+function larkAuthCard(started: { userCode: string; scopes: string[]; expiresIn: number; verificationUrl: string }): object {
+  return {
+    schema: '2.0', config: { update_multi: true },
+    header: { title: { tag: 'plain_text', content: 'Amber · 授权飞书' }, template: 'orange' },
+    body: { elements: [
+      { tag: 'markdown', content: `点下面的按钮，用**你本人的飞书账号**确认授权（验证码 **${started.userCode}**）。\n授权后，声明了「以执行人飞书身份运行」的应用由你执行时，会以你的身份调用飞书，范围是 Amber 应用开通的 ${started.scopes.length} 项用户权限；具体调用什么由应用的代码决定，代码都经过审核。\n<font color="grey">链接 ${Math.round(started.expiresIn / 60)} 分钟内有效。**不要转发给别人**：Amber 会核对确认授权的是不是你本人，不是的话作废。随时可以发「撤销飞书授权」。</font>` },
+      { tag: 'button', text: { tag: 'plain_text', content: '去飞书确认授权' }, type: 'primary', behaviors: [{ type: 'open_url', default_url: started.verificationUrl }] },
+    ] },
+  };
+}
+
 function larkAuthDoneCard(o: AuthOutcome): object {
   if (o.ok) return infoCard('已授权飞书', `已授权，${o.scopes.length} 项用户权限。需要时发「撤销飞书授权」。`);
   const why = o.reason === 'mismatch' ? '确认授权的不是你本人的飞书账号，这次授权已作废。请用你自己的账号重新发「授权飞书」。'
@@ -511,6 +524,8 @@ export class AmberBot {
     const dispatcher = new lark.EventDispatcher({}).register({
       'im.message.receive_v1': async (d: any) => { this.onMessage(d).catch(e => log('onMessage error', e?.message ?? e)); },
       'card.action.trigger': async (d: any) => this.onCardAction(d),
+      // The menu under the private chat with Amber (configured on the Feishu developer console).
+      'application.bot.menu_v6': async (d: any) => { this.onMenu(d).catch(e => log('menu error', e?.message ?? e)); },
       'approval_instance': async (d: any) => {
         const code = d?.instance_code ?? d?.event?.instance_code;
         log('approval event', code, d?.status ?? d?.event?.status);
@@ -817,7 +832,32 @@ export class AmberBot {
 
   /** 「授权飞书」/「撤销飞书授权」/「飞书授权状态」(D54). The authorization link only ever appears in the person's own
    *  private chat, like the login link; asked in a group, Amber sends it there and says so. */
+  /** The bot menu (D57) in the private chat with Amber: no typing needed for the everyday entries. */
+  async onMenu(d: any): Promise<void> {
+    const unionId: string = d?.operator?.operator_id?.union_id ?? '';
+    const openId: string | undefined = d?.operator?.operator_id?.open_id;
+    const key = String(d?.event_key ?? '');
+    if (!unionId) return;
+    if (!this.firstTime(`menu:${unionId}:${key}:${d?.timestamp ?? ''}`)) return;
+    log('menu', key, unionId.slice(0, 12));
+    if (key === 'amber_auth') { await this.larkAuth('授权飞书', { unionId, openId, chatId: '', chatType: 'p2p', channel: 'bot' }, '', false); return; }
+    if (key !== 'amber_apps' && key !== 'amber_schedules') {
+      await this.flow.send({ unionId }, infoCard('Amber', '这个菜单项 Amber 还不认识。可以发「应用」查看能用的应用。'));
+      return;
+    }
+    // In a private chat, what is visible depends on the person only (their private-chat apps and the global ones), so the
+    // chat id the menu event does not carry is not needed; buttons on the card are handled in the chat they land in.
+    const caller: Caller = { unionId, openId, chatId: '', chatType: 'p2p', channel: 'bot' };
+    await this.flow.send({ unionId }, key === 'amber_apps' ? listCard(visibleCommands(this.store, caller), this.scopeLabel(caller)) : this.scheduleList(caller));
+  }
+
   private async larkAuth(verb: string, caller: Caller, messageId: string, inThread: boolean): Promise<void> {
+    // From the menu there is no message to reply to: the cards go to the person's private chat.
+    if (!messageId) {
+      const ok = await this.larkAuthDm(verb, caller);
+      if (!ok) log('lark auth from menu failed', caller.unionId.slice(0, 12));
+      return;
+    }
     const v = this.larkUser;
     if (!v) { await this.replyCard(messageId, inThread, errorCard('授权飞书', '飞书用户身份服务没有启用')); return; }
     if (verb === '撤销飞书授权') {
@@ -839,14 +879,7 @@ export class AmberBot {
     const onDone = (o: AuthOutcome) => { outcomes.push(o); if (cardId) this.patch(cardId, larkAuthDoneCard(o)).catch(() => {}); };
     try { started = await v.start(caller.unionId, onDone); }
     catch (e) { await this.replyCard(messageId, inThread, errorCard('授权飞书', `发起授权失败：${(e as Error).message}`)); return; }
-    const card = {
-      schema: '2.0', config: { update_multi: true },
-      header: { title: { tag: 'plain_text', content: 'Amber · 授权飞书' }, template: 'orange' },
-      body: { elements: [
-        { tag: 'markdown', content: `点下面的按钮，用**你本人的飞书账号**确认授权（验证码 **${started.userCode}**）。\n授权后，声明了「以执行人飞书身份运行」的应用由你执行时，会以你的身份调用飞书，范围是 Amber 应用开通的 ${started.scopes.length} 项用户权限；具体调用什么由应用的代码决定，代码都经过审核。\n<font color="grey">链接 ${Math.round(started.expiresIn / 60)} 分钟内有效。**不要转发给别人**：Amber 会核对确认授权的是不是你本人，不是的话作废。随时可以发「撤销飞书授权」。</font>` },
-        { tag: 'button', text: { tag: 'plain_text', content: '去飞书确认授权' }, type: 'primary', behaviors: [{ type: 'open_url', default_url: started.verificationUrl }] },
-      ] },
-    };
+    const card = larkAuthCard(started);
     if (inGroup) {
       try { cardId = await this.flow.send({ unionId: caller.unionId }, card); } catch (e: any) { log('lark auth dm failed', e?.response?.data?.code ?? e?.message); }
       if (!cardId) { v.cancel(caller.unionId); await this.replyCard(messageId, inThread, errorCard('授权飞书', '没能给你发私聊消息。请直接私聊 Amber 发送「授权飞书」。')); return; }
@@ -857,6 +890,22 @@ export class AmberBot {
     }
     // The flow may have ended before the card existed.
     if (cardId && outcomes.length) await this.patch(cardId, larkAuthDoneCard(outcomes[0])).catch(() => {});
+  }
+
+  /** 「授权飞书」 started from the menu: like a request from a group, everything goes to the person's private chat. */
+  private async larkAuthDm(verb: string, caller: Caller): Promise<boolean> {
+    const v = this.larkUser;
+    if (!v) { await this.flow.send({ unionId: caller.unionId }, errorCard('授权飞书', '飞书用户身份服务没有启用')); return false; }
+    let cardId: string | undefined;
+    const outcomes: AuthOutcome[] = [];
+    const onDone = (o: AuthOutcome) => { outcomes.push(o); if (cardId) this.patch(cardId, larkAuthDoneCard(o)).catch(() => {}); };
+    let started: Awaited<ReturnType<LarkUserVault['start']>>;
+    try { started = await v.start(caller.unionId, onDone); }
+    catch (e) { await this.flow.send({ unionId: caller.unionId }, errorCard('授权飞书', `发起授权失败：${(e as Error).message}`)); return false; }
+    try { cardId = await this.flow.send({ unionId: caller.unionId }, larkAuthCard(started)); }
+    catch (e: any) { log('lark auth dm failed', e?.response?.data?.code ?? e?.message); v.cancel(caller.unionId); return false; }
+    if (cardId && outcomes.length) await this.patch(cardId, larkAuthDoneCard(outcomes[0])).catch(() => {});
+    return true;
   }
 
   /** The person's Feishu authorization stopped working while running an app: tell them, at most once a day (D54). */
