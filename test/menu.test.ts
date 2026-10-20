@@ -72,3 +72,20 @@ test('bot menu: 授权飞书 sends the authorization card to the private chat', 
     assert.match(FakeFeishu.text(sent[0].card), /UC-1/);
   } finally { await env.close(); }
 });
+
+test('bot menu: 打开网站 (amber_login) sends a one-time login link to the private chat', async () => {
+  const env = await makeEnv();
+  try {
+    const before = env.fake.sent.length;
+    await (env.amber.bot as any).onMenu(menu(env.alice, 'amber_login'));
+    const sent = env.fake.sent.slice(before);
+    assert.equal(sent.length, 1);
+    assert.equal(sent[0].to.unionId, env.alice.unionId, 'only to her private chat');
+    const m = /\/login\?t=([A-Za-z0-9_-]+)/.exec(JSON.stringify(sent[0].card));
+    assert.ok(m, 'a login link');
+    // The link logs in as alice.
+    const r = await fetch(`http://127.0.0.1:${env.webPort}/login?t=${m![1]}`, { redirect: 'manual' });
+    assert.ok([200, 302, 303].includes(r.status), String(r.status));
+    assert.match(r.headers.get('set-cookie') ?? '', /=/, 'a session cookie');
+  } finally { await env.close(); }
+});
