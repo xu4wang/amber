@@ -76,12 +76,12 @@ amber submit ~/amber/samples/weather/app.json --user 你的邮箱
 `samples/my-lark-data/`：让你自己的 agent 以**你本人的飞书身份**、只读地取你的飞书数据，拿回去接着处理。比如对 agent 说「看看我这周和张三的私聊里答应了什么」「把合同那封邮件的要点整理一下」。
 
 - **装法**：管理员可以把它设为全局应用（每个人读的都是自己的数据，互不影响）；也可以装在你自己的私聊里。
-- **前提**（管理员）：Amber 的飞书应用开通了这些用户身份权限：`im:chat:read`、`im:message:readonly`、`im:message.group_msg:get_as_user`、`im:message.p2p_msg:get_as_user`、`search:message`（搜消息）、`mail:user_mailbox.message:readonly`、`mail:user_mailbox.message.subject:read`、`mail:user_mailbox.message.address:read`、`mail:user_mailbox.message.body:read`（邮件）、`docx:document:readonly`（文档）。新开通权限后，已授权过的人要重新发一次「授权飞书」。
+- **前提**（管理员）：Amber 的飞书应用开通了这些用户身份权限：`im:chat:read`、`im:message:readonly`、`im:message.group_msg:get_as_user`、`im:message.p2p_msg:get_as_user`、`search:message`（搜消息）、`mail:user_mailbox.message:readonly`、`mail:user_mailbox.message.subject:read`、`mail:user_mailbox.message.address:read`、`mail:user_mailbox.message.body:read`（邮件）、`docx:document:readonly`（文档）、`minutes:minutes.search:read`、`minutes:minutes:readonly`、`minutes:minutes.artifacts:read`、`minutes:minutes.transcript:export`（妙记）。新开通权限后，已授权过的人要重新发一次「授权飞书」。
 - **你自己**：授权飞书一次（私聊 Amber 发 `授权飞书`）。
 - **参数**：
-  - 操作：`搜消息`、`会话记录`、`找会话`、`搜邮件`、`读邮件`、`读文档`。
-  - 内容：搜消息、搜邮件时写关键词；会话记录写群的 `oc_…` 或私聊对方的 `ou_…`（先用「找会话」查）；读邮件写邮件 id（先用「搜邮件」查）；读文档写文档链接。
-  - 回看小时数（搜消息、会话记录，默认 24，最多 720）；最多条数（默认 30，最多 100）。
+  - 操作：`搜消息`、`会话记录`、`找会话`、`搜邮件`、`读邮件`、`读文档`、`搜妙记`、`读妙记`。
+  - 内容：搜消息、搜邮件时写关键词；会话记录写群的 `oc_…` 或私聊对方的 `ou_…`（先用「找会话」查）；读邮件写邮件 id（先用「搜邮件」查）；读文档写文档链接；搜妙记写关键词（可不填，列出时间范围内你拥有或参与的妙记）；读妙记写妙记链接（先用「搜妙记」查），返回 AI 总结、待办、章节和逐字稿。
+  - 回看小时数（搜消息、会话记录、搜妙记，默认 24，最多 720）；最多条数（默认 30，最多 100）。
 - **用法**：agent 在和你的私聊里运行，比如 `amber read 我的飞书数据 op=搜邮件 q=合同 --user 你的邮箱`。Amber 私聊你发确认卡，你选「允许本次」或「允许一段时间」（这个 agent 会话在选定时长内不再询问）。结果加密交给 agent，见[读取个人数据](cli-and-skill.md#读取个人数据)。在飞书或网站上执行也可以，结果只显示给你自己。
 - **只读**：只调用搜索、列表、读取类的命令，不发消息、不改文档、不动邮件。输出最多约 6 万字，超出截断并注明；单条消息、邮件摘要过长时截断。
 - **可以学到**：`"toAgent": true` 把结果交给 agent；一个应用用「操作」参数提供几种只读查询；对 lark-cli 输出做容错解析。
