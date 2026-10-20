@@ -34,6 +34,52 @@ test('draft is claimed, trial-run, reviewed in Feishu and becomes active', async
   } finally { await env.close(); }
 });
 
+test('when Feishu refuses the trial result card, the claim card keeps its buttons', async () => {
+  const env = await makeEnv();
+  try {
+    const r = await env.submit({ chatId: GROUP, chatType: 'group', name: '问候', params: [], script: HELLO });
+    // Make Feishu refuse the card carrying the trial output, as it did for a table it could not show.
+    const realPatch = env.fake.im.v1.message.patch;
+    env.fake.im.v1.message.patch = async (a: any) => {
+      if (/你好，世界/.test(a.data.content)) { const e: any = new Error('400'); e.response = { data: { code: 230099, msg: 'table rows is invalid' } }; throw e; }
+      return realPatch(a);
+    };
+    await env.click(env.alice, r.claimMessageId, { a: 'claim_try', c: r.id });
+    const card = await env.waitFor(() => button(env.fake.cardOf(r.claimMessageId), 'claim_submit') && env.fake.cardOf(r.claimMessageId));
+    assert.match(FakeFeishu.text(card), /显示不了/);
+    assert.ok(button(card, 'claim_drop'), 'the draft can still be dropped');
+    await env.click(env.alice, r.claimMessageId, { a: 'claim_submit', c: r.id });
+    assert.equal(env.amber.store.getCommand(r.id)!.status, 'pending');
+    assert.match([...env.fake.docs.values()].pop()!.join('\n'), /你好，世界/, 'review doc still has the trial output');
+  } finally { await env.close(); }
+});
+
+test('a failed trial takes back an earlier success, also on the fallback card', async () => {
+  const env = await makeEnv();
+  try {
+    const FLAKY = script('import json,sys\ninp=json.load(sys.stdin)\nwho=inp["params"].get("who","世界")\nif who=="坏":\n    import time; time.sleep(1); sys.exit("E" + "RR42")\nprint("你好，" + who)');
+    const r = await env.submit({ chatId: GROUP, chatType: 'group', name: '问候', params: [{ name: 'who', label: '对象', type: 'string' }], script: FLAKY });
+    await env.click(env.alice, r.claimMessageId, { a: 'claim_try', c: r.id }, { who: '小明' });
+    await env.waitFor(() => button(env.fake.cardOf(r.claimMessageId), 'claim_submit'));
+    // The next trial fails, and Feishu refuses the card that says so.
+    const realPatch = env.fake.im.v1.message.patch;
+    let refused = 0;
+    env.fake.im.v1.message.patch = async (a: any) => {
+      // The script's code is on the card too, so match the run's output, which the code only spells in two parts.
+      if (/ERR42/.test(a.data.content)) { refused++; const e: any = new Error('400'); e.response = { data: { code: 230099, msg: 'refused' } }; throw e; }
+      return realPatch(a);
+    };
+    await env.click(env.alice, r.claimMessageId, { a: 'claim_try', c: r.id }, { who: '坏' });
+    // While it runs, the earlier success does not let anyone submit.
+    assert.match(JSON.stringify(await env.click(env.alice, r.claimMessageId, { a: 'claim_submit', c: r.id })), /试运行还在进行中/);
+    const card = await env.waitFor(() => /显示不了/.test(FakeFeishu.text(env.fake.cardOf(r.claimMessageId))) && env.fake.cardOf(r.claimMessageId));
+    assert.equal(refused, 1);
+    assert.equal(button(card, 'claim_submit'), undefined, 'no submit button after a failed trial');
+    assert.match(JSON.stringify(await env.click(env.alice, r.claimMessageId, { a: 'claim_submit', c: r.id })), /试运行/);
+    assert.equal(env.amber.store.getCommand(r.id)!.status, 'draft');
+  } finally { await env.close(); }
+});
+
 test('a rejected approval rejects the command', async () => {
   const env = await makeEnv();
   try {

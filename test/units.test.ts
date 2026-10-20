@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import { parseRule, nextRun, describeRule, validateRule } from '../src/schedule-rule.ts';
 import { lineDiff } from '../src/diff.ts';
 import { sanitizeMarkdown, markdownWithCharts } from '../src/cards.ts';
+import { FakeFeishu } from './fake-feishu.ts';
 
 const at = (s: string) => Date.parse(s);
 
@@ -36,6 +37,17 @@ test('diff: changed lines with context, and "no change"', () => {
   assert.match(d.text, /- line 3\n\+ line three/);
   assert.doesNotMatch(d.text, /line 12/);
   assert.equal(lineDiff(a, a)!.text, '');
+});
+
+test('a number column with empty cells is shown as text, so Feishu does not refuse the card', () => {
+  const cols = [{ name: 'k', label: '类目', type: 'text' }, { name: 'n', label: '笔数', type: 'number' }, { name: 'v', label: '金额', type: 'number' }];
+  const md = '```table\n' + JSON.stringify({ columns: cols, rows: [{ k: '来账', n: 5, v: 1.5 }, { k: '合计', n: null, v: 2 }] }) + '\n```';
+  const [t] = markdownWithCharts(md) as any[];
+  assert.equal(FakeFeishu.badTableCell(t), false);
+  assert.deepEqual(t.columns.map((c: any) => c.data_type), ['text', 'text', 'number']);
+  assert.equal(t.columns[1].horizontal_align, 'right');
+  assert.deepEqual(t.rows.map((r: any) => r.c1), ['5', '']);
+  assert.deepEqual(t.rows.map((r: any) => r.c2), [1.5, 2]);
 });
 
 test('script output cannot inject mentions, links or tags into cards', () => {

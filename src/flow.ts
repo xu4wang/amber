@@ -395,6 +395,17 @@ export class Flow {
     this.checkOwnerForNewVersion(c, caller);
   }
 
+  /** Claim card for a trial run whose result card Feishu refused to show: keeps the buttons, drops the results. */
+  trialUnshownCard(id: string, caller: Caller): object {
+    const c = this.store.getCommand(id);
+    if (!c || c.status !== 'draft') return shell('Amber', 'grey', [{ tag: 'markdown', content: '这张认领卡已失效（草稿已提交、丢弃或不存在）。' }]);
+    const meta = this.store.getMeta(c.id);
+    const trial = meta.trialBy === caller.unionId
+      ? { by: caller.openId, blocks: [{ kind: 'markdown' as const, text: '⚠️ 试运行成功了，但结果在飞书卡片里显示不了（飞书拒收了这张卡）。提交审核时，完整结果会写进审核文档。' }] }
+      : { error: '试运行结果在飞书卡片里显示不了（飞书拒收了这张卡）' };
+    return claimCard(c, trial, meta.submittedBy, this.prevOf(c.id));
+  }
+
   /** The active version this draft replaces, if it is still active. */
   prevOf(id: string): CommandRow | undefined {
     const r = this.store.getMeta(id).replaces;
@@ -450,6 +461,9 @@ export class Flow {
     }
     if (action !== 'claim_drop') this.checkOwnerForNewVersion(c, caller);
     if (action === 'claim_try') {
+      // Only the latest trial counts: a failed one takes back an earlier success, so the submit button
+      // (and the fallback card when Feishu refuses the result card) follow the current attempt.
+      this.store.setMeta(c.id, { trialBy: null });
       try {
         const r = await runCommand(this.store, c, form, caller, facts, { trial: true });
         if (!r.ok) return claimCard(c, { error: r.error }, meta.submittedBy, this.prevOf(c.id));

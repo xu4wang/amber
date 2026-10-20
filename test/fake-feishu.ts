@@ -32,6 +32,15 @@ export class FakeFeishu {
     const p = [...this.patches].reverse().find(x => x.id === messageId);
     return p ? p.card : this.sent.find(s => s.id === messageId)?.card;
   }
+  /** Like Feishu: a card table whose number column holds anything but a number is refused. */
+  static badTableCell(node: any): boolean {
+    if (!node || typeof node !== 'object') return false;
+    if (node.tag === 'table' && Array.isArray(node.columns) && Array.isArray(node.rows)) {
+      const nums = node.columns.filter((c: any) => c.data_type === 'number').map((c: any) => c.name);
+      if (node.rows.some((r: any) => nums.some((n: string) => typeof r[n] !== 'number'))) return true;
+    }
+    return Object.values(node).some(v => FakeFeishu.badTableCell(v));
+  }
   /** All text in a card, for assertions. */
   static text(card: any): string { return JSON.stringify(card ?? {}); }
   lastTo(pred: (s: Sent) => boolean): Sent | undefined { return [...this.sent].reverse().find(pred); }
@@ -56,7 +65,12 @@ export class FakeFeishu {
       message: {
         reply: async ({ path, data }: any) => this.record({ replyTo: path.message_id }, data.content, data.reply_in_thread),
         create: async ({ params, data }: any) => this.record(params.receive_id_type === 'union_id' ? { unionId: data.receive_id } : { chatId: data.receive_id }, data.content),
-        patch: async ({ path, data }: any) => { this.patches.push({ id: path.message_id, card: JSON.parse(data.content) }); return {}; },
+        patch: async ({ path, data }: any) => {
+          const card = JSON.parse(data.content);
+          if (FakeFeishu.badTableCell(card)) this.fail(230099, 'Failed to create card content, ext=ErrMsg: table rows is invalid');
+          this.patches.push({ id: path.message_id, card });
+          return {};
+        },
       },
       image: {
         create: async ({ data }: any) => { const key = this.id('img'); this.images.set(key, data.image); return { image_key: key }; },
