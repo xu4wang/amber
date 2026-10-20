@@ -34,6 +34,26 @@ test('draft is claimed, trial-run, reviewed in Feishu and becomes active', async
   } finally { await env.close(); }
 });
 
+test('when Feishu refuses the trial result card, the claim card keeps its buttons', async () => {
+  const env = await makeEnv();
+  try {
+    const r = await env.submit({ chatId: GROUP, chatType: 'group', name: '问候', params: [], script: HELLO });
+    // Make Feishu refuse the card carrying the trial output, as it did for a table it could not show.
+    const realPatch = env.fake.im.v1.message.patch;
+    env.fake.im.v1.message.patch = async (a: any) => {
+      if (/你好，世界/.test(a.data.content)) { const e: any = new Error('400'); e.response = { data: { code: 230099, msg: 'table rows is invalid' } }; throw e; }
+      return realPatch(a);
+    };
+    await env.click(env.alice, r.claimMessageId, { a: 'claim_try', c: r.id });
+    const card = await env.waitFor(() => button(env.fake.cardOf(r.claimMessageId), 'claim_submit') && env.fake.cardOf(r.claimMessageId));
+    assert.match(FakeFeishu.text(card), /显示不了/);
+    assert.ok(button(card, 'claim_drop'), 'the draft can still be dropped');
+    await env.click(env.alice, r.claimMessageId, { a: 'claim_submit', c: r.id });
+    assert.equal(env.amber.store.getCommand(r.id)!.status, 'pending');
+    assert.match([...env.fake.docs.values()].pop()!.join('\n'), /你好，世界/, 'review doc still has the trial output');
+  } finally { await env.close(); }
+});
+
 test('a rejected approval rejects the command', async () => {
   const env = await makeEnv();
   try {

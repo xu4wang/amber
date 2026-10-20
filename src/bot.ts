@@ -980,11 +980,14 @@ export class AmberBot {
     return city;
   }
 
-  private async patch(messageId: string, card: object): Promise<void> {
+  /** Returns false when Feishu refused the update (the card then still shows its old content). */
+  private async patch(messageId: string, card: object): Promise<boolean> {
     try {
       await this.client.im.v1.message.patch({ path: { message_id: messageId }, data: { content: JSON.stringify(this.footed(card)) } });
+      return true;
     } catch (e: any) {
       log('patch failed', messageId, e?.response?.data ? JSON.stringify(e.response.data) : e?.message);
+      return false;
     }
   }
 
@@ -1013,7 +1016,9 @@ export class AmberBot {
           try { card = await this.flow.onClaimAction('claim_try', id, caller, { city: () => this.cityOf(caller.unionId), signer: this.signer }, d.action?.form_value ?? {}); }
           catch (e) { card = errorCard('Amber', e instanceof AmberError ? e.message : '试运行出错'); }
           finally { this.trialsRunning.delete(id); }
-          if (messageId) await this.patch(messageId, card);
+          // If Feishu refuses the result card, the card would stay on "running" with no buttons and the
+          // draft could be neither submitted nor dropped: put the buttons back without the results.
+          if (messageId && !(await this.patch(messageId, card))) await this.patch(messageId, this.flow.trialUnshownCard(id, caller));
         }, 300);
         return {
           toast: { type: 'info', content: '试运行已开始，结果会更新在这张卡片上' },

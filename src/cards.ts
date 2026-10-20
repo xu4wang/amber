@@ -185,14 +185,18 @@ function tableToCard(src: string): unknown[] | null {
   let t: any;
   try { t = JSON.parse(src); } catch { return null; }
   if (!Array.isArray(t?.columns) || !Array.isArray(t?.rows) || t.columns.length === 0 || t.columns.length > 30) return null;
+  const shown = t.rows.slice(0, CARD_TABLE_MAX_ROWS);
+  // Feishu rejects the whole card when a number column holds anything but a number (an empty cell for
+  // a null included), so such a column is shown as right-aligned text instead.
   const cols = t.columns.filter((c: any) => typeof c?.name === 'string').map((c: any, i: number) => ({
-    key: `c${i}`, name: c.name, label: sanitizeMarkdown(String(c.label ?? c.name), 40), number: c.type === 'number',
+    key: `c${i}`, name: c.name, label: sanitizeMarkdown(String(c.label ?? c.name), 40),
+    number: c.type === 'number' && shown.every((r: any) => Number.isFinite(r?.[c.name])), right: c.type === 'number',
   }));
-  const rows = t.rows.slice(0, CARD_TABLE_MAX_ROWS).map((r: any) => {
+  const rows = shown.map((r: any) => {
     const o: Record<string, unknown> = {};
     for (const c of cols) {
       const v = r?.[c.name];
-      o[c.key] = c.number && typeof v === 'number' ? v : sanitizeMarkdown(v === null || v === undefined ? '' : String(v), 200);
+      o[c.key] = c.number ? v : sanitizeMarkdown(v === null || v === undefined ? '' : String(v), 200);
     }
     return o;
   });
@@ -202,7 +206,7 @@ function tableToCard(src: string): unknown[] | null {
     page_size: 10,
     row_height: 'low',
     header_style: { bold: true, background_style: 'grey' },
-    columns: cols.map((c: any) => ({ name: c.key, display_name: c.label, data_type: c.number ? 'number' : 'text', ...(c.number ? { horizontal_align: 'right' } : {}) })),
+    columns: cols.map((c: any) => ({ name: c.key, display_name: c.label, data_type: c.number ? 'number' : 'text', ...(c.right ? { horizontal_align: 'right' } : {}) })),
     rows,
   }];
   if (total > rows.length) out.push({ tag: 'markdown', content: `<font color="grey">共 ${total} 行，这里显示前 ${rows.length} 行，完整数据请在网站查看</font>` });
