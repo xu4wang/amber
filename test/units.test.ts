@@ -208,3 +208,12 @@ test('charts: color makes series — grouped side by side (not stacked), with a 
   assert.deepEqual([n.yField, n.seriesField, n.legends], ['a', undefined, undefined]);
   assert.deepEqual(n.data.values[0], { a: 'x', v: 19 });
 });
+
+test('claim card: apps that query data-mcp are told a trial run gets at most 20 rows per query', async () => {
+  const { claimCard } = await import('../src/flow.ts');
+  const base = { id: 'c1', name: '查数', description: '', params: [], options: { confirm: false, schedulable: false }, scopeType: 'group', chatId: 'oc_x', specHash: 'h', status: 'draft' } as any;
+  const withData = JSON.stringify(claimCard({ ...base, script: { kind: 'script', lang: 'python', code: 'print(1)', services: { 'data-mcp': { calls: 1 } } } }));
+  const plain = JSON.stringify(claimCard({ ...base, script: { kind: 'script', lang: 'python', code: 'print(1)' } }));
+  assert.match(withData, /最多返回 20 行/);
+  assert.doesNotMatch(plain, /最多返回 20 行/);
+});
