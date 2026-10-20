@@ -57,7 +57,7 @@ test('when Feishu refuses the trial result card, the claim card keeps its button
 test('a failed trial takes back an earlier success, also on the fallback card', async () => {
   const env = await makeEnv();
   try {
-    const FLAKY = script('import json,sys\ninp=json.load(sys.stdin)\nwho=inp["params"].get("who","世界")\nif who=="坏": sys.exit("E" + "RR42")\nprint("你好，" + who)');
+    const FLAKY = script('import json,sys\ninp=json.load(sys.stdin)\nwho=inp["params"].get("who","世界")\nif who=="坏":\n    import time; time.sleep(1); sys.exit("E" + "RR42")\nprint("你好，" + who)');
     const r = await env.submit({ chatId: GROUP, chatType: 'group', name: '问候', params: [{ name: 'who', label: '对象', type: 'string' }], script: FLAKY });
     await env.click(env.alice, r.claimMessageId, { a: 'claim_try', c: r.id }, { who: '小明' });
     await env.waitFor(() => button(env.fake.cardOf(r.claimMessageId), 'claim_submit'));
@@ -70,6 +70,8 @@ test('a failed trial takes back an earlier success, also on the fallback card', 
       return realPatch(a);
     };
     await env.click(env.alice, r.claimMessageId, { a: 'claim_try', c: r.id }, { who: '坏' });
+    // While it runs, the earlier success does not let anyone submit.
+    assert.match(JSON.stringify(await env.click(env.alice, r.claimMessageId, { a: 'claim_submit', c: r.id })), /试运行还在进行中/);
     const card = await env.waitFor(() => /显示不了/.test(FakeFeishu.text(env.fake.cardOf(r.claimMessageId))) && env.fake.cardOf(r.claimMessageId));
     assert.equal(refused, 1);
     assert.equal(button(card, 'claim_submit'), undefined, 'no submit button after a failed trial');

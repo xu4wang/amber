@@ -1026,6 +1026,8 @@ export class AmberBot {
         };
       }
       if (value.a === 'claim_submit') {
+        // A trial still running is the one that counts: don't submit on an earlier result meanwhile.
+        if (this.trialsRunning.has(String(value.c))) return { toast: { type: 'info', content: '试运行还在进行中，等结果出来后再提交审核' } };
         // Creating the review doc and the approval can outlast the callback window. Wait briefly so
         // refusals still come back as a toast; past that, answer now and patch the card when done.
         const work = this.flow.onClaimAction('claim_submit', String(value.c), caller, { city: () => this.cityOf(caller.unionId), signer: this.signer });
