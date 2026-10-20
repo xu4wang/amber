@@ -52,18 +52,27 @@ open(${JSON.stringify(log)}, "a").write(json.dumps(a) + "\\n")
 assert os.environ.get("LARKSUITE_CLI_USER_ACCESS_TOKEN") == "u-tok", "the person's token"
 assert a[-2:] == ["--as", "user"], "always as the person"
 k = " ".join(a[:2])
+if k == "api GET":
+    # the transcript, written to the -o file in the current directory (the run's temp dir)
+    assert "/minutes/v1/minutes/obc" in a[2] and a[2].endswith("/transcript"), a
+    open(a[a.index("-o") + 1], "w").write("张三：开场\\n李四：说正事")
+    print(json.dumps({"ok": True}))
+    sys.exit(0)
 msg = lambda i, t: {"message_id": "om_%d" % i, "create_time": "2026-10-17 10:%02d" % i, "sender": {"name": "张三"}, "chat_name": "项目群", "content": t}
 data = {
   "im +messages-search": {"messages": [msg(1, "周报 已发"), msg(2, "x" * 5000)]},
   "im +chat-messages-list": {"messages": [msg(3, "晚些"), msg(2, "早些")]},
   "im +chat-search": {"items": [{"name": "项目群", "chat_id": "oc_abc"}]},
   "mail +triage": {"messages": [{"message_id": "M1", "date": "Fri", "from": "A <a@x.com>", "subject": "合同"}]},
-  "mail +message": {"subject": "合同", "from": "A <a@x.com>", "to": "me", "body_plain_text": "正文内容" * 20000},
+  "mail +message": {"subject": "合同", "from": {"mail_address": "a@x.com", "name": "A"}, "to": [{"mail_address": "me@x.com", "name": "我"}, {"mail_address": "b@x.com"}], "body_plain_text": "正文内容" * 20000},
+  "minutes +search": {"items": [{"token": "obc" + ("o" if "--owner-ids" in a else "p") + ("2" if "--page-token" in a else "x") + "x" * 19, "display_info": "&lt;b&gt;周会&lt;/b&gt;\\n开始时间: 2026.10.19 10:00", "meta_data": {"app_link": "https://x.feishu.cn/minutes/obc"}}], "has_more": "--page-token" not in a, "page_token": "p2"},
+  "minutes +detail": {"minutes": [{"minute_token": "obcmxxxxxxxxxxxxxxxxxxxx", "title": "周会", "artifacts": {"summary": "定了三件事", "todos": [{"content": "张三发周报"}], "chapters": [{"title": "开场"}]}}]},
   "docs +fetch": {"document": {"title": "方案", "content": "# 方案\\n内容"}},
 }[k]
 print(json.dumps({"ok": True, "data": data}))
 `, { mode: 0o755 });
   const run = (params: Record<string, string>) => execFileSync('python3', [join(ROOT, 'samples', 'my-lark-data', 'app.py')], {
+    cwd: dir,
     input: JSON.stringify({ params, larkUser: { accessToken: 'u-tok', appId: 'cli_x', expiresAt: 0, env: { LARKSUITE_CLI_USER_ACCESS_TOKEN: 'u-tok', LARKSUITE_CLI_APP_ID: 'cli_x' }, cli: join(dir, 'lark-cli') } }),
   }).toString();
   const s1 = run({ op: '搜消息', q: '周报', hours: '24', limit: '30' });
@@ -73,12 +82,20 @@ print(json.dumps({"ok": True, "data": data}))
   assert.match(run({ op: '找会话', q: '项目' }), /oc_abc/);
   assert.match(run({ op: '搜邮件', q: '合同' }), /M1/);
   const s5 = run({ op: '读邮件', q: 'M1' });
-  assert.match(s5, /发件人：A/); assert.match(s5, /已截断/); assert.ok(s5.length < 61000);
+  assert.match(s5, /发件人：A <a@x\.com>/); assert.match(s5, /收件人：我 <me@x\.com>、b@x\.com/); assert.doesNotMatch(s5, /mail_address/);
+  assert.match(s5, /已截断/); assert.ok(s5.length < 61000);
+  const s7 = run({ op: '搜妙记', q: '周会', hours: '48' });
+  assert.match(s7, /4 条/, 'owned and joined, two pages each, merged'); assert.match(s7, /周会 · 开始时间: 2026\.10\.19 10:00/);
+  const s8 = run({ op: '读妙记', q: 'https://x.feishu.cn/minutes/obcmxxxxxxxxxxxxxxxxxxxx' });
+  assert.match(s8, /妙记：周会/); assert.match(s8, /定了三件事/); assert.match(s8, /张三发周报/); assert.match(s8, /李四：说正事/);
+  assert.throws(() => run({ op: '读妙记', q: '昨天的会' }), 'a link or token only');
+  assert.throws(() => run({ op: '读妙记', q: 'obcmxxxxxxxxxxxxxxxxxxxx/../../other' }), 'nothing but the token reaches the path');
+  assert.ok(!readdirSync(dir).some(f => f.startsWith('transcript-')), 'the transcript file is removed');
   assert.match(run({ op: '读文档', q: 'https://x.feishu.cn/docx/abc' }), /文档：方案/);
   assert.throws(() => run({ op: '会话记录', q: '项目群' }), 'a chat id or a person id only');
   // Read-only: every command it ran is a read.
   const used = new Set(readFileSync(log, 'utf8').trim().split('\n').map(l => JSON.parse(l).slice(0, 2).join(' ')));
-  assert.deepEqual([...used].sort(), ['docs +fetch', 'im +chat-messages-list', 'im +chat-search', 'im +messages-search', 'mail +message', 'mail +triage']);
+  assert.deepEqual([...used].sort(), ['api GET', 'docs +fetch', 'im +chat-messages-list', 'im +chat-search', 'im +messages-search', 'mail +message', 'mail +triage', 'minutes +detail', 'minutes +search']);
 });
 
 test('samples: amber submit takes app.json as it is in the repo (code file, this chat, --user)', async () => {
