@@ -133,6 +133,8 @@ export function claimCard(c: CommandRow, trial?: { by?: string; blocks?: Block[]
     els.push(...renderBlocks(trial.blocks));
   }
   els.push({ tag: 'markdown', content: '<font color="grey">试运行就是以你的身份真实执行一次。</font>' });
+  // data-mcp answers trial runs with at most 20 rows per query, and does not always say so (truncated stays false).
+  if (c.script.services?.['data-mcp']) els.push({ tag: 'markdown', content: '<font color="grey">试运行时数据服务每次查询最多返回 20 行，结果可能不全；正式执行时没有这个限制（上限 1000 行）。</font>' });
   if (c.script.secrets?.length) els.push({ tag: 'markdown', content: c.script.secretsOptional ? '<font color="grey">这个应用的密钥可以只填一部分，也可以先不填：点「设置密钥」，Amber 会私聊你填写。</font>' : '<font color="grey">这个应用需要密钥：先点「设置密钥」，Amber 会私聊你填写，再试运行。</font>' });
   const buttons: unknown[] = [];
   if (trial?.blocks) buttons.push(btn('提交审核', { a: 'claim_submit', c: c.id }, 'primary'));

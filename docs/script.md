@@ -84,7 +84,8 @@ Content-Type: application/json
 - 请求体只能有 `sql` 和 `datasource`（可省略），多带任何字段返回 422。
 - 返回 200 时看 `status`：`success` 才算成功，数据在 `rows`（以列名为键的对象数组）、`columns`、`row_count`、`truncated`；`validation_error` 等失败也是 200，原因在 `error_code` 或 `issues[].code`。
 - 401 是凭证无效，409 是凭证已用过，429 是定时执行限流。
-- 试运行最多返回 20 行；`truncated` 为 true 时在输出里说明。
+- 试运行时每次查询最多返回 20 行（认领卡上会提示），试运行的数字可能不全；正式执行时上限是 1000 行。SQL 没写 `LIMIT` 时，服务会自动加 `LIMIT 200`。
+- `truncated` 为 true 时在输出里说明。**注意**：目前被服务自己加的 `LIMIT`（试运行的 20、默认的 200）截断时，`truncated` 不会是 true（data-mcp 的已知问题，已反馈）。需要完整结果时，SQL 里自己写 `LIMIT`（不超过 1000），返回行数等于这个数就当作可能被截断处理。
 - 声明了数据服务的应用不能直连网络（不能写 `network: true`）；经代理访问白名单地址不受影响。
 
 服务方怎么验证凭证见[可信身份](identity.md#36-已接入的服务data-mcp)。
