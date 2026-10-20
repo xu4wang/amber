@@ -184,10 +184,18 @@ elif OP == "搜妙记":
     # 我拥有的和我参与的，分开查再合并（接口对两个条件同时给的语义不确定）。
     found = {}
     for flag in ("--owner-ids", "--participant-ids"):
-        args = ["minutes", "+search", flag, "me", "--start", start.isoformat(timespec="seconds"), "--end", now.isoformat(timespec="seconds"), "--page-size", "30"]
-        if Q:
-            args += ["--query", Q[:50]]
-        found.update(minute_items(lark(args)))
+        page = None
+        for _ in range(4):   # 每页最多 30 条，翻到够「最多条数」为止
+            args = ["minutes", "+search", flag, "me", "--start", start.isoformat(timespec="seconds"), "--end", now.isoformat(timespec="seconds"), "--page-size", "30"]
+            if Q:
+                args += ["--query", Q[:50]]
+            if page:
+                args += ["--page-token", page]
+            d = lark(args)
+            found.update(minute_items(d))
+            page = d.get("page_token") if isinstance(d, dict) and d.get("has_more") else None
+            if not page or len(found) >= LIMIT:
+                break
     items = list(found.items())[:LIMIT]
     lines.append("# 妙记%s（过去 %d 小时，%d 条）" % ("「%s」" % Q if Q else "", HOURS, len(items)))
     for tok, v in items:

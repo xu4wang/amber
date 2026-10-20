@@ -65,7 +65,7 @@ data = {
   "im +chat-search": {"items": [{"name": "项目群", "chat_id": "oc_abc"}]},
   "mail +triage": {"messages": [{"message_id": "M1", "date": "Fri", "from": "A <a@x.com>", "subject": "合同"}]},
   "mail +message": {"subject": "合同", "from": {"mail_address": "a@x.com", "name": "A"}, "to": [{"mail_address": "me@x.com", "name": "我"}, {"mail_address": "b@x.com"}], "body_plain_text": "正文内容" * 20000},
-  "minutes +search": {"items": [{"token": "obc" + ("o" if "--owner-ids" in a else "p") + "x" * 20, "display_info": "&lt;b&gt;周会&lt;/b&gt;\\n开始时间: 2026.10.19 10:00", "meta_data": {"app_link": "https://x.feishu.cn/minutes/obc" + ("o" if "--owner-ids" in a else "p") + "x" * 20}}], "has_more": False},
+  "minutes +search": {"items": [{"token": "obc" + ("o" if "--owner-ids" in a else "p") + ("2" if "--page-token" in a else "x") + "x" * 19, "display_info": "&lt;b&gt;周会&lt;/b&gt;\\n开始时间: 2026.10.19 10:00", "meta_data": {"app_link": "https://x.feishu.cn/minutes/obc"}}], "has_more": "--page-token" not in a, "page_token": "p2"},
   "minutes +detail": {"minutes": [{"minute_token": "obcmxxxxxxxxxxxxxxxxxxxx", "title": "周会", "artifacts": {"summary": "定了三件事", "todos": [{"content": "张三发周报"}], "chapters": [{"title": "开场"}]}}]},
   "docs +fetch": {"document": {"title": "方案", "content": "# 方案\\n内容"}},
 }[k]
@@ -85,7 +85,7 @@ print(json.dumps({"ok": True, "data": data}))
   assert.match(s5, /发件人：A <a@x\.com>/); assert.match(s5, /收件人：我 <me@x\.com>、b@x\.com/); assert.doesNotMatch(s5, /mail_address/);
   assert.match(s5, /已截断/); assert.ok(s5.length < 61000);
   const s7 = run({ op: '搜妙记', q: '周会', hours: '48' });
-  assert.match(s7, /2 条/, 'owned and joined, merged'); assert.match(s7, /周会 · 开始时间: 2026\.10\.19 10:00/);
+  assert.match(s7, /4 条/, 'owned and joined, two pages each, merged'); assert.match(s7, /周会 · 开始时间: 2026\.10\.19 10:00/);
   const s8 = run({ op: '读妙记', q: 'https://x.feishu.cn/minutes/obcmxxxxxxxxxxxxxxxxxxxx' });
   assert.match(s8, /妙记：周会/); assert.match(s8, /定了三件事/); assert.match(s8, /张三发周报/); assert.match(s8, /李四：说正事/);
   assert.throws(() => run({ op: '读妙记', q: '昨天的会' }), 'a link or token only');
