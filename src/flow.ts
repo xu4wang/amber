@@ -461,6 +461,9 @@ export class Flow {
     }
     if (action !== 'claim_drop') this.checkOwnerForNewVersion(c, caller);
     if (action === 'claim_try') {
+      // Only the latest trial counts: a failed one takes back an earlier success, so the submit button
+      // (and the fallback card when Feishu refuses the result card) follow the current attempt.
+      this.store.setMeta(c.id, { trialBy: null });
       try {
         const r = await runCommand(this.store, c, form, caller, facts, { trial: true });
         if (!r.ok) return claimCard(c, { error: r.error }, meta.submittedBy, this.prevOf(c.id));
