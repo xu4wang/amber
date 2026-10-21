@@ -105,6 +105,9 @@ export interface PageRow {
   createdAt: number; updatedAt: number;
 }
 
+/** Usage of one page app: calls through it (runs) and opens of it. */
+export interface PageUsage { calls: number; ok: number; failed: number; callers: number; lastCallAt: number | null; opens: number; openers: number; lastOpenAt: number | null }
+
 export interface ExecutorRow {
   id: string; name: string; fingerprint: string; signPub: string; boxPub: string; envs: Record<string, ExecutorEnv>;
   machine: string; version: string; status: ExecutorStatus; createdAt: number; decidedBy: string | null; decidedAt: number | null; lastSeen: number | null;
@@ -426,6 +429,18 @@ export class Store {
     )`);
     const runCols = (this.db.prepare(`PRAGMA table_info(runs)`).all() as { name: string }[]).map(c => c.name);
     if (!runCols.includes('schedule_id')) this.db.exec('ALTER TABLE runs ADD COLUMN schedule_id TEXT');
+    // Which page app a run came from (channel 'page'). Runs from before the column: matched once to their page.call
+    // record (same person and app, started within 10 seconds after it).
+    if (!runCols.includes('page_id')) {
+      this.db.exec('ALTER TABLE runs ADD COLUMN page_id TEXT');
+      this.db.exec(`UPDATE runs SET page_id = (
+        SELECT json_extract(a.detail, '$.id') FROM audit a
+        WHERE a.action = 'page.call' AND a.actor_union_id = runs.caller_union_id AND json_extract(a.detail, '$.commandId') = runs.command_id
+          AND runs.started_at BETWEEN a.at AND a.at + 10000
+        ORDER BY a.at DESC LIMIT 1)
+      WHERE channel = 'page'`);
+    }
+    this.db.exec('CREATE INDEX IF NOT EXISTS runs_page ON runs(page_id, started_at)');
     // Where a login link lands (a page app it was sent for); fixed server side, never taken from the URL.
     const loginCols = (this.db.prepare(`PRAGMA table_info(web_logins)`).all() as { name: string }[]).map(c => c.name);
     if (!loginCols.includes('next')) this.db.exec('ALTER TABLE web_logins ADD COLUMN next TEXT');
@@ -652,11 +667,11 @@ export class Store {
     this.db.prepare('UPDATE commands SET status = ? WHERE id = ?').run(status, id);
   }
 
-  startRun(r: { commandId: string; specHash: string; channel: string; callerUnionId: string; chatId: string; args: Record<string, string> }): string {
+  startRun(r: { commandId: string; specHash: string; channel: string; callerUnionId: string; chatId: string; args: Record<string, string>; pageId?: string }): string {
     // Full random id: run and request ids are printed on cards, and must not be enumerable.
     const id = randomUUID();
-    this.db.prepare(`INSERT INTO runs (id, command_id, spec_hash, channel, caller_union_id, chat_id, args_json, status, started_at) VALUES (?,?,?,?,?,?,?,?,?)`)
-      .run(id, r.commandId, r.specHash, r.channel, r.callerUnionId, r.chatId, JSON.stringify(r.args), 'running', Date.now());
+    this.db.prepare(`INSERT INTO runs (id, command_id, spec_hash, channel, caller_union_id, chat_id, args_json, status, started_at, page_id) VALUES (?,?,?,?,?,?,?,?,?,?)`)
+      .run(id, r.commandId, r.specHash, r.channel, r.callerUnionId, r.chatId, JSON.stringify(r.args), 'running', Date.now(), r.pageId ?? null);
     return id;
   }
 
@@ -1028,6 +1043,33 @@ export class Store {
   getPage(id: string): PageRow | undefined { return this.pageRow(this.db.prepare('SELECT * FROM pages WHERE id = ?').get(id) as Record<string, unknown> | undefined); }
   pageByName(chatId: string, name: string): PageRow | undefined { return this.pageRow(this.db.prepare(`SELECT * FROM pages WHERE chat_id = ? AND name = ? AND status != 'deleted'`).get(chatId, name) as Record<string, unknown> | undefined); }
   listPages(): PageRow[] { return (this.db.prepare(`SELECT * FROM pages WHERE status != 'deleted' ORDER BY updated_at DESC`).all() as Record<string, unknown>[]).map(r => this.pageRow(r)!); }
+  /** How each page has been used: calls made through it (runs) and opens (page.open records, kept since they were added). */
+  pageUsage(): Map<string, PageUsage> {
+    const out = new Map<string, PageUsage>();
+    const get = (id: string) => { if (!out.has(id)) out.set(id, { calls: 0, ok: 0, failed: 0, callers: 0, lastCallAt: null, opens: 0, openers: 0, lastOpenAt: null }); return out.get(id)!; };
+    for (const r of this.db.prepare(`SELECT page_id, COUNT(*) n, SUM(status = 'ok') ok, SUM(status = 'failed') failed, COUNT(DISTINCT caller_union_id) callers, MAX(started_at) last
+      FROM runs WHERE page_id IS NOT NULL GROUP BY page_id`).all() as Record<string, unknown>[]) {
+      Object.assign(get(String(r.page_id)), { calls: Number(r.n), ok: Number(r.ok ?? 0), failed: Number(r.failed ?? 0), callers: Number(r.callers), lastCallAt: r.last == null ? null : Number(r.last) });
+    }
+    for (const r of this.db.prepare(`SELECT json_extract(detail, '$.id') id, COUNT(*) n, COUNT(DISTINCT actor_union_id) openers, MAX(at) last
+      FROM audit WHERE action = 'page.open' GROUP BY 1`).all() as Record<string, unknown>[]) {
+      if (r.id == null) continue;
+      Object.assign(get(String(r.id)), { opens: Number(r.n), openers: Number(r.openers), lastOpenAt: r.last == null ? null : Number(r.last) });
+    }
+    return out;
+  }
+  /** The latest calls made through a page, newest first. */
+  pageRuns(pageId: string, limit: number): { id: string; app: string; callerUnionId: string; status: string; error: string | null; startedAt: number; finishedAt: number | null }[] {
+    return (this.db.prepare(`SELECT r.id, COALESCE(c.name, r.command_id) app, r.caller_union_id, r.status, r.error, r.started_at, r.finished_at FROM runs r LEFT JOIN commands c ON c.id = r.command_id
+      WHERE r.page_id = ? ORDER BY r.started_at DESC LIMIT ?`).all(pageId, limit) as Record<string, unknown>[])
+      .map(r => ({ id: String(r.id), app: String(r.app), callerUnionId: String(r.caller_union_id), status: String(r.status), error: (r.error as string) ?? null, startedAt: Number(r.started_at), finishedAt: r.finished_at == null ? null : Number(r.finished_at) }));
+  }
+  /** Who opened a page and when they last did, most recent first. */
+  pageOpeners(pageId: string, limit: number): { unionId: string; opens: number; lastAt: number }[] {
+    return (this.db.prepare(`SELECT actor_union_id u, COUNT(*) n, MAX(at) last FROM audit WHERE action = 'page.open' AND json_extract(detail, '$.id') = ? AND actor_union_id IS NOT NULL
+      GROUP BY actor_union_id ORDER BY last DESC LIMIT ?`).all(pageId, limit) as Record<string, unknown>[])
+      .map(r => ({ unionId: String(r.u), opens: Number(r.n), lastAt: Number(r.last) }));
+  }
   insertPage(p: Pick<PageRow, 'id' | 'name' | 'chatId' | 'chatType' | 'ownerUnionId' | 'ownerOpenId' | 'pending'>): void {
     const now = Date.now();
     this.db.prepare(`INSERT INTO pages (id, name, chat_id, chat_type, owner_union_id, owner_open_id, status, pending_json, created_at, updated_at) VALUES (?,?,?,?,?,?,'pending',?,?,?)`)

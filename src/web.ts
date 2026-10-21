@@ -8,7 +8,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { createHash, randomBytes } from 'node:crypto';
 import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
-import type { Store, CommandRow, ScheduleRow, PageRow } from './db.ts';
+import type { Store, CommandRow, ScheduleRow, PageRow, PageUsage } from './db.ts';
 import type { Caller } from './engine.ts';
 import { runCommand, AmberError, ENV_NOT_GLOBAL, secretVault, lineOf, runParams, configParams, configValues, validateArgs } from './engine.ts';
 import type { Signer } from './identity.ts';
@@ -95,6 +95,7 @@ const AUTH_FAILED: Record<string, string> = {
 /** A website run still going after runWaitMs: the page asks for it by job id. Kept 30 minutes after it ends. */
 interface WebJob { owner: string; done?: Record<string, unknown>; endedAt?: number }
 const JOB_KEEP_MS = 30 * 60_000;
+const OPEN_EVERY_MS = 30 * 60_000;
 
 /** Groups of audit actions for the filter on the audit page (by action name prefix). */
 const AUDIT_CATEGORIES: Record<string, { label: string; prefixes: string[] }> = {
@@ -193,6 +194,15 @@ export function startWeb(port: number, store: Store, deps: WebDeps): import('nod
   }
   const docTemplate = readFileSync(join(import.meta.dirname, '..', 'web', 'docs.html'), 'utf8');
   const jobs = new Map<string, WebJob>();
+  // Page opens go to the audit log (page.open), at most once per person and page every 30 minutes: reloads are not new opens.
+  const opened = new Map<string, number>();
+  const noteOpen = (p: PageRow, unionId: string) => {
+    const k = `${p.id}:${unionId}`, now = Date.now();
+    if ((opened.get(k) ?? 0) > now - OPEN_EVERY_MS) return;
+    if (opened.size > 10_000) for (const [key, at] of opened) if (at <= now - OPEN_EVERY_MS) opened.delete(key);
+    opened.set(k, now);
+    store.audit(unionId, 'page.open', { id: p.id, name: p.name, chatId: p.chatId });
+  };
   const docPages = new Map<string, string>();
   for (const [name, title] of DOCS) {
     const md = readFileSync(join(import.meta.dirname, '..', 'docs', `${name}.md`), 'utf8');
@@ -288,6 +298,7 @@ export function startWeb(port: number, store: Store, deps: WebDeps): import('nod
         if (!who) return note('请先登录 Amber', '回到飞书里这个页面的卡片，点「私聊我免登录链接」，在私聊里一点就能打开。也可以私聊 Amber 发送「登录」，登录后回到这个页面刷新。');
         const p = store.getPage(pm[1]);
         if (!p || !(await deps.pages.canView(p, who.unionId))) return note('打不开这个页面', '页面不存在，或者你没有访问权限。需要的话请联系页面的创建人。');
+        noteOpen(p, who.unionId);
         const data = JSON.stringify({ id: p.id, name: p.name, src: `${pagesOrigin}/c/${deps.pages.token(p, who.unionId)}/`, pagesOrigin, me: (await deps.nameOf(who.unionId)) ?? '', allowHosts: getGlobalAllowHosts(store) }).replace(/</g, '\\u003c');
         return send(res, 200, 'text/html; charset=utf-8', shellTpl.replace('__TITLE__', escHtml(p.name)).replace('__PAGE_DATA__', data), {
           'content-security-policy': `default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; frame-src ${pagesOrigin}; base-uri 'none'; form-action 'none'; frame-ancestors 'none'`,
@@ -376,6 +387,18 @@ export function startWeb(port: number, store: Store, deps: WebDeps): import('nod
             : await Promise.all(store.groupChatsWithApps().map(async id => ({ id, name: (await chatOf(id)) ?? id })));
           return json(res, 200, { ok: true, categories: Object.entries(AUDIT_CATEGORIES).map(([k, v]) => ({ key: k, label: v.label })), ...(chatList ? { chats: chatList } : {}),
             rows: await Promise.all(rows.map(async r => { const cid = commandOfRow(r.detail); return { ...r, actorName: r.actor ? actorNames.get(r.actor) : null, refs: await refsOf(r.detail), app: cid ? await appOf(cid) : undefined, detail: r.detail.length > 2000 ? r.detail.slice(0, 2000) + '…' : r.detail }; })) });
+        }
+        const pu = req.method === 'GET' && deps.pages ? /^\/web\/api\/pages\/([0-9a-f]{8})\/usage$/.exec(url.pathname) : null;
+        if (pu) {
+          // How a page is used: its creator and admins only (the same people who see who may open it).
+          const p = store.getPage(pu[1]);
+          if (!p || p.status === 'deleted' || (p.ownerUnionId !== who.unionId && !deps.isAdmin(who.unionId))) return json(res, 404, { ok: false, error: 'not_found' });
+          const names = new Map<string, Promise<string>>();
+          const nameOf = (u: string) => { if (!names.has(u)) names.set(u, deps.nameOf(u).catch(() => undefined).then(n => n ?? u)); return names.get(u)!; };
+          const runs = store.pageRuns(p.id, 30), openers = store.pageOpeners(p.id, 30);
+          return json(res, 200, { ok: true, usage: store.pageUsage().get(p.id) ?? null,
+            runs: await Promise.all(runs.map(async r => ({ ...r, caller: await nameOf(r.callerUnionId), error: r.error ? r.error.split('\n')[0].slice(0, 200) : null }))),
+            openers: await Promise.all(openers.map(async o => ({ ...o, name: await nameOf(o.unionId) }))) });
         }
         if (req.method === 'GET' && url.pathname === '/web/api/settings') {
           // Site-wide settings: admins only.
@@ -808,7 +831,20 @@ async function overview(store: Store, deps: WebDeps, unionId: string) {
     me: unionId,
     isAdmin: deps.isAdmin(unionId),
     ...(deps.isAdmin(unionId) && deps.hub ? { executors: await executorViews(store, deps) } : {}),
+    ...(admin && deps.pages ? { allPages: await Promise.all(allPages.map(async p => ({ ...pageView(store, deps, p, unionId),
+      where: p.chatType === 'p2p' ? 'p2p' : 'group:' + p.chatId, chatName: p.chatType === 'p2p' ? null : (await deps.chatName(p.chatId)) ?? p.chatId,
+      owner: (await deps.nameOf(p.ownerUnionId).catch(() => undefined)) ?? p.ownerUnionId }))) } : {}),
   };
+}
+
+/** Page usage for one overview: read once, not once per page. */
+const USAGE = new WeakMap<Store, { at: number; v: Map<string, PageUsage> }>();
+function usageOf(store: Store): Map<string, PageUsage> {
+  const c = USAGE.get(store);
+  if (c && Date.now() - c.at < 1000) return c.v;
+  const v = store.pageUsage();
+  USAGE.set(store, { at: Date.now(), v });
+  return v;
 }
 
 /** What the website shows about a page. Who may open it is shown to its owner (and admins) only. */
@@ -816,7 +852,7 @@ function pageView(store: Store, deps: WebDeps, p: PageRow, viewer: string) {
   const mine = p.ownerUnionId === viewer, admin = deps.isAdmin(viewer);
   return {
     id: p.id, name: p.name, version: p.version, updatedAt: p.updatedAt, mine, canDelete: mine || admin, url: `/p/${p.id}/`,
-    ...(mine || admin ? { access: p.access, members: p.members } : {}),
+    ...(mine || admin ? { access: p.access, members: p.members, usage: usageOf(store).get(p.id) ?? null } : {}),
     apps: p.apps.map(a => {
       try {
         const c = deps.pages!.resolveApp(p, a.name);

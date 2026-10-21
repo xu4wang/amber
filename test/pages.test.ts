@@ -204,11 +204,33 @@ test('pages: publish with confirmation, access, calls as the viewer, signed file
     assert.ok(sdk.includes(JSON.stringify(web)), 'the SDK only talks to Amber');
     assert.notEqual((await fetch(`${web}${new URL(src).pathname}index.html`)).headers.get('content-type'), 'text/html; charset=utf-8', 'page files never come from Amber\'s origin');
 
-    // 6. Listed on the website for the people it is shared with; deleted by the owner.
+    // 6. Usage: each call through the page carries its id; opens are counted once per person every 30 minutes.
+    assert.deepEqual(env.amber.store.pageRuns(id, 10).map(r => r.app).sort(), ['写文档', '带密钥', '查数', '查服务'].sort(), 'calls refused before running are not runs');
+    assert.ok(env.amber.store.pageRuns(id, 10).some(r => r.id === sv.body.runId));
+    assert.ok(env.amber.store.listAudit({ prefixes: ['run.'], limit: 50 }).some(a => a.action === 'run.start' && JSON.parse(a.detail).runId === sv.body.runId && JSON.parse(a.detail).pageId === id));
+    const opens = env.amber.store.listAudit({ prefixes: ['page.open'], limit: 50 });
+    assert.deepEqual(opens.map(a => a.actor).sort(), [alice.unionId, bob.unionId, carol.unionId].sort(), 'once each though opened again and again; refused opens are not opens');
+    const usageOf = (cookie: string) => fetch(`${web}/web/api/pages/${id}/usage`, { headers: { cookie } }).then(async x => ({ status: x.status, body: await x.json() }));
+    const mine = await usageOf(bobC);
+    assert.deepEqual(mine.body.usage, { ...mine.body.usage, calls: 4, ok: 4, failed: 0, callers: 2, opens: 3, openers: 3 }, JSON.stringify(mine.body.usage));
+    assert.equal(mine.body.runs.length, 4);
+    assert.ok(mine.body.runs.every((r: any) => typeof r.caller === 'string' && r.caller));
+    assert.equal(mine.body.openers.length, 3);
+    assert.equal((await usageOf(carolC)).status, 404, 'a viewer does not see who else used it');
+    assert.equal((await usageOf(aliceC)).status, 200, 'an admin does');
+    const adminOv = await (await fetch(`${web}/web/api/overview`, { headers: { cookie: aliceC } })).json();
+    const all = adminOv.allPages.find((x: any) => x.id === id);
+    assert.equal(all.usage.calls, 4, 'admins see every page with its usage');
+    assert.equal(all.where, 'group:' + GROUP);
+    assert.ok(all.owner);
+
+    // 7. Listed on the website for the people it is shared with; deleted by the owner.
     const ov = await (await fetch(`${web}/web/api/overview`, { headers: { cookie: carolC } })).json();
+    assert.equal(ov.allPages, undefined, 'the all-pages list is for admins');
     const listed = ov.groups.find((g: any) => g.chatId === GROUP).pages;
     assert.deepEqual(listed.map((x: any) => x.name), ['report']);
     assert.equal(listed[0].access, undefined, 'who may open it: shown to the owner only');
+    assert.equal(listed[0].usage, undefined, 'and so is its usage');
     assert.equal((await post(carolC, `/web/api/pages/${id}/delete`, {})).status, 403);
     assert.equal((await post(bobC, `/web/api/pages/${id}/delete`, {})).body.ok, true);
     assert.match((await shell(bobC)).text, /打不开这个页面/);
@@ -221,4 +243,26 @@ test('pages: publish with confirmation, access, calls as the viewer, signed file
 
 test('pages: refuse to serve pages from Amber\'s own host', async () => {
   await assert.rejects(makeEnv({ webBaseUrl: 'http://amber.test', pagesBaseUrl: 'http://amber.test/' }), /different host/);
+});
+
+test('pages: runs from before page ids are matched to their page once', async () => {
+  const { mkdtempSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const { Store } = await import('../src/db.ts');
+  const dir = mkdtempSync(join(tmpdir(), 'amber-pgmig-'));
+  let st = new Store(dir);
+  const db = (st as any).db;
+  db.exec('DROP INDEX runs_page; ALTER TABLE runs DROP COLUMN page_id');
+  const t = 1_800_000_000_000;
+  const run = (id: string, cmd: string, who: string, channel: string, at: number) => db.prepare(`INSERT INTO runs (id, command_id, spec_hash, channel, caller_union_id, chat_id, args_json, status, started_at) VALUES (?,?,?,?,?,?,?,?,?)`).run(id, cmd, 'h', channel, who, 'oc_x', '{}', 'ok', at);
+  const call = (page: string, cmd: string, who: string, at: number) => db.prepare('INSERT INTO audit (at, actor_union_id, action, detail) VALUES (?,?,?,?)').run(at, who, 'page.call', JSON.stringify({ id: page, commandId: cmd }));
+  call('aaaaaaaa', 'c1', 'u1', t); run('r1', 'c1', 'u1', 'page', t + 20);
+  call('bbbbbbbb', 'c1', 'u1', t + 3_000); run('r2', 'c1', 'u1', 'page', t + 3_050);     // both calls are close: the later one
+  call('aaaaaaaa', 'c2', 'u2', t); run('r3', 'c2', 'u1', 'page', t + 20);               // someone else's call
+  run('r4', 'c1', 'u1', 'web', t + 30);                                                    // not through a page
+  call('aaaaaaaa', 'c3', 'u1', t); run('r5', 'c3', 'u1', 'page', t + 30_000);            // too long after
+  st = new Store(dir);
+  const pageOf = (id: string) => ((st as any).db.prepare('SELECT page_id FROM runs WHERE id = ?').get(id) as { page_id: string | null }).page_id;
+  assert.deepEqual(['r1', 'r2', 'r3', 'r4', 'r5'].map(pageOf), ['aaaaaaaa', 'bbbbbbbb', null, null, null]);
+  assert.equal(st.pageUsage().get('aaaaaaaa')!.calls, 1);
 });

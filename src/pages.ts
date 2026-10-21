@@ -272,7 +272,7 @@ export class PageService {
     const cmd = this.resolveApp(p, app);
     if (cmd.script.secrets?.length && viewer.unionId !== p.ownerUnionId) throw new AmberError('forbidden', `「${cmd.name}」用到了创建人的密钥，只有页面创建人自己能通过页面调用`);
     if (cmd.options.confirm && !confirmed) throw new AmberError('needs_confirm', `「${cmd.name}」需要确认后执行`);
-    const caller: Caller = { unionId: viewer.unionId, openId: viewer.openId, chatId: p.chatId, chatType: p.chatType, channel: 'page' };
+    const caller: Caller = { unionId: viewer.unionId, openId: viewer.openId, chatId: p.chatId, chatType: p.chatType, channel: 'page', pageId: p.id };
     this.store.audit(viewer.unionId, 'page.call', { id, page: p.name, app: cmd.name, commandId: cmd.id });
     return runCommand(this.store, cmd, args, caller, { city: () => this.deps.cityOf(viewer.unionId), signer: this.deps.facts.signer }, { viaForm: true });
   }

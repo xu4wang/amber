@@ -79,6 +79,8 @@ export interface Caller {
   chatId: string;
   chatType: 'group' | 'p2p';
   channel: 'bot' | 'web' | 'agent' | 'schedule' | 'page';
+  /** The page app the call came through (channel 'page'). */
+  pageId?: string;
 }
 
 export class AmberError extends Error {
@@ -234,9 +236,9 @@ export async function runCommand(store: Store, cmd: CommandRow, rawArgs: Record<
       }
     }
     const started = Date.now();
-    const runId = store.startRun({ commandId: cmd.id, specHash: cmd.specHash, channel: opts.trial ? `${caller.channel}.trial` : caller.channel, callerUnionId: caller.unionId, chatId: caller.chatId, args });
+    const runId = store.startRun({ commandId: cmd.id, specHash: cmd.specHash, channel: opts.trial ? `${caller.channel}.trial` : caller.channel, callerUnionId: caller.unionId, chatId: caller.chatId, args, ...(caller.pageId ? { pageId: caller.pageId } : {}) });
     // chatId: where it was run from. app*: where the app itself belongs (a group, or its owner's private chat), as of this run.
-    store.audit(caller.unionId, 'run.start', { runId, commandId: cmd.id, name: cmd.name, channel: caller.channel, chatId: caller.chatId,
+    store.audit(caller.unionId, 'run.start', { runId, commandId: cmd.id, name: cmd.name, channel: caller.channel, chatId: caller.chatId, ...(caller.pageId ? { pageId: caller.pageId } : {}),
       appScope: cmd.scopeType, appChatId: cmd.chatId, ...(cmd.scopeType === 'p2p' ? { appOwner: cmd.ownerUnionId } : {}), ...(cmd.global ? { appGlobal: true } : {}) });
     // The script gets one single-use ticket per declared call (D41), never a signed token and never the service's
     // address: its call goes to the run's relay port (ExecutorHub, relay-port.ts), and Amber signs the token for the
