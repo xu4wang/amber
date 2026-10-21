@@ -500,7 +500,7 @@ function renderTree() {
   let html = '<input class="search" id="q" placeholder="搜索应用">';
   if (o.membershipUnknown) html += '<div class="banner">Amber 暂时无法读取群成员，群里的应用先不显示。</div>';
   html += folder('我的私聊', 'p2p', o.p2p.commands, o.p2p.schedules, o.p2p.pages || []);
-  const groupApps = o.groups.reduce((n, g) => n + g.commands.length, 0);
+  const groupApps = o.groups.reduce((n, g) => n + g.commands.length + (g.pages || []).length, 0);
   html += node('groups', `我的群聊<span class="count">${groupApps}</span>`,
     o.groups.map(g => folder(g.name, 'group:' + g.chatId, g.commands, g.schedules, g.pages || [])).join('') || '<div class="empty-leaf">还没有群里的应用</div>');
   html += folder('全局应用', 'global', o.global, []);
@@ -530,6 +530,14 @@ function renderTree() {
       ITEMS.set('set:allow-hosts', { kind: 'set-hosts' });
       if (SETTINGS.assistant) ITEMS.set('set:assistant', { kind: 'set-assist' });
       admin += node('settings', '系统设置', '<div class="leaf" data-key="set:run-limits" data-search="运行限制 时限 并发"><span class="name">运行限制</span></div><div class="leaf" data-key="set:allow-hosts" data-search="网络白名单 代理 域名"><span class="name">网络白名单</span></div><div class="leaf" data-key="set:card-footer" data-search="卡片页脚 footer"><span class="name">卡片页脚</span></div>' + (SETTINGS.assistant ? '<div class="leaf" data-key="set:assistant" data-search="智能引导 大模型 自然语言"><span class="name">智能引导</span></div>' : ''));
+    }
+    if (o.allPages) {
+      // Every page app, wherever it is: who made it, where, and how much it is used.
+      admin += node('all-pages', `页面应用<span class="count">${o.allPages.length}</span>`, o.allPages.map(pg => {
+        const key = 'apg:' + pg.id, u = pg.usage;
+        ITEMS.set(key, { kind: 'page', pg, scope: pg.where });
+        return `<div class="leaf" data-key="${esc(key)}" data-search="${esc((pg.name + ' ' + pg.owner + ' ' + (pg.chatName || '')).toLowerCase())} 页面"><span class="name">${esc(pg.name)}</span><span class="sub">${esc(pg.owner)} · 调用 ${u ? u.calls : 0}</span></div>`;
+      }).join('') || '<div class="empty-leaf">还没有页面</div>');
     }
     ITEMS.set('audit', { kind: 'audit' });
     admin += '<div class="leaf" data-key="audit" data-search="审计日志 audit"><span class="name">审计日志</span></div>';
@@ -879,7 +887,7 @@ const AUDIT_LABEL = {
   'config.delete': '删除配置项', 'config.drop_all': '删除全部配置项', 'secret.delete': '删除密钥', 'request.cancel': '取消确认请求',
   'review.feishu_check_failed': '飞书审批状态查询失败', 'schedule.missed': '定时任务错过（Amber 未运行）', 'web.logout_all': '退出所有网站登录',
   'trigger.request': '请求新建触发器', 'trigger.create': '新建触发器', 'trigger.cancel': '取消新建触发器', 'trigger.pause': '暂停触发器', 'trigger.resume': '恢复触发器', 'trigger.delete': '删除触发器', 'trigger.deliver_failed': '触发器通知发送失败',
-  'page.publish_request': '请求发布页面', 'page.publish': '发布页面', 'page.publish_cancel': '取消发布页面', 'page.update': '更新页面内容', 'page.access': '修改页面访问范围', 'page.delete': '删除页面', 'page.call': '页面调用应用',
+  'page.publish_request': '请求发布页面', 'page.open': '打开页面', 'page.publish': '发布页面', 'page.publish_cancel': '取消发布页面', 'page.update': '更新页面内容', 'page.access': '修改页面访问范围', 'page.delete': '删除页面', 'page.call': '页面调用应用',
   'startup.seed': '首次启动写入默认设置', 'startup.interrupted_runs': '重启时标记中断的执行', 'startup.unrunnable': '发现不能执行的应用',
 };
 let AUDIT = { rows: [], cat: '', q: '', chat: '', trigger: '', done: false, categories: [], chats: [] };
@@ -927,7 +935,7 @@ function pagePane({ pg, scope }) {
   const group = scope.startsWith('group:');
   document.getElementById('pane').innerHTML = `${backBtn}
     <div class="pane-head"><h1>${esc(pg.name)}</h1><span class="chip">页面</span></div>
-    <div class="where">${esc(scopeName(scope))} · 第 ${esc(pg.version)} 版 · 更新于 ${fmtTime(pg.updatedAt)}${pg.mine ? '' : ' · 别人分享给你的'}</div>
+    <div class="where">${esc(scope === 'p2p' && !pg.mine ? `私聊（创建人 ${pg.owner || '未知'}）` : scopeName(scope))} · 第 ${esc(pg.version)} 版 · 更新于 ${fmtTime(pg.updatedAt)}${pg.mine ? '' : pg.owner ? ` · 创建人 ${esc(pg.owner)}` : ' · 别人分享给你的'}</div>
     <p class="desc">页面由 agent 发布，在新标签页打开。页面里查数、写飞书都通过下面这些应用，每次都以打开页面的人自己的身份执行。</p>
     <div class="actions" style="margin-bottom:24px"><a class="btn primary" href="${esc(pg.url)}" target="_blank" rel="noopener">打开页面</a></div>
     <div class="box"><h3>页面会调用的应用</h3>${pg.apps.length ? `<ul class="pg-apps">${pg.apps.map(appLine).join('')}</ul>` : '<p class="note">这个页面不调用任何应用。</p>'}</div>
@@ -940,7 +948,9 @@ function pagePane({ pg, scope }) {
       <div class="pg-foot"><p class="note" style="margin:0">每次打开和调用都会检查：在名单里，并且现在还在这个群里。退群的人自动失去访问权限。</p>
         <button class="btn primary" data-pg="access">保存</button></div>` : '<p class="note">私聊里的页面只有你自己能访问。</p>'}`
       : `<p>${ACC[pg.access]}${pg.access === 'members' ? `（${pg.members.length} 人）` : ''}</p>`}</div>` : ''}
+    ${pg.usage !== undefined ? `<div class="box"><h3>使用情况</h3>${pageUsageLine(pg.usage)}<div id="pg-usage"><p class="note">加载调用记录……</p></div></div>` : ''}
     ${pg.canDelete ? `<div class="manage"><h3>删除页面</h3><p class="note">删除后链接立即失效，页面文件一起删除。应用不受影响。</p><button class="btn danger" data-pg="delete">删除这个页面</button></div>` : ''}`;
+  if (pg.usage !== undefined) loadPageUsage(pg);
   if (pg.mine && group) {
     const chat = scope.slice(6);
     const showMembers = async () => {
@@ -957,6 +967,22 @@ function pagePane({ pg, scope }) {
     }));
     if (pg.access === 'members') showMembers();
   }
+}
+
+// Page usage (creator and admins): totals, then who called what and who opened it.
+function pageUsageLine(u) {
+  if (!u || (!u.calls && !u.opens)) return '<p class="note">还没有人通过这个页面调用应用，也没有打开记录。</p>';
+  return `<p>调用 <b>${u.calls}</b> 次（成功 ${u.ok}，失败 ${u.failed}），${u.callers} 人调用过${u.lastCallAt ? `，最近一次 ${fmtTime(u.lastCallAt)}` : ''}。<br>打开 <b>${u.opens}</b> 次，${u.openers} 人打开过${u.lastOpenAt ? `，最近一次 ${fmtTime(u.lastOpenAt)}` : ''}。</p>`;
+}
+async function loadPageUsage(pg) {
+  const r = await fetch(`/web/api/pages/${pg.id}/usage`).then(x => x.json()).catch(() => ({ ok: false }));
+  const box = document.getElementById('pg-usage');
+  if (!box) return;
+  if (!r.ok) { box.innerHTML = '<p class="note">读不到调用记录</p>'; return; }
+  const ST = { ok: '成功', failed: '失败', running: '运行中' };
+  box.innerHTML = `${r.runs.length ? `<h4>最近调用</h4><table style="width:100%"><thead><tr><th>时间</th><th>调用人</th><th>应用</th><th>结果</th></tr></thead><tbody>${r.runs.map(x => `<tr><td>${fmtTime(x.startedAt)}</td><td>${esc(x.caller)}</td><td>${esc(x.app)}</td><td>${esc(ST[x.status] || x.status)}${x.error ? `<span class="note">（${esc(x.error)}）</span>` : ''}</td></tr>`).join('')}</tbody></table>` : ''}
+    ${r.openers.length ? `<h4>谁打开过</h4><table style="width:100%"><thead><tr><th>人</th><th>打开次数</th><th>最近一次</th></tr></thead><tbody>${r.openers.map(x => `<tr><td>${esc(x.name)}</td><td>${x.opens}</td><td>${fmtTime(x.lastAt)}</td></tr>`).join('')}</tbody></table>` : ''}
+    <p class="note">同一个人 30 分钟内反复打开只算一次。打开记录从这个功能上线起才有，之前的只有调用记录。</p>`;
 }
 
 function exeLimitBlock(e) {
