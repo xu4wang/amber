@@ -66,6 +66,8 @@ if k == "api GET":
     print(json.dumps({"ok": True}))
     sys.exit(0)
 msg = lambda i, t, **kw: {"message_id": "om_%d" % i, "create_time": "2026-10-17 10:%02d" % (i % 60), "sender": {"name": "张三"}, "chat_name": "项目群", "content": t, **kw}
+if k == "im +threads-messages-list" and os.environ.get("FAKE_SLOW"):
+    import time; time.sleep(10)
 if k == "im +messages-search" and os.environ.get("FAKE_MANY"):
     print(json.dumps({"ok": True, "data": {"messages": [msg(i, "白名单 " + "y" * 1500) for i in range(100)]}}))
     sys.exit(0)
@@ -93,6 +95,9 @@ print(json.dumps({"ok": True, "data": data}))
   assert.match(s1, /OCBC 上线.*`om_5`\n  ↳ - .*张三：给 Wade\n  ↳ - .*张三：周报 白名单 已加/);
   assert.equal(s1.match(/周报 白名单 已加/g)?.length, 1);
   assert.equal(readFileSync(log, 'utf8').split('+threads-messages-list').length - 1, 1, 'each thread is read once');
+  // A slow thread read is cut at the remaining time budget and noted, not left to kill the whole run.
+  const ss = run({ op: '搜消息', q: '周报' }, { FAKE_SLOW: '1', MLD_THREAD_BUDGET: '8' });
+  assert.match(ss, /张三：周报 已发/); assert.match(ss, /话题回复没读到：超时/);
   // Too much for the agent to see in one go: cut on a whole line, under the cap, and say how many are left.
   const sm = run({ op: '搜消息', q: '白名单', limit: '100' }, { FAKE_MANY: '1' });
   assert.ok(sm.length < 25300, String(sm.length)); assert.match(sm, /后面还有 (\d+) 条没显示/);

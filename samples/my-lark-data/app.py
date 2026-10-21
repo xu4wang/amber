@@ -19,6 +19,8 @@ ITEM_MAX = 2000      # 单条消息、单封邮件摘要的最多字数
 REPLY_MAX = 500      # 搜消息带回的单条话题回复的最多字数
 THREADS_MAX = 10     # 搜消息最多展开几个话题
 REPLIES_MAX = 20     # 每个话题最多带几条回复
+THREAD_BUDGET = int(os.environ.get("MLD_THREAD_BUDGET") or 140)  # 从脚本启动算，超过这么多秒不再展开话题（脚本整体超时 180 秒）
+T0 = time.monotonic()
 TZ = timezone(timedelta(hours=8))
 now = datetime.now(TZ)
 start = now - timedelta(hours=HOURS)
@@ -153,13 +155,15 @@ def msg_line(m, indent="", limit=ITEM_MAX):
     return "%s- %s %s%s：%s" % (indent, t, ("[%s] " % chat) if chat else "", who(m), clean(m.get("content"), limit))
 
 
-def thread_lines(tid, hit_id, shown):
+def thread_lines(tid, hit_id, shown, timeout):
     """The other messages in a hit's thread (the root and its replies), indented under the hit.
     Search only returns messages that contain the keyword; a reply like 「给 Wade」 under 「要加白名单」 would be lost."""
     try:
-        d = lark(["im", "+threads-messages-list", "--thread", tid, "--order", "asc", "--no-reactions", "--page-size", str(REPLIES_MAX + 1)], timeout=30)
+        d = lark(["im", "+threads-messages-list", "--thread", tid, "--order", "asc", "--no-reactions", "--page-size", str(REPLIES_MAX + 1)], timeout=timeout)
     except SystemExit as e:
         return ["  ↳ （话题回复没读到：%s）" % clean(str(e.code), 200)]
+    except subprocess.TimeoutExpired:
+        return ["  ↳ （话题回复没读到：超时）"]
     rs = [r for r in items(d) if r.get("message_id") != hit_id]
     more = len(rs) > REPLIES_MAX or (isinstance(d, dict) and d.get("has_more"))
     out = []
@@ -181,7 +185,7 @@ if OP == "搜消息":
               "--no-reactions", "--page-size", str(min(LIMIT, 50))] + (["--page-limit", str((LIMIT + 49) // 50)] if LIMIT > 50 else []))
     ms = items(d)[:LIMIT]
     lines.append("# 搜消息「%s」（过去 %d 小时，%d 条；命中的消息在话题里时，话题里的其他消息缩进列在下面）" % (Q, HOURS, len(ms)))
-    t0, threads, shown = time.monotonic(), set(), set()
+    threads, shown = set(), set()
     for m in ms:
         if m.get("message_id") in shown:   # 已经作为前面某个话题的回复列出过
             continue
@@ -193,10 +197,11 @@ if OP == "搜消息":
         if not tid or tid in threads:
             continue
         threads.add(tid)
-        if len(threads) > THREADS_MAX or time.monotonic() - t0 > 90:
+        left_s = THREAD_BUDGET - (time.monotonic() - T0)
+        if len(threads) > THREADS_MAX or left_s < 5:
             lines.append("  ↳ （这条在话题里，回复没展开：可以用「会话记录」查这个群，或换更具体的关键词）")
             continue
-        lines += thread_lines(tid, m.get("message_id"), shown)
+        lines += thread_lines(tid, m.get("message_id"), shown, min(30, left_s))
 elif OP == "会话记录":
     if not re.match(r"^(oc|ou)_[A-Za-z0-9]+$", Q):
         sys.exit("会话记录要在「内容」里写群的 oc_… 或私聊对方的 ou_…（可以先用「找会话」查）")
