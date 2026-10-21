@@ -1,6 +1,6 @@
 # 我的飞书数据：以执行人本人的飞书身份只读地取数据，结果交给发起请求的 agent（amber read）。
 # 只调用读接口；不发消息、不改文档、不动邮件。
-import html, json, os, re, subprocess, sys
+import html, json, os, re, subprocess, sys, time
 from datetime import datetime, timedelta, timezone
 
 inp = json.load(sys.stdin)
@@ -13,8 +13,12 @@ LU = inp["larkUser"]
 CLI = LU.get("cli") or "lark-cli"
 ENV = {**os.environ, **LU["env"]}
 
-MAX_OUT = 60000      # 交给 agent 的最多字数
+MAX_OUT = 60000      # 交给 agent 的最多字数（读邮件、读文档、读妙记）
+LIST_MAX = 25000     # 列表类操作的最多字数：agent 那边单次命令输出约 3 万字就会被截掉或折叠，超出的它多半看不到
 ITEM_MAX = 2000      # 单条消息、单封邮件摘要的最多字数
+REPLY_MAX = 500      # 搜消息带回的单条话题回复的最多字数
+THREADS_MAX = 10     # 搜消息最多展开几个话题
+REPLIES_MAX = 20     # 每个话题最多带几条回复
 TZ = timezone(timedelta(hours=8))
 now = datetime.now(TZ)
 start = now - timedelta(hours=HOURS)
@@ -141,12 +145,32 @@ def who(m):
     return name + ("(机器人)" if s.get("sender_type") == "app" else "")
 
 
-def msg_line(m, indent=""):
+def msg_line(m, indent="", limit=ITEM_MAX):
     if m.get("deleted") or m.get("msg_type") in ("system", "sticker"):
         return None
     chat = first(m, "chat_name") or (m.get("chat") or {}).get("name") or ""
     t = (m.get("create_time") or "")[:16]
-    return "%s- %s %s%s：%s" % (indent, t, ("[%s] " % chat) if chat else "", who(m), clean(m.get("content")))
+    return "%s- %s %s%s：%s" % (indent, t, ("[%s] " % chat) if chat else "", who(m), clean(m.get("content"), limit))
+
+
+def thread_lines(tid, hit_id, shown):
+    """The other messages in a hit's thread (the root and its replies), indented under the hit.
+    Search only returns messages that contain the keyword; a reply like 「给 Wade」 under 「要加白名单」 would be lost."""
+    try:
+        d = lark(["im", "+threads-messages-list", "--thread", tid, "--order", "asc", "--no-reactions", "--page-size", str(REPLIES_MAX + 1)], timeout=30)
+    except SystemExit as e:
+        return ["  ↳ （话题回复没读到：%s）" % clean(str(e.code), 200)]
+    rs = [r for r in items(d) if r.get("message_id") != hit_id]
+    more = len(rs) > REPLIES_MAX or (isinstance(d, dict) and d.get("has_more"))
+    out = []
+    for r in rs[:REPLIES_MAX]:
+        shown.add(r.get("message_id"))
+        y = msg_line(r, "  ↳ ", REPLY_MAX)
+        if y:
+            out.append(y)
+    if more:
+        out.append("  ↳ （话题里还有更多回复没显示，可以用「会话记录」查这个群）")
+    return out
 
 
 lines = []
@@ -156,11 +180,23 @@ if OP == "搜消息":
     d = lark(["im", "+messages-search", "--query", Q, "--start", start.isoformat(timespec="seconds"), "--end", now.isoformat(timespec="seconds"),
               "--no-reactions", "--page-size", str(min(LIMIT, 50))] + (["--page-limit", str((LIMIT + 49) // 50)] if LIMIT > 50 else []))
     ms = items(d)[:LIMIT]
-    lines.append("# 搜消息「%s」（过去 %d 小时，%d 条）" % (Q, HOURS, len(ms)))
+    lines.append("# 搜消息「%s」（过去 %d 小时，%d 条；命中的消息在话题里时，话题里的其他消息缩进列在下面）" % (Q, HOURS, len(ms)))
+    t0, threads, shown = time.monotonic(), set(), set()
     for m in ms:
+        if m.get("message_id") in shown:   # 已经作为前面某个话题的回复列出过
+            continue
         x = msg_line(m)
-        if x:
-            lines.append(x + ("  `%s`" % m["message_id"] if m.get("message_id") else ""))
+        if not x:
+            continue
+        lines.append(x + ("  `%s`" % m["message_id"] if m.get("message_id") else ""))
+        tid = m.get("thread_id")
+        if not tid or tid in threads:
+            continue
+        threads.add(tid)
+        if len(threads) > THREADS_MAX or time.monotonic() - t0 > 90:
+            lines.append("  ↳ （这条在话题里，回复没展开：可以用「会话记录」查这个群，或换更具体的关键词）")
+            continue
+        lines += thread_lines(tid, m.get("message_id"), shown)
 elif OP == "会话记录":
     if not re.match(r"^(oc|ou)_[A-Za-z0-9]+$", Q):
         sys.exit("会话记录要在「内容」里写群的 oc_… 或私聊对方的 ou_…（可以先用「找会话」查）")
@@ -273,6 +309,14 @@ elif OP == "读文档":
     lines.append(text if isinstance(text, str) else json.dumps(text, ensure_ascii=False))
 
 out = "\n".join(lines)
-if len(out) > MAX_OUT:
+if OP in ("搜消息", "会话记录", "找会话", "搜邮件", "搜妙记") and len(out) > LIST_MAX:
+    # 按整行截，并说清还剩几条，不让 agent 以为看到的就是全部。
+    n, size = 0, 0
+    while n < len(lines) and size + len(lines[n]) + 1 <= LIST_MAX:
+        size += len(lines[n]) + 1
+        n += 1
+    left = sum(1 for x in lines[n:] if x.startswith("- "))
+    out = "\n".join(lines[:n]) + "\n\n（输出已到 %d 字上限，后面还有 %d 条没显示。换更具体的关键词、缩短回看小时数或减少条数再查）" % (LIST_MAX, left)
+elif len(out) > MAX_OUT:
     out = out[:MAX_OUT] + "\n\n（超过 %d 字，后面的已截断；可以缩小时间范围、条数，或换更具体的关键词）" % MAX_OUT
 print(out)
