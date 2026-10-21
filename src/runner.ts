@@ -78,7 +78,7 @@ export interface ScriptInput {
   secrets?: Record<string, string>;
   /** Only for scripts that declare larkUser (D54): the caller's own Feishu user token, valid for the whole run.
    *  `env` is ready to pass to lark-cli (user identity); `cli` is lark-cli's absolute path on this machine. */
-  larkUser?: { accessToken: string; appId: string; expiresAt: number; env: Record<string, string>; cli?: string };
+  larkUser?: { accessToken: string; appId: string; expiresAt: number; env: Record<string, string>; cli?: string; missingScopes?: string[] };
 }
 
 export interface ScriptResult { ok: boolean; content: string; error?: string }

@@ -20,15 +20,44 @@ now = datetime.now(TZ)
 start = now - timedelta(hours=HOURS)
 
 
+AUTH_HINT = "请私聊 Amber 发「授权飞书」（或点私聊菜单「授权飞书」）重新授权一次，再试"
+MISSING = LU.get("missingScopes") or []   # Amber 新开通、但本人授权里还没有的权限
+
+
+def parse_json(text):
+    try:
+        return json.loads(text)
+    except Exception:
+        i = (text or "").find("{")
+        try:
+            return json.JSONDecoder().raw_decode(text[i:])[0] if i >= 0 else None
+        except Exception:
+            return None
+
+
+def fail(args, err):
+    """A short, actionable reason: missing permissions say so (with what to do), the rest gives code and message."""
+    e = err if isinstance(err, dict) else {}
+    scopes = e.get("missing_scopes") or []
+    text = json.dumps(e, ensure_ascii=False)
+    if e.get("type") == "authorization" or scopes or "scope" in text.lower() or e.get("code") in (99991679, 99991672, 99991663):
+        need = "、".join(scopes) or "、".join(MISSING)
+        sys.exit("缺少飞书权限%s，读不了（%s）。%s" % ("（%s）" % need if need else "", " ".join(args[:2]), AUTH_HINT))
+    msg = e.get("message") or e.get("msg") or text
+    sys.exit("lark-cli %s 失败：%s %s" % (" ".join(args[:2]), e.get("code") or "", str(msg)[:300]))
+
+
 def lark(args, timeout=150):
     r = subprocess.run([CLI] + args + ["--as", "user"], env=ENV, capture_output=True, text=True, timeout=timeout)
-    try:
-        out = json.loads(r.stdout)
-    except Exception:
-        sys.exit("lark-cli %s 失败：%s" % (" ".join(args[:2]), (r.stderr or r.stdout)[-300:]))
+    out = parse_json(r.stdout)
+    if not isinstance(out, dict):
+        # lark-cli 出错时常把 JSON 写到 stderr：整段解析，不能只截尾巴
+        err = parse_json(r.stderr)
+        if isinstance(err, dict):
+            fail(args, err.get("error") or err)
+        sys.exit("lark-cli %s 失败：%s" % (" ".join(args[:2]), (r.stderr or r.stdout).strip()[-300:]))
     if r.returncode != 0 or out.get("ok") is False:
-        err = out.get("error") or out
-        sys.exit("lark-cli %s 失败：%s" % (" ".join(args[:2]), json.dumps(err, ensure_ascii=False)[:400]))
+        fail(args, out.get("error") or out)
     return out.get("data", out)
 
 
