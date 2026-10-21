@@ -65,9 +65,19 @@ if k == "api GET":
     open(a[a.index("-o") + 1], "w").write("张三：开场\\n李四：说正事")
     print(json.dumps({"ok": True}))
     sys.exit(0)
-msg = lambda i, t: {"message_id": "om_%d" % i, "create_time": "2026-10-17 10:%02d" % i, "sender": {"name": "张三"}, "chat_name": "项目群", "content": t}
+msg = lambda i, t, **kw: {"message_id": "om_%d" % i, "create_time": "2026-10-17 10:%02d" % (i % 60), "sender": {"name": "张三"}, "chat_name": "项目群", "content": t, **kw}
+if k == "im +threads-messages-list" and os.environ.get("FAKE_SLOW"):
+    import time; time.sleep(10)
+if k == "im +threads-messages-list" and os.environ.get("FAKE_MANY"):
+    print(json.dumps({"ok": True, "data": {"messages": [msg(i, "回复 " + "z" * 400, thread_id="omt_m") for i in (200, 201, 202)]}}))
+    sys.exit(0)
+if k == "im +messages-search" and os.environ.get("FAKE_MANY"):
+    print(json.dumps({"ok": True, "data": {"messages": [msg(i, "白名单 " + "y" * 1500, **({"thread_id": "omt_m"} if i == 15 else {})) for i in range(100)]}}))
+    sys.exit(0)
 data = {
-  "im +messages-search": {"messages": [msg(1, "周报 已发"), msg(2, "x" * 5000)]},
+  # om_5 is a thread root that contains the keyword; its replies don't, and om_7 (also a hit) is one of them.
+  "im +messages-search": {"messages": [msg(1, "周报 已发"), msg(2, "x" * 5000), msg(5, "OCBC 上线，周报里加白名单", thread_id="omt_1"), msg(7, "周报 白名单 已加", thread_id="omt_1")]},
+  "im +threads-messages-list": {"messages": [msg(5, "OCBC 上线，周报里加白名单", thread_id="omt_1"), msg(6, "给 Wade", thread_id="omt_1"), msg(7, "周报 白名单 已加", thread_id="omt_1")], "has_more": False},
   "im +chat-messages-list": {"messages": [msg(3, "晚些"), msg(2, "早些")]},
   "im +chat-search": {"items": [{"name": "项目群", "chat_id": "oc_abc"}]},
   "mail +triage": {"messages": [{"message_id": "M1", "date": "Fri", "from": "A <a@x.com>", "subject": "合同"}]},
@@ -84,6 +94,22 @@ print(json.dumps({"ok": True, "data": data}))
   }).toString();
   const s1 = run({ op: '搜消息', q: '周报', hours: '24', limit: '30' });
   assert.match(s1, /项目群/); assert.match(s1, /张三：周报 已发/); assert.match(s1, /om_1/); assert.match(s1, /x{2000}…/, 'one message is capped');
+  // A hit in a thread brings the thread's other messages along, indented; a reply that is also a hit is listed once.
+  assert.match(s1, /OCBC 上线.*`om_5`\n  ↳ - .*张三：给 Wade\n  ↳ - .*张三：周报 白名单 已加/);
+  assert.equal(s1.match(/周报 白名单 已加/g)?.length, 1);
+  assert.equal(readFileSync(log, 'utf8').split('+threads-messages-list').length - 1, 1, 'each thread is read once');
+  // A slow thread read is cut at the remaining time budget and noted, not left to kill the whole run.
+  const ss = run({ op: '搜消息', q: '周报' }, { FAKE_SLOW: '1', MLD_THREAD_BUDGET: '8' });
+  assert.match(ss, /张三：周报 已发/); assert.match(ss, /话题回复没读到：超时/);
+  // Too much for the agent to see in one go: cut on a whole line, under the cap, and say how many are left.
+  const sm = run({ op: '搜消息', q: '白名单', limit: '100' }, { FAKE_MANY: '1' });
+  assert.ok(sm.length < 25300, String(sm.length)); assert.match(sm, /后面还有 (\d+) 条(和 \d+ 条话题回复)?没显示/);
+  const shownN = sm.split('\n').filter(l => l.startsWith('- ')).length;
+  assert.equal(shownN + Number(sm.match(/还有 (\d+) 条/)![1]), 100);
+  assert.ok(sm.split('\n').filter(l => l.startsWith('- ')).every(l => l.endsWith('`')), 'no line is cut in half');
+  // Replies of a hit near the cut are counted too, not silently dropped.
+  const hidden = sm.split('\n').filter(l => l.startsWith('  ↳ - ')).length;
+  assert.ok(hidden < 3, 'the cut falls among the replies'); assert.equal(hidden + Number(sm.match(/和 (\d+) 条话题回复/)?.[1] ?? 0), 3, 'om_15 has 3 replies; the cut falls among them');
   const s2 = run({ op: '会话记录', q: 'oc_abc' });
   assert.ok(s2.indexOf('早些') < s2.indexOf('晚些'), 'oldest first');
   assert.match(run({ op: '找会话', q: '项目' }), /oc_abc/);
@@ -108,7 +134,7 @@ print(json.dumps({"ok": True, "data": data}))
   assert.throws(() => run({ op: '会话记录', q: '项目群' }), 'a chat id or a person id only');
   // Read-only: every command it ran is a read.
   const used = new Set(readFileSync(log, 'utf8').trim().split('\n').map(l => JSON.parse(l).slice(0, 2).join(' ')));
-  assert.deepEqual([...used].sort(), ['api GET', 'docs +fetch', 'im +chat-messages-list', 'im +chat-search', 'im +messages-search', 'mail +message', 'mail +triage', 'minutes +detail', 'minutes +search']);
+  assert.deepEqual([...used].sort(), ['api GET', 'docs +fetch', 'im +chat-messages-list', 'im +chat-search', 'im +messages-search', 'im +threads-messages-list', 'mail +message', 'mail +triage', 'minutes +detail', 'minutes +search']);
 });
 
 test('samples: amber submit takes app.json as it is in the repo (code file, this chat, --user)', async () => {
