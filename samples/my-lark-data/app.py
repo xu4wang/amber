@@ -321,7 +321,9 @@ if OP in ("搜消息", "会话记录", "找会话", "搜邮件", "搜妙记") an
         size += len(lines[n]) + 1
         n += 1
     left = sum(1 for x in lines[n:] if x.startswith("- "))
-    out = "\n".join(lines[:n]) + "\n\n（输出已到 %d 字上限，后面还有 %d 条没显示。换更具体的关键词、缩短回看小时数或减少条数再查）" % (LIST_MAX, left)
+    replies = sum(1 for x in lines[n:] if x.startswith("  ↳ - "))
+    out = "\n".join(lines[:n]) + "\n\n（输出已到 %d 字上限，后面还有 %d 条%s没显示。换更具体的关键词、缩短回看小时数或减少条数再查）" % (
+        LIST_MAX, left, "和 %d 条话题回复" % replies if replies else "")
 elif len(out) > MAX_OUT:
     out = out[:MAX_OUT] + "\n\n（超过 %d 字，后面的已截断；可以缩小时间范围、条数，或换更具体的关键词）" % MAX_OUT
 print(out)

@@ -68,8 +68,11 @@ if k == "api GET":
 msg = lambda i, t, **kw: {"message_id": "om_%d" % i, "create_time": "2026-10-17 10:%02d" % (i % 60), "sender": {"name": "张三"}, "chat_name": "项目群", "content": t, **kw}
 if k == "im +threads-messages-list" and os.environ.get("FAKE_SLOW"):
     import time; time.sleep(10)
+if k == "im +threads-messages-list" and os.environ.get("FAKE_MANY"):
+    print(json.dumps({"ok": True, "data": {"messages": [msg(i, "回复 " + "z" * 400, thread_id="omt_m") for i in (200, 201, 202)]}}))
+    sys.exit(0)
 if k == "im +messages-search" and os.environ.get("FAKE_MANY"):
-    print(json.dumps({"ok": True, "data": {"messages": [msg(i, "白名单 " + "y" * 1500) for i in range(100)]}}))
+    print(json.dumps({"ok": True, "data": {"messages": [msg(i, "白名单 " + "y" * 1500, **({"thread_id": "omt_m"} if i == 15 else {})) for i in range(100)]}}))
     sys.exit(0)
 data = {
   # om_5 is a thread root that contains the keyword; its replies don't, and om_7 (also a hit) is one of them.
@@ -100,10 +103,13 @@ print(json.dumps({"ok": True, "data": data}))
   assert.match(ss, /张三：周报 已发/); assert.match(ss, /话题回复没读到：超时/);
   // Too much for the agent to see in one go: cut on a whole line, under the cap, and say how many are left.
   const sm = run({ op: '搜消息', q: '白名单', limit: '100' }, { FAKE_MANY: '1' });
-  assert.ok(sm.length < 25300, String(sm.length)); assert.match(sm, /后面还有 (\d+) 条没显示/);
+  assert.ok(sm.length < 25300, String(sm.length)); assert.match(sm, /后面还有 (\d+) 条(和 \d+ 条话题回复)?没显示/);
   const shownN = sm.split('\n').filter(l => l.startsWith('- ')).length;
   assert.equal(shownN + Number(sm.match(/还有 (\d+) 条/)![1]), 100);
   assert.ok(sm.split('\n').filter(l => l.startsWith('- ')).every(l => l.endsWith('`')), 'no line is cut in half');
+  // Replies of a hit near the cut are counted too, not silently dropped.
+  const hidden = sm.split('\n').filter(l => l.startsWith('  ↳ - ')).length;
+  assert.ok(hidden < 3, 'the cut falls among the replies'); assert.equal(hidden + Number(sm.match(/和 (\d+) 条话题回复/)?.[1] ?? 0), 3, 'om_15 has 3 replies; the cut falls among them');
   const s2 = run({ op: '会话记录', q: 'oc_abc' });
   assert.ok(s2.indexOf('早些') < s2.indexOf('晚些'), 'oldest first');
   assert.match(run({ op: '找会话', q: '项目' }), /oc_abc/);
