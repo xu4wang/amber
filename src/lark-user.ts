@@ -177,6 +177,22 @@ export class LarkUserVault {
     return r && r.refresh_cipher ? r : undefined;
   }
 
+  /** The app's user scopes, re-read at most every 10 minutes (missingScopes runs on every larkUser run). */
+  private appScopes: { at: number; scopes: string[] } | undefined;
+
+  /** User scopes Amber's app has now that this person's authorization lacks: opened after they authorized, so they
+   *  only take effect for them once they authorize again. Empty when unknown (no authorization, lookup failed). */
+  async missingScopes(unionId: string): Promise<string[]> {
+    const st = this.status(unionId);
+    // No scope list stored (Feishu may leave it out of the token response): unknown, not「lacks everything」.
+    if (!st.authorized || !st.scopes.length) return [];
+    if (!this.appScopes || Date.now() - this.appScopes.at > 10 * 60_000) {
+      try { this.appScopes = { at: Date.now(), scopes: await this.oauth.userScopes() }; } catch { return []; }
+    }
+    const have = new Set(st.scopes);
+    return this.appScopes.scopes.filter(s => s !== 'offline_access' && !have.has(s));
+  }
+
   status(unionId: string): LarkUserStatus {
     const r = this.row(unionId);
     if (!r) return { authorized: false, scopes: [] };
@@ -300,6 +316,15 @@ export class LarkUserVault {
     this.access.delete(unionId);
     this.store.markLarkUserDead(unionId);
     this.store.audit(unionId, 'larkuser.dead', { why: why.slice(0, 200) });
+  }
+
+  /** Last 「new scopes, authorize again」 reminder per person. In memory: after a restart someone may hear it once more. */
+  private scopeReminded = new Map<string, number>();
+  shouldRemindScopes(unionId: string): boolean {
+    const at = this.scopeReminded.get(unionId);
+    if (at !== undefined && Date.now() - at < REMIND_EVERY_MS) return false;
+    this.scopeReminded.set(unionId, Date.now());
+    return true;
   }
 
   /** Whether to send the "authorize again" reminder now; at most once per REMIND_EVERY_MS per person. */

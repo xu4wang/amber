@@ -52,6 +52,13 @@ open(${JSON.stringify(log)}, "a").write(json.dumps(a) + "\\n")
 assert os.environ.get("LARKSUITE_CLI_USER_ACCESS_TOKEN") == "u-tok", "the person's token"
 assert a[-2:] == ["--as", "user"], "always as the person"
 k = " ".join(a[:2])
+if os.environ.get("FAKE_ERR") == "scope":
+    # like lark-cli: the error as pretty JSON on stderr, nothing on stdout
+    sys.stderr.write(json.dumps({"ok": False, "identity": "user", "error": {"type": "authorization", "code": 99991679, "message": "user not authorized", "missing_scopes": ["search:message"]}}, indent=2))
+    sys.exit(1)
+if os.environ.get("FAKE_ERR") == "other":
+    sys.stderr.write(json.dumps({"ok": False, "error": {"type": "api", "code": 230001, "message": "chat not found"}}, indent=2))
+    sys.exit(1)
 if k == "api GET":
     # the transcript, written to the -o file in the current directory (the run's temp dir)
     assert "/minutes/v1/minutes/obc" in a[2] and a[2].endswith("/transcript"), a
@@ -71,8 +78,8 @@ data = {
 }[k]
 print(json.dumps({"ok": True, "data": data}))
 `, { mode: 0o755 });
-  const run = (params: Record<string, string>) => execFileSync('python3', [join(ROOT, 'samples', 'my-lark-data', 'app.py')], {
-    cwd: dir,
+  const run = (params: Record<string, string>, extraEnv: Record<string, string> = {}) => execFileSync('python3', [join(ROOT, 'samples', 'my-lark-data', 'app.py')], {
+    cwd: dir, env: { ...process.env, ...extraEnv },
     input: JSON.stringify({ params, larkUser: { accessToken: 'u-tok', appId: 'cli_x', expiresAt: 0, env: { LARKSUITE_CLI_USER_ACCESS_TOKEN: 'u-tok', LARKSUITE_CLI_APP_ID: 'cli_x' }, cli: join(dir, 'lark-cli') } }),
   }).toString();
   const s1 = run({ op: '搜消息', q: '周报', hours: '24', limit: '30' });
@@ -89,6 +96,12 @@ print(json.dumps({"ok": True, "data": data}))
   const s8 = run({ op: '读妙记', q: 'https://x.feishu.cn/minutes/obcmxxxxxxxxxxxxxxxxxxxx' });
   assert.match(s8, /妙记：周会/); assert.match(s8, /定了三件事/); assert.match(s8, /张三发周报/); assert.match(s8, /李四：说正事/);
   assert.throws(() => run({ op: '读妙记', q: '昨天的会' }), 'a link or token only');
+  // Errors reach the agent as a reason it can act on: a missing permission says to authorize again.
+  const err = (params: Record<string, string>, e: string) => { try { run(params, { FAKE_ERR: e }); return ''; } catch (x: any) { return String(x.stderr); } };
+  const se = err({ op: '搜消息', q: '周报' }, 'scope');
+  assert.match(se, /缺少飞书权限（search:message）/); assert.match(se, /授权飞书/);
+  const oe = err({ op: '找会话', q: '项目' }, 'other');
+  assert.match(oe, /230001/); assert.match(oe, /chat not found/); assert.doesNotMatch(oe, /授权飞书/);
   assert.throws(() => run({ op: '读妙记', q: 'obcmxxxxxxxxxxxxxxxxxxxx/../../other' }), 'nothing but the token reaches the path');
   assert.ok(!readdirSync(dir).some(f => f.startsWith('transcript-')), 'the transcript file is removed');
   assert.match(run({ op: '读文档', q: 'https://x.feishu.cn/docx/abc' }), /文档：方案/);

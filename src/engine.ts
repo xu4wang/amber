@@ -46,8 +46,9 @@ let VAULT: SecretVault | undefined;
 /** The secret store used for runs (D48); set once at startup. */
 export function setSecretVault(v: SecretVault): void { VAULT = v; }
 /** Feishu user identity (D54). `onDead`: the person's authorization stopped working (the bot reminds them). */
-let LARK_USER: { vault: LarkUserVault; onDead: (unionId: string) => void } | undefined;
-export function setLarkUser(v: LarkUserVault, onDead: (unionId: string) => void = () => {}): void { LARK_USER = { vault: v, onDead }; }
+let LARK_USER: { vault: LarkUserVault; onDead: (unionId: string) => void; onScopesMissing: (unionId: string, scopes: string[]) => void } | undefined;
+/** `onScopesMissing`: the app has user scopes the person's authorization predates (the bot asks them to authorize again). */
+export function setLarkUser(v: LarkUserVault, onDead: (unionId: string) => void = () => {}, onScopesMissing: (unionId: string, scopes: string[]) => void = () => {}): void { LARK_USER = { vault: v, onDead, onScopesMissing }; }
 export function larkUserVault(): LarkUserVault | undefined { return LARK_USER?.vault; }
 export const LARK_AUTH_HINT = '私聊 Amber 发「授权飞书」';
 export function secretVault(): SecretVault | undefined { return VAULT; }
@@ -219,6 +220,11 @@ export async function runCommand(store: Store, cmd: CommandRow, rawArgs: Record<
         const appId = LARK_USER.vault.appId;
         const cli = LARK_USER.vault.larkCli;
         larkUser = { accessToken: t.token, appId, expiresAt: t.expiresAt, env: { LARKSUITE_CLI_USER_ACCESS_TOKEN: t.token, LARKSUITE_CLI_APP_ID: appId }, ...(cli ? { cli } : {}) };
+        // Scopes opened after this person authorized: the run goes ahead (most apps do not need them), the script is
+        // told which ones are missing, and the person is reminded to authorize again.
+        // Never holds a run up for long: the lookup gets 3 seconds, then the run goes ahead without it.
+        const missing = await Promise.race([LARK_USER.vault.missingScopes(caller.unionId).catch(() => [] as string[]), new Promise<string[]>(res => setTimeout(() => res([]), 3000).unref())]);
+        if (missing.length) { larkUser.missingScopes = missing; LARK_USER.onScopesMissing(caller.unionId, missing); }
       } catch (e) {
         if (e instanceof NeedsLarkAuth) {
           LARK_USER.onDead(caller.unionId);

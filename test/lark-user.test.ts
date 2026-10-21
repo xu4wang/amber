@@ -275,3 +275,51 @@ test('larkUser on the website: the app page shows whether you authorized, and yo
     assert.equal((await get('/web/api/lark-auth')).authorized, false);
   } finally { await env.close(); }
 });
+
+test('larkUser: scopes opened after someone authorized are passed to the script as missing, and they are asked once a day to authorize again', async () => {
+  const oauth = new FakeOAuth();
+  const env = await makeEnv({}, { larkOAuth: oauth });
+  try {
+    const { alice, fake } = env;
+    larkUserVault()!.pollFloorMs = 5;
+    await authorize(env, oauth, alice);
+    const SHOWS = script(`import json,sys
+inp=json.load(sys.stdin)
+print("missing=" + ",".join(inp["larkUser"].get("missingScopes") or []))`, { larkUser: true });
+    const id = await activate(env, { chatId: GROUP, chatType: 'group', name: '看权限', params: [], script: SHOWS }, alice);
+    const cmd = env.amber.store.getCommand(id)!;
+    const run = () => runCommand(env.amber.store, cmd, {}, { unionId: alice.unionId, chatId: GROUP, chatType: 'group', channel: 'bot' });
+    const reminders = () => fake.sent.filter(s => s.to.unionId === alice.unionId && /请重新授权飞书/.test(FakeFeishu.text(s.card))).length;
+    // Up to date: nothing missing, no reminder.
+    assert.match((await run()).markdown, /^missing=$/m);
+    assert.equal(reminders(), 0);
+    // The app gains a scope (the vault re-reads the app's scopes every 10 minutes: force it).
+    oauth.scopes.push('search:message');
+    (larkUserVault() as any).appScopes = undefined;
+    const r = await run();
+    assert.equal(r.ok, true, 'the run still goes ahead');
+    assert.match(r.markdown, /missing=search:message/);
+    await env.waitFor(() => reminders() === 1);
+    assert.match(FakeFeishu.text(fake.sent.filter(s => /请重新授权飞书/.test(FakeFeishu.text(s.card))).at(-1)!.card), /search:message/);
+    await run();
+    await new Promise(res => setTimeout(res, 200));
+    assert.equal(reminders(), 1, 'at most once a day');
+    // A slow scope lookup does not hold the run up for long.
+    (larkUserVault() as any).appScopes = undefined;
+    const orig = oauth.userScopes.bind(oauth);
+    oauth.userScopes = () => new Promise(() => {});
+    const t0 = Date.now();
+    assert.equal((await run()).ok, true);
+    assert.ok(Date.now() - t0 < 8000, 'gave up waiting');
+    oauth.userScopes = orig;
+    // An authorization stored without a scope list is unknown, not missing everything.
+    const row = env.amber.store.larkUserRow(alice.unionId)!;
+    (env.amber.store as any).db.prepare('UPDATE lark_user_auth SET scopes = ? WHERE union_id = ?').run('[]', alice.unionId);
+    (larkUserVault() as any).appScopes = undefined;
+    assert.deepEqual(await larkUserVault()!.missingScopes(alice.unionId), []);
+    (env.amber.store as any).db.prepare('UPDATE lark_user_auth SET scopes = ? WHERE union_id = ?').run(row.scopes, alice.unionId);
+    // Authorizing again (the new grant carries the new scope) clears it.
+    await authorize(env, oauth, alice);
+    assert.match((await run()).markdown, /^missing=$/m);
+  } finally { await env.close(); }
+});

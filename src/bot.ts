@@ -913,6 +913,14 @@ export class AmberBot {
     return true;
   }
 
+  /** Amber's app gained user scopes after this person authorized: ask them to authorize again, at most once a day. */
+  remindLarkScopes(unionId: string, scopes: string[]): void {
+    if (!this.larkUser?.shouldRemindScopes(unionId)) return;
+    const list = scopes.slice(0, 8).map(s => `\`${s}\``).join('、') + (scopes.length > 8 ? ` 等 ${scopes.length} 项` : '');
+    this.flow.send({ unionId }, infoCard('请重新授权飞书', `Amber 新开通了飞书权限（${list}），你上次授权时还没有，用到这些权限的应用由你执行时会失败。请发「授权飞书」（或点私聊菜单「授权飞书」）重新授权一次。\n<font color="grey">每天最多提醒一次。</font>`))
+      .catch((e: any) => log('lark scope reminder failed', e?.response?.data?.code ?? e?.message));
+  }
+
   /** The person's Feishu authorization stopped working while running an app: tell them, at most once a day (D54). */
   remindLarkAuth(unionId: string): void {
     if (!this.larkUser?.shouldRemind(unionId)) return;

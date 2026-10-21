@@ -40,7 +40,7 @@ export async function startAmber(cfg: AmberConfig, opts: { apiPort: number; webP
   // Feishu user identity (D54): authorizations on Amber's own app; tests pass a fake Feishu OAuth.
   const larkUser = new LarkUserVault(store, cfg.configDir, opts.larkOAuth ?? feishuOAuth(cfg.appId, cfg.appSecret), cfg.appId);
   bot.larkUser = larkUser;
-  setLarkUser(larkUser, u => bot.remindLarkAuth(u));
+  setLarkUser(larkUser, u => bot.remindLarkAuth(u), (u, s) => bot.remindLarkScopes(u, s));
   await bot.start();
   const hub = bot.hub;
   hub.llm = llm;
