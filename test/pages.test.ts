@@ -112,7 +112,9 @@ test('pages: publish with confirmation, access, calls as the viewer, signed file
     assert.match(JSON.stringify(await env.click(bob, fake.sent.at(-1)!.id, button(fake.sent.at(-1)!.card, 'pg_ok')!)), /找不到你能用的应用/);
     assert.notEqual(env.amber.store.getPage(r4.body.pageId)!.status, 'active');
 
-    // 3. Who may open it.
+    // 3. Who may open it. (alice is an admin; admins are checked separately below.)
+    const bot = env.amber.bot as any;
+    bot.adminUnionIds.delete(alice.unionId);
     const bobC = await login(bob), carolC = await login(carol), aliceC = await login(alice);
     const shell = async (cookie: string) => { const r = await fetch(`${web}/p/${id}/`, { headers: { cookie } }); return { status: r.status, text: await r.text(), csp: r.headers.get('content-security-policy') }; };
     const own = await shell(bobC);
@@ -142,8 +144,20 @@ test('pages: publish with confirmation, access, calls as the viewer, signed file
     assert.match((await shell(viaLink)).text, /\/c\//, 'logged in, the page opens');
     assert.equal((await fetch(link, { redirect: 'manual' })).status, 400, 'the link works once');
     assert.ok(env.amber.store.listAudit({ prefixes: ['web.'], limit: 20 }).some(a => a.action === 'web.login_link' && a.actor === carol.unionId && JSON.parse(a.detail).page === id));
+    // An admin opens any page, as themselves, on record; the owner's secrets stay the owner's.
+    bot.adminUnionIds.add(alice.unionId);
+    assert.equal((await post(bobC, `/web/api/pages/${id}/access`, { access: 'owner' })).body.ok, true);
+    assert.match((await shell(carolC)).text, /打不开这个页面/);
+    assert.match((await shell(aliceC)).text, /\/c\//, 'an admin opens a page not shared with them');
+    const adminOpens = env.amber.store.listAudit({ prefixes: ['page.admin_open'], limit: 5 });
+    assert.equal(adminOpens.length, 1); assert.equal(adminOpens[0].actor, alice.unionId); assert.equal(JSON.parse(adminOpens[0].detail).owner, bob.unionId);
+    const asAdmin = await post(aliceC, `/web/api/pages/${id}/run`, { app: '查数', args: {} });
+    assert.deepEqual(asAdmin.body.json, { who: alice.unionId, channel: 'page' }, 'runs as the admin');
+    assert.match((await post(aliceC, `/web/api/pages/${id}/run`, { app: '带密钥', args: {} })).body.message, /只有页面创建人/);
+    assert.equal((await post(aliceC, `/web/api/pages/${id}/access`, { access: 'group' })).status, 403, 'an admin still cannot change who it is shared with');
     assert.equal((await post(bobC, `/web/api/pages/${id}/access`, { access: 'group' })).body.ok, true);
     assert.match((await shell(aliceC)).text, /\/c\//, 'everyone in the group');
+    assert.equal(env.amber.store.listAudit({ prefixes: ['page.admin_open'], limit: 5 }).length, 1, 'shared with them: an ordinary open');
 
     // 4. Calls run as the viewer; only bound apps; the owner's secrets stay the owner's; confirm apps need confirming.
     const call = (cookie: string, app: string, extra: object = {}) => post(cookie, `/web/api/pages/${id}/run`, { app, args: {}, ...extra });
@@ -205,22 +219,22 @@ test('pages: publish with confirmation, access, calls as the viewer, signed file
     assert.notEqual((await fetch(`${web}${new URL(src).pathname}index.html`)).headers.get('content-type'), 'text/html; charset=utf-8', 'page files never come from Amber\'s origin');
 
     // 6. Usage: each call through the page carries its id; opens are counted once per person every 30 minutes.
-    assert.deepEqual(env.amber.store.pageRuns(id, 10).map(r => r.app).sort(), ['写文档', '带密钥', '查数', '查服务'].sort(), 'calls refused before running are not runs');
+    assert.deepEqual(env.amber.store.pageRuns(id, 10).map(r => r.app).sort(), ['写文档', '带密钥', '查数', '查数', '查服务'].sort(), 'calls refused before running are not runs (one 查数 is the admin\'s)');
     assert.ok(env.amber.store.pageRuns(id, 10).some(r => r.id === sv.body.runId));
     assert.ok(env.amber.store.listAudit({ prefixes: ['run.'], limit: 50 }).some(a => a.action === 'run.start' && JSON.parse(a.detail).runId === sv.body.runId && JSON.parse(a.detail).pageId === id));
     const opens = env.amber.store.listAudit({ prefixes: ['page.open'], limit: 50 });
     assert.deepEqual(opens.map(a => a.actor).sort(), [alice.unionId, bob.unionId, carol.unionId].sort(), 'once each though opened again and again; refused opens are not opens');
     const usageOf = (cookie: string) => fetch(`${web}/web/api/pages/${id}/usage`, { headers: { cookie } }).then(async x => ({ status: x.status, body: await x.json() }));
     const mine = await usageOf(bobC);
-    assert.deepEqual(mine.body.usage, { ...mine.body.usage, calls: 4, ok: 4, failed: 0, callers: 2, opens: 3, openers: 3 }, JSON.stringify(mine.body.usage));
-    assert.equal(mine.body.runs.length, 4);
+    assert.deepEqual(mine.body.usage, { ...mine.body.usage, calls: 5, ok: 5, failed: 0, callers: 3, opens: 3, openers: 3 }, JSON.stringify(mine.body.usage));
+    assert.equal(mine.body.runs.length, 5);
     assert.ok(mine.body.runs.every((r: any) => typeof r.caller === 'string' && r.caller));
     assert.equal(mine.body.openers.length, 3);
     assert.equal((await usageOf(carolC)).status, 404, 'a viewer does not see who else used it');
     assert.equal((await usageOf(aliceC)).status, 200, 'an admin does');
     const adminOv = await (await fetch(`${web}/web/api/overview`, { headers: { cookie: aliceC } })).json();
     const all = adminOv.allPages.find((x: any) => x.id === id);
-    assert.equal(all.usage.calls, 4, 'admins see every page with its usage');
+    assert.equal(all.usage.calls, 5, 'admins see every page with its usage');
     assert.equal(all.where, 'group:' + GROUP);
     assert.ok(all.owner);
 

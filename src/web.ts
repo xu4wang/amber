@@ -299,6 +299,8 @@ export function startWeb(port: number, store: Store, deps: WebDeps): import('nod
         const p = store.getPage(pm[1]);
         if (!p || !(await deps.pages.canView(p, who.unionId))) return note('打不开这个页面', '页面不存在，或者你没有访问权限。需要的话请联系页面的创建人。');
         noteOpen(p, who.unionId);
+        // An admin opening a page that is not shared with them: always on record.
+        if (!(await deps.pages.sharedWith(p, who.unionId))) store.audit(who.unionId, 'page.admin_open', { id: p.id, name: p.name, owner: p.ownerUnionId, chatId: p.chatId });
         const data = JSON.stringify({ id: p.id, name: p.name, src: `${pagesOrigin}/c/${deps.pages.token(p, who.unionId)}/`, pagesOrigin, me: (await deps.nameOf(who.unionId)) ?? '', allowHosts: getGlobalAllowHosts(store) }).replace(/</g, '\\u003c');
         return send(res, 200, 'text/html; charset=utf-8', shellTpl.replace('__TITLE__', escHtml(p.name)).replace('__PAGE_DATA__', data), {
           'content-security-policy': `default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; frame-src ${pagesOrigin}; base-uri 'none'; form-action 'none'; frame-ancestors 'none'`,
