@@ -113,7 +113,7 @@ export class AmberBot {
     };
     this.agent = new AgentGate(store, deps);
     this.pages = new PageService(store, cfg.dataDir, {
-      send: deps.send, isMember: deps.isMember, cityOf: deps.cityOf, facts: { signer: this.signer }, webUrl: () => cfg.webBaseUrl,
+      send: deps.send, isMember: deps.isMember, isAdmin: u => this.isAdmin(u), cityOf: deps.cityOf, facts: { signer: this.signer }, webUrl: () => cfg.webBaseUrl,
       uploadImage: async png => { const r = await this.client.im.v1.image.create({ data: { image_type: 'message', image: png } }) as any; return r?.image_key ?? r?.data?.image_key; },
     });
     this.scheduler = new Scheduler(store, deps);

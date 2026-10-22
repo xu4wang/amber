@@ -6,7 +6,9 @@
 //     calls, waits for the owner to confirm on a Feishu card (the API cannot tell who is behind an agent); a
 //     content-only update takes effect at once.
 //   - Who may open it: the owner sets it on the website — only the owner (default), everyone in the group, or
-//     chosen members. Checked on every open and every call, with fresh group membership.
+//     chosen members. Checked on every open and every call, with fresh group membership. Admins may open any page
+//     (as themselves: its apps run as the admin, and apps using the owner's secrets stay the owner's); each such
+//     open is audited as page.admin_open.
 //   - Apps: bound by name when the owner confirms — the owner's own apps in that chat, or global apps. Viewers run
 //     them as themselves; apps that use secrets run only for the owner (a viewer would otherwise use the owner's
 //     credentials).
@@ -43,6 +45,8 @@ export interface PublishCtx { chatId: string; chatType: ScopeType; user: { union
 export interface PageDeps {
   send(to: { chatId?: string; unionId?: string; replyTo?: string; inThread?: boolean }, card: object): Promise<string | undefined>;
   isMember(chatId: string, unionId: string): Promise<boolean | undefined>;
+  /** Amber admins may open every page (canView). */
+  isAdmin?(unionId: string): boolean;
   cityOf(unionId: string): Promise<string | undefined>;
   facts: Pick<CallerFacts, 'signer'>;
   /** Where the shell is (Amber's website), e.g. http://amber.example.com. */
@@ -245,8 +249,14 @@ export class PageService {
     };
   }
 
-  /** Whether `viewer` may open the page and call its apps right now. */
+  /** Whether `viewer` may open the page and call its apps right now: by its access setting, or as an admin. */
   async canView(p: PageRow, viewer: string): Promise<boolean> {
+    if (p.status !== 'active') return false;
+    return (await this.sharedWith(p, viewer)) || !!this.deps.isAdmin?.(viewer);
+  }
+
+  /** Whether the page's access setting lets `viewer` in (without the admin exception). */
+  async sharedWith(p: PageRow, viewer: string): Promise<boolean> {
     if (p.status !== 'active') return false;
     if (viewer === p.ownerUnionId) return true;
     if (p.chatType !== 'group' || p.access === 'owner') return false;
