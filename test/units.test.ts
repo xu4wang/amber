@@ -217,3 +217,46 @@ test('claim card: apps that query data-mcp are told a trial run gets at most 20 
   assert.match(withData, /最多返回 20 行/);
   assert.doesNotMatch(plain, /最多返回 20 行/);
 });
+
+test('sandbox (Linux, D58): the policy compiles to bubblewrap mounts — only what is allowed, deeper rules win, denies covered, keys hidden last', async () => {
+  const { setSandboxContext, buildPolicy, compileToBwrap, hardDenyRoots, validateEnvAccess } = await import('../src/sandbox-policy.ts');
+  const { mkdtempSync, mkdirSync, writeFileSync, realpathSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const home = realpathSync(mkdtempSync(join(tmpdir(), 'bw-home-')));
+  const conf = join(home, '.config', 'amber-executor');
+  for (const d of [conf, join(home, 'work', 'hidden'), join(home, 'work', 'sub'), join(home, 'ro'), join(home, '.aws'), join(home, '.lark-cli-bots', 'cli_x')]) mkdirSync(d, { recursive: true });
+  writeFileSync(join(home, 'work', 'secret.txt'), 's');
+  const run = join(home, 'run'); mkdirSync(run);
+  try {
+    setSandboxContext({ home, configDir: conf, platform: 'linux' });
+    assert.ok(hardDenyRoots().includes('/root'), 'root\'s home is never opened on Linux');
+    assert.throws(() => validateEnvAccess({ readOnly: [conf] }), /受保护/);
+    const access = validateEnvAccess({ readWrite: ['{WORKDIR}'], readOnly: [join(home, 'ro'), join(home, '.lark-cli-bots', 'cli_x')], deny: ['{WORKDIR}/hidden', '{WORKDIR}/secret.txt', join(home, 'nowhere')] }, { workdir: join(home, 'work') });
+    const policy = buildPolicy({ runDir: run, access });
+    assert.ok(!policy.rules.some(r => r.path === '/System'), 'Linux system dirs, not macOS ones');
+    assert.ok(policy.rules.some(r => r.path === '/etc' || r.path.startsWith('/private/etc')));
+    const a = compileToBwrap(policy, { all: false });
+    const s = a.join(' ');
+    const at = (x: string) => s.indexOf(x);
+    assert.ok(a.includes('--unshare-net') && a.includes('--unshare-pid') && a.includes('--die-with-parent'));
+    assert.ok(!compileToBwrap(policy, { all: true }).includes('--unshare-net'), 'network: true keeps the host network');
+    assert.ok(at(`--bind ${join(home, 'work')} ${join(home, 'work')}`) >= 0, 'workdir read-write');
+    assert.ok(at(`--ro-bind ${join(home, 'ro')} ${join(home, 'ro')}`) >= 0, 'read-only grant');
+    assert.ok(at(`--bind ${run} ${run}`) >= 0, 'the run dir');
+    // A denied dir inside a mounted one is covered by an empty tmpfs, made read-only at the very end; a file by /dev/null.
+    assert.ok(at(`--tmpfs ${join(home, 'work', 'hidden')}`) > at(`--bind ${join(home, 'work')}`), 'covered after its parent is mounted');
+    assert.ok(at(`--remount-ro ${join(home, 'work', 'hidden')}`) > at(`--ro-bind ${join(home, '.lark-cli-bots', 'cli_x')}`), 'remounts come last');
+    assert.ok(at(`--ro-bind /dev/null ${join(home, 'work', 'secret.txt')}`) >= 0);
+    // Credential stores are not mounted at all unless granted; a deeper grant mounts exactly that dir.
+    assert.equal(at(join(home, '.aws')), -1);
+    assert.ok(at(`--ro-bind ${join(home, '.lark-cli-bots', 'cli_x')}`) >= 0);
+    assert.equal(at(join(home, 'nowhere')), -1, 'a missing path is skipped');
+    assert.equal(at(`--bind ${conf}`), -1); assert.equal(at(`--ro-bind ${conf}`), -1);
+    assert.ok(!a.some(x => x === home), 'the home dir itself is never mounted');
+  } finally {
+    setSandboxContext({ configDir: '', platform: process.platform === 'linux' ? 'linux' : 'darwin' });
+    const { rmSync } = await import('node:fs');
+    rmSync(home, { recursive: true, force: true });
+  }
+});

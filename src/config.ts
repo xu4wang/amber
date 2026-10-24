@@ -1,6 +1,7 @@
 import { readFileSync, existsSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
+import { validateLinks, type LinkConfig } from './exec-link.ts';
 
 export interface AmberConfig {
   appId: string;
@@ -12,8 +13,9 @@ export interface AmberConfig {
   /** Admins: emails (resolved to union_id at runtime) or union_ids ("on_..."). Admins change command scope by chatting with Amber. */
   admins: string[];
   /** Local services scripts may call with an execution identity token (D27). */
-  /** executor: scripts running on an executor may call it through Amber's relay (D52). Off unless set. */
-  services: Record<string, { audience: string; tcpPort?: number; unixSocket?: string; executor?: boolean }>;
+  /** executor: scripts running on an executor may call it through Amber's relay (D52). Off unless set.
+   *  links: also from link-mode executors (D58), whose machines are outside the network. Off unless set. */
+  services: Record<string, { audience: string; tcpPort?: number; unixSocket?: string; executor?: boolean; links?: boolean }>;
   configDir: string;
   /** IP → machine name. Only these addresses may submit drafts (D31). */
   machines: Record<string, string>;
@@ -29,6 +31,8 @@ export interface AmberConfig {
   pageScreenshotChrome?: string;
   /** The built-in large-model service (service name "llm", src/llm.ts). Unset = scripts cannot declare llm. */
   llm?: { command: string; models?: string[]; maxConcurrent?: number; timeoutMs?: number; configDir?: string };
+  /** Link-mode executors Amber connects to (D58, exec-link.ts). */
+  executorLinks?: LinkConfig[];
 }
 
 function parseEnvFile(path: string): Record<string, string> {
@@ -69,5 +73,6 @@ export function loadConfig(): AmberConfig {
     ...(fileCfg.pagesBaseUrl ? { pagesBaseUrl: String(fileCfg.pagesBaseUrl).replace(/\/$/, '') } : {}),
     ...(fileCfg.pageScreenshotChrome ? { pageScreenshotChrome: String(fileCfg.pageScreenshotChrome) } : {}),
     ...(fileCfg.llm && typeof fileCfg.llm === 'object' && fileCfg.llm.command ? { llm: fileCfg.llm } : {}),
+    ...(fileCfg.executorLinks ? { executorLinks: validateLinks(fileCfg.executorLinks) } : {}),
   };
 }

@@ -11,7 +11,7 @@ import { generateKeyPairSync, createPrivateKey, createPublicKey, sign, randomUUI
 import type { KeyObject } from 'node:crypto';
 import { existsSync, lstatSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { sealJob, relayResponseInput, type JobEnvelope } from './exec-proto.ts';
+import { sealJob, relayResponseInput, signLinkRequest, type JobEnvelope } from './exec-proto.ts';
 
 const b64u = (b: Buffer | string) => Buffer.from(b).toString('base64url');
 
@@ -59,6 +59,11 @@ export class Signer {
   }
 
   /** Signs a relayed service response for the executor that asked (D52). */
+  /** Headers for a request Amber makes to a link-mode executor (D58). */
+  signLink(name: string, method: string, path: string, body: string): Record<string, string> {
+    return signLinkRequest(this.key, name, method, path, body);
+  }
+
   signRelayResponse(jobId: string, reqId: string, r: Parameters<typeof relayResponseInput>[2]): string {
     return sign(null, relayResponseInput(jobId, reqId, r), this.key).toString('base64');
   }

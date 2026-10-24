@@ -62,6 +62,27 @@ export function verifyRequest(signPub: string, h: Record<string, string | undefi
   if (!verify(null, requestInput(method, path, ts, nonce, body), pubFromB64(signPub, 'ed25519'), Buffer.from(sig, 'base64'))) throw new Error('签名不对');
 }
 
+// ---------- link mode (D58): Amber connects to the executor
+
+/** What Amber signs on each request it makes to a link-mode executor: the executor's name binds it to that one link. */
+const linkInput = (name: string, method: string, path: string, ts: string, nonce: string, body: string) =>
+  Buffer.from(`${PROTO}\nlink\n${name}\n${method}\n${path}\n${ts}\n${nonce}\n${createHash('sha256').update(body).digest('hex')}`);
+
+export function signLinkRequest(amberKey: KeyObject, name: string, method: string, path: string, body: string): Record<string, string> {
+  const ts = String(Date.now()), nonce = randomBytes(12).toString('hex');
+  return { 'x-amber-link-ts': ts, 'x-amber-link-nonce': nonce, 'x-amber-link-sig': sign(null, linkInput(name, method, path, ts, nonce, body), amberKey).toString('base64') };
+}
+
+/** Checks Amber's signature and freshness on a request to a link-mode executor. The caller keeps the nonce cache. */
+export function verifyLinkRequest(amberPub: KeyObject, name: string, h: Record<string, string | string[] | undefined>, method: string, path: string, body: string, now = Date.now()): string {
+  const one = (k: string) => { const v = h[k]; return typeof v === 'string' ? v : ''; };
+  const ts = one('x-amber-link-ts'), nonce = one('x-amber-link-nonce'), sig = one('x-amber-link-sig');
+  if (!/^\d{13}$/.test(ts) || !/^[0-9a-f]{24}$/.test(nonce) || !sig) throw new Error('缺少 Amber 的签名');
+  if (Math.abs(now - Number(ts)) > REQUEST_SKEW_MS) throw new Error('请求时间不对（检查两台机器的时钟）');
+  if (!verify(null, linkInput(name, method, path, ts, nonce, body), amberPub, Buffer.from(sig, 'base64'))) throw new Error('Amber 的签名不对');
+  return nonce;
+}
+
 // ---------- job envelopes (Amber → executor)
 
 export interface JobEnvelope { v: 1; jobId: string; executor: string; exp: number; epk: string; iv: string; ct: string; tag: string; sig: string }

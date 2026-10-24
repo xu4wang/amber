@@ -3,6 +3,10 @@
 // No dependencies beyond Node ≥ 22. See docs/executor.md.
 //
 //   amber-executor init --name <name> [--amber <url>]     keys + config (once)
+//   amber-executor init --name <name> --link --amber-key <key> [--listen 127.0.0.1:7350]
+//                                                         link mode (D58): Amber connects to this machine (behind HTTPS)
+//                                                         instead of the executor reaching Amber; <key> is Amber's
+//                                                         public signing key (the JSON from <amber>/v1/keys, or its "x")
 //   amber-executor env import <file.json> [--name <env>]  an environment from a definition file (D51): the one format,
 //                                                         e.g. exported from a botmux bot by export-botmux-env.mjs
 //   Environments are the files in ~/.config/amber-executor/envs/: <name>.json, one definition each (D51/D53).
@@ -13,8 +17,10 @@
 //   amber-executor env export <env>                       prints an environment's file
 //   amber-executor env show | env rm <env>
 //   amber-executor status                                  register / show fingerprint and approval
+//   amber-executor selftest                                checks this machine's sandbox (run after installing)
 //   amber-executor run                                     long-poll Amber and run jobs (launchd runs this)
-//   amber-executor install-launchd | uninstall-launchd
+//   amber-executor install-launchd | uninstall-launchd   (macOS)
+//   amber-executor install-systemd --user <user>        (Linux, as root: a system service running as <user>)
 //
 // Every job is signed by Amber (key pinned at init) and encrypted to this executor's key. Before
 // running, the executor checks the signature, the addressee, the expiry, that it has not seen the job
@@ -26,9 +32,10 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'node:child_process';
-import { newExecutorKeys, keyFromPem, pubB64, fingerprint, showFingerprint, signRequest, openJob, specHashOf, redact, verifyRelayResponse, EXECUTOR_NAME, ENV_NAME } from './lib/exec-proto.mjs';
+import { newExecutorKeys, keyFromPem, pubB64, fingerprint, showFingerprint, signRequest, openJob, specHashOf, redact, verifyRelayResponse, verifyLinkRequest, REQUEST_SKEW_MS, EXECUTOR_NAME, ENV_NAME } from './lib/exec-proto.mjs';
+import { createServer } from 'node:http';
 import { randomBytes } from 'node:crypto';
-import { setSandboxContext, validateEnvAccess, buildPolicy, compileToSeatbelt, normalizePath, hardDenyRoots, credentialGrants, describeAccess } from './lib/sandbox-policy.mjs';
+import { setSandboxContext, validateEnvAccess, buildPolicy, compileToSeatbelt, compileToBwrap, sandboxPlatform, normalizePath, hardDenyRoots, credentialGrants, describeAccess } from './lib/sandbox-policy.mjs';
 import { runSandboxed } from './lib/sandbox-run.mjs';
 import { validateHosts } from './lib/egress-proxy.mjs';
 import { startRelayPorts } from './lib/relay-port.mjs';
@@ -100,11 +107,114 @@ function amberKey() {
 }
 
 async function call(cfg, me, path, body, timeoutMs = 20_000) {
+  if (cfg.mode === 'link') return linkCall(me, path, body, timeoutMs);
   const raw = JSON.stringify(body ?? {});
   const r = await fetch(cfg.amber + path, { method: 'POST', body: raw, headers: { 'content-type': 'application/json', ...signRequest(me.sign, me.id, 'POST', path, raw) }, signal: AbortSignal.timeout(timeoutMs) });
   const j = await r.json().catch(() => ({ ok: false, message: `HTTP ${r.status}` }));
   if (!j.ok && r.status !== 200) throw new Error(j.message ?? j.error ?? `HTTP ${r.status}`);
   return j;
+}
+
+// ---------- link mode (D58): Amber connects here and carries our requests to its handlers
+
+const LINK_WAIT_MS = 25_000;
+const LINK_MAX_BODY = 16 * 1024 * 1024;
+/** Requests waiting for Amber to take them, and those taken and waiting for Amber's answer. */
+const outbox = [];
+const pending = new Map();
+let nextWaiters = [];
+const linkNonces = new Map();
+const linkState = { lastContact: 0, status: '' };
+
+function flushNext() {
+  const w = nextWaiters;
+  nextWaiters = [];
+  for (const f of w) f();
+}
+
+/** Same contract as call(): resolves with Amber's JSON answer, throws on a refusal. The request is signed when Amber
+ *  takes it (so it is fresh however long it waited), with our own key, exactly as if we had sent it ourselves. */
+function linkCall(me, path, body, timeoutMs) {
+  return new Promise((resolve, reject) => {
+    const id = randomBytes(12).toString('hex');
+    const item = { id, path, raw: JSON.stringify(body ?? {}) };
+    const timer = setTimeout(() => {
+      pending.delete(id);
+      const i = outbox.indexOf(item);
+      if (i >= 0) outbox.splice(i, 1);
+      reject(new Error(Date.now() - linkState.lastContact > 60_000 ? 'Amber 没有连上来（链接模式：检查 Amber 配置里的 executorLinks 和本机的 HTTPS 入口）' : 'Amber 没有在时限内答复'));
+    }, timeoutMs);
+    pending.set(id, { timer, resolve: (status, j) => {
+      clearTimeout(timer);
+      pending.delete(id);
+      if (!j?.ok && status !== 200) reject(new Error(j?.message ?? j?.error ?? `HTTP ${status}`));
+      else resolve(j);
+    } });
+    outbox.push(item);
+    flushNext();
+  });
+}
+
+/** The link API: only Amber (its signature, pinned at init, bound to our name) can take our requests or answer them. */
+export function startLinkServer(cfg, me, amberPub) {
+  const [host, port] = String(cfg.listen ?? '127.0.0.1:7350').split(/:(?=\d+$)/);
+  const fresh = nonce => {
+    const now = Date.now();
+    for (const [k, t] of linkNonces) if (now - t > 2 * REQUEST_SKEW_MS) linkNonces.delete(k);
+    if (linkNonces.has(nonce) || linkNonces.size > 50_000) return false;
+    linkNonces.set(nonce, now);
+    return true;
+  };
+  const server = createServer((req, res) => {
+    const send = (status, body) => { res.writeHead(status, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' }); res.end(JSON.stringify(body)); };
+    const path = new URL(req.url ?? '/', 'http://x').pathname;
+    // Public: who this is (for the admin comparing fingerprints), nothing else.
+    if (req.method === 'GET' && path === '/amber-link/hello') return send(200, { ok: true, service: 'amber-executor', name: cfg.name, id: me.id, fingerprint: me.fp, version: VERSION, amberConnected: Date.now() - linkState.lastContact < 60_000 });
+    if (req.method !== 'POST' || (path !== '/amber-link/next' && path !== '/amber-link/reply')) return send(404, { ok: false, error: 'not_found' });
+    // Bodies are read before the signature can be checked: keep them small (a reply carries a relay answer, up to 16MB).
+    const limit = path === '/amber-link/next' ? 4096 : LINK_MAX_BODY;
+    if (Number(req.headers['content-length'] ?? 0) > limit) { res.setHeader('connection', 'close'); return send(413, { ok: false, error: 'too_large' }); }
+    const chunks = [];
+    let n = 0;
+    req.on('data', c => { n += c.length; if (n > limit) req.destroy(); else chunks.push(c); });
+    req.on('end', () => {
+      const raw = Buffer.concat(chunks).toString('utf8');
+      try {
+        const nonce = verifyLinkRequest(amberPub, cfg.name, req.headers, 'POST', path, raw);
+        if (!fresh(nonce)) throw new Error('重复的请求');
+      } catch (e) { return send(401, { ok: false, error: 'unauthorized', message: e.message }); }
+      linkState.lastContact = Date.now();
+      if (path === '/amber-link/reply') {
+        let b;
+        try { b = JSON.parse(raw); } catch { return send(400, { ok: false, error: 'bad_json' }); }
+        const p = pending.get(String(b?.id ?? ''));
+        if (!p) return send(200, { ok: false });
+        let j;
+        try { j = JSON.parse(String(b.body ?? '')); } catch { j = { ok: false, message: '无法解析 Amber 的答复' }; }
+        p.resolve(Number(b.status) || 0, j);
+        return send(200, { ok: true });
+      }
+      // next: hand out what is waiting, or wait for something (Amber keeps several of these open).
+      const take = () => {
+        const items = outbox.splice(0, 8);
+        // Not delivered (the connection dropped): back in line for the next one.
+        res.on('close', () => { if (!res.writableFinished) outbox.unshift(...items.filter(it => pending.has(it.id))); });
+        send(200, { ok: true, requests: items.map(it => ({ id: it.id, path: it.path, body: it.raw, headers: signRequest(me.sign, me.id, 'POST', it.path, it.raw) })) });
+      };
+      if (outbox.length) return take();
+      let done = false;
+      const timer = setTimeout(() => { if (done) return; done = true; nextWaiters = nextWaiters.filter(f => f !== wake); send(200, { ok: true, requests: [] }); }, LINK_WAIT_MS);
+      const wake = () => { if (done) return; if (!outbox.length) { nextWaiters.push(wake); return; } done = true; clearTimeout(timer); take(); };
+      nextWaiters.push(wake);
+      res.on('close', () => { if (!done) { done = true; clearTimeout(timer); nextWaiters = nextWaiters.filter(f => f !== wake); } });
+    });
+  });
+  // A public endpoint (behind HTTPS): slow or idle clients are cut off; Amber's long polls fit well inside these.
+  server.headersTimeout = 10_000;
+  server.requestTimeout = LINK_WAIT_MS + 30_000;
+  server.maxConnections = 256;
+  server.listen(Number(port), host, () => log(`link mode: listening on ${host}:${port} for Amber`));
+  return server;
 }
 
 const register = (cfg, me) => call(cfg, me, '/v1/executor/register', { name: cfg.name, envs: cfg.envs, signPub: me.signPub, boxPub: me.boxPub, version: VERSION });
@@ -130,6 +240,8 @@ export function prepare(cfg, payload) {
   const env = cfg.envs?.[payload.env];
   if (!env) throw new Error(`本执行端没有环境「${payload.env}」`);
   if (s.sandbox !== undefined) throw new Error('应用不再声明 sandbox：访问权限由运行环境决定');
+  // Amber refuses this combination too; here it also keeps a service's port away from a script with full network.
+  if (s.network && s.services && Object.keys(s.services).length) throw new Error('调用服务的应用不能同时开放外网');
   const workdir = normalizePath(env.workdir);
   if (!isDir(workdir)) throw new Error(`环境的 workdir 不是已存在的目录：${workdir}`);
   // The environment's approved access, re-checked here against this machine's protected dirs.
@@ -144,7 +256,10 @@ export function prepare(cfg, payload) {
   // Amber's global list (every environment; Feishu by default) plus this environment's own.
   const hosts = [...new Set([...validateHosts(payload.allowHosts ?? []), ...validateHosts(env.allowHosts ?? [])])];
   const egress = !s.network && hosts.length ? hosts : undefined;
-  return { code: s.code, python, timeoutMs, workdir, vars, egress, realHome: env.realHome === true, profileFor: (dir, tcpPorts = []) => compileToSeatbelt(buildPolicy({ runDir: dir, access }), { all: !!s.network, tcpPorts }) };
+  return { code: s.code, python, timeoutMs, workdir, vars, egress, realHome: env.realHome === true, network: !!s.network,
+    profileFor: (dir, tcpPorts = []) => compileToSeatbelt(buildPolicy({ runDir: dir, access }), { all: !!s.network, tcpPorts }),
+    // Linux (D58): the same policy as bubblewrap arguments; the allowed local ports are bridged into the sandbox.
+    bwrapFor: dir => compileToBwrap(buildPolicy({ runDir: dir, access }), { all: !!s.network }) };
 }
 
 const RESERVED_VARS = /^(PATH|HOME|TMPDIR|WORKDIR|LANG|PYTHON.*|DYLD_.*|LD_.*|NODE_OPTIONS)$/;
@@ -173,7 +288,10 @@ export async function handle(cfg, me, amberPub, envelope) {
     // Declared services (D52): a local port per service, relayed to Amber; the script only reaches these ports.
     relays = await startRelays(cfg, me, amberPub, envelope.jobId, payload.input?.services);
     const input = relays.services ? { ...payload.input, services: relays.services } : payload.input;
-    const r = await runSandboxed({ code: job.code, python: job.python, profileFor: (dir, ports) => job.profileFor(dir, [...relays.ports, ...ports]), input, timeoutMs: job.timeoutMs, env: { ...job.vars, WORKDIR: job.workdir }, ...(job.egress ? { egress: job.egress } : {}), ...(job.realHome ? { home: homedir() } : {}) });
+    const sandbox = sandboxPlatform() === 'linux'
+      ? { bwrapFor: job.bwrapFor, bwrapNetwork: job.network, localPorts: relays.ports }
+      : { profileFor: (dir, ports) => job.profileFor(dir, [...relays.ports, ...ports]) };
+    const r = await runSandboxed({ code: job.code, python: job.python, ...sandbox, input, timeoutMs: job.timeoutMs, env: { ...job.vars, WORKDIR: job.workdir }, ...(job.egress ? { egress: job.egress } : {}), ...(job.realHome ? { home: homedir() } : {}) });
     // The log never sees a secret: the error text can contain one (e.g. an exception message).
     log('job done', envelope.jobId, r.ok ? 'ok' : `failed: ${redact(r.error ?? '', secrets)}`);
     await call(cfg, me, '/v1/executor/result', { jobId: envelope.jobId, ok: r.ok, content: redact(r.content, secrets), ...(r.error ? { error: redact(r.error, secrets) } : {}) });
@@ -219,7 +337,8 @@ async function runLoop() {
   const me = identity();
   const amberPub = amberKey();
   setSandboxContext({ configDir: DIR });
-  log(`amber-executor ${cfg.name} (${me.id}) → ${cfg.amber}; environments: ${Object.keys(cfg.envs ?? {}).join(', ') || 'none'}`);
+  log(`amber-executor ${cfg.name} (${me.id}) → ${cfg.mode === 'link' ? 'link mode, Amber connects here' : cfg.amber}; environments: ${Object.keys(cfg.envs ?? {}).join(', ') || 'none'}`);
+  if (cfg.mode === 'link') startLinkServer(cfg, me, amberPub);
   let running = 0, lastStatus = '', lastFollow = Date.now();
   refreshEnvs(cfg);
   /** Starts every job in a poll answer, whatever state we thought we were in. */
@@ -264,8 +383,40 @@ async function runLoop() {
 
 // ---------- setup
 
+/** Amber's public signing key given by hand (link mode: this machine may not reach Amber): the JSON from
+ *  <amber>/v1/keys, a JWK, or just its "x". */
+function parseAmberKey(s) {
+  let jwk;
+  try { const j = JSON.parse(s); jwk = j?.keys?.[0] ?? j; } catch { jwk = { kty: 'OKP', crv: 'Ed25519', x: String(s).trim() }; }
+  if (jwk?.kty !== 'OKP' || jwk?.crv !== 'Ed25519' || !/^[A-Za-z0-9_-]{43}$/.test(String(jwk?.x ?? ''))) die('--amber-key 不对：要 Amber 的 /v1/keys 返回的 JSON，或其中的 x');
+  try { createPublicKey({ key: { kty: 'OKP', crv: 'Ed25519', x: jwk.x }, format: 'jwk' }); } catch { die('--amber-key 不是合法的 Ed25519 公钥'); }
+  return { kty: 'OKP', crv: 'Ed25519', x: jwk.x };
+}
+
+async function initLink(args, name) {
+  const key = flag(args, '--amber-key');
+  if (!key) die('链接模式要用 --amber-key 给出 Amber 的签名公钥（Amber 的 /v1/keys 返回的 JSON，或其中的 x；向 Amber 管理员要）');
+  const listen = flag(args, '--listen') ?? '127.0.0.1:7350';
+  if (!/^[\w.:[\]-]+:\d{2,5}$/.test(listen)) die('--listen 要写成 地址:端口，例如 127.0.0.1:7350');
+  const jwk = parseAmberKey(existsSync(key) ? readFileSync(key, 'utf8') : key);
+  mkdirSync(DIR, { recursive: true, mode: 0o700 });
+  chmodSync(DIR, 0o700);
+  if (!existsSync(P.sign) || !existsSync(P.box)) { const k = newExecutorKeys(); writePrivate(P.sign, k.signKey); writePrivate(P.box, k.boxKey); }
+  const prev = readJson(P.amber, null);
+  if (prev && prev.x !== jwk.x && !args.includes('--repin')) die('Amber 的公钥和之前记下的不一样。确认 Amber 换过签名密钥后，加 --repin 重新记录');
+  writePrivate(P.amber, JSON.stringify(jwk));
+  const { amber: _a, ...rest } = readJson(P.config, {});
+  writePrivate(P.config, JSON.stringify({ ...rest, name, mode: 'link', listen }, null, 2));
+  const me = identity();
+  console.log(`已初始化 ${DIR}（链接模式）\n执行端：${name}\n监听：${listen}（用 nginx 等把一个 HTTPS 地址转发到这里）\nAmber 签名公钥：已记录\n公钥指纹：${showFingerprint(me.fp)}\n\n下一步：amber-executor env set <环境名> <目录>；启动服务（Linux：amber-executor install-systemd --user <用户>）；请 Amber 管理员在配置的 executorLinks 里加上 {"name": "${name}", "url": "https://<你的地址>"}，再核对上面的指纹批准。`);
+}
+
 async function init(args) {
   const name = flag(args, '--name');
+  if (args.includes('--link')) {
+    if (!name || !EXECUTOR_NAME.test(name)) die('要用 --name 给执行端起名：小写字母、数字、连字符');
+    return initLink(args, name);
+  }
   let url = flag(args, '--amber') ?? process.env.AMBER_URL ?? readJson(join(homedir(), '.config', 'amber-client.json'), {}).url;
   if (!name || !EXECUTOR_NAME.test(name)) die('要用 --name 给执行端起名：小写字母、数字、连字符，例如 --name ledger-mac');
   if (!url) die('要用 --amber 指定 Amber 的地址（和 amber 命令用的地址相同）');
@@ -368,12 +519,17 @@ function envCmd(args) {
     unlinkSync(f);
     console.log(`已删除 ${f}`);
   } else die('用法：amber-executor env set|import|export|show|rm …');
-  console.log(`环境文件夹 ${ENV_DIR} 里的文件就是全部环境。正在运行的执行端 5 分钟内会自动读到变化；要马上生效，重启它：launchctl kickstart -k gui/${process.getuid()}/${LABEL}。新增的环境和超出范围的修改要管理员批准。`);
+  console.log(`环境文件夹 ${ENV_DIR} 里的文件就是全部环境。正在运行的执行端 5 分钟内会自动读到变化；要马上生效，重启它：${process.platform === 'linux' ? 'sudo systemctl restart amber-executor' : `launchctl kickstart -k gui/${process.getuid()}/${LABEL}`}。新增的环境和超出范围的修改要管理员批准。`);
 }
 
 async function status() {
   const cfg = loadConfig();
   const me = identity();
+  if (cfg.mode === 'link') {
+    // Link mode: only the running service talks to Amber; ask it.
+    const h = await fetch(`http://${cfg.listen}/amber-link/hello`, { signal: AbortSignal.timeout(5000) }).then(r => r.json()).catch(() => null);
+    return void console.log(`执行端：${cfg.name}（${me.id}，链接模式）\n监听：${cfg.listen}${h ? '' : '（服务没有在运行）'}\n环境：${Object.entries(cfg.envs ?? {}).map(([k, v]) => `${k} = ${v.workdir}`).join('；') || '（无）'}\n公钥指纹：${showFingerprint(me.fp)}\nAmber：${h?.amberConnected ? '已连上' : '还没连上（等 Amber 管理员在 executorLinks 里加上本机地址）'}\n批准状态在服务日志里（status: …），或问 Amber 管理员。`);
+  }
   const r = await register(cfg, me).catch(e => die(e.message));
   const text = { pending: '等待管理员批准（管理员会收到 Amber 的卡片，请让对方核对下面的指纹）', approved: '已批准', rejected: '已被拒绝（要重新申请：删除配置目录里的两个密钥文件后重新 init）', revoked: '已被撤销（同上）' }[r.status] ?? r.status;
   console.log(`执行端：${cfg.name}（${me.id}）\nAmber：${cfg.amber}\n环境：${Object.entries(cfg.envs ?? {}).map(([k, v]) => `${k} = ${v.workdir}`).join('；') || '（无）'}\n公钥指纹：${showFingerprint(me.fp)}\n状态：${text}`);
@@ -409,13 +565,81 @@ function launchd(install) {
   console.log(`已安装并启动（${plist}）。日志：${join(DIR, 'executor.log')}`);
 }
 
+/** Runs a few scripts in this machine's sandbox and checks what they can and cannot reach. Exit code 1 when any
+ *  protection does not hold (or the sandbox cannot start: on Linux, bubblewrap and unprivileged user namespaces). */
+async function selftest() {
+  const { mkdtempSync, rmSync: rm } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  mkdirSync(DIR, { recursive: true, mode: 0o700 });
+  const work = realpathSync(mkdtempSync(join(tmpdir(), 'amber-selftest-')));
+  writeFileSync(join(work, 'data.txt'), 'ok');
+  const outside = realpathSync(mkdtempSync(join(homedir(), '.amber-selftest-')));
+  writeFileSync(join(outside, 'x.txt'), 'x');
+  const access = validateEnvAccess({ readWrite: ['{WORKDIR}'] }, { workdir: work });
+  const linux = sandboxPlatform() === 'linux';
+  const run = (code, egress) => runSandboxed({ code, python: DEFAULT_PYTHON, input: {}, timeoutMs: 20000, env: { WORKDIR: work }, ...(egress ? { egress } : {}),
+    ...(linux ? { bwrapFor: dir => compileToBwrap(buildPolicy({ runDir: dir, access }), { all: false }) } : { profileFor: (dir, ports) => compileToSeatbelt(buildPolicy({ runDir: dir, access }), { all: false, tcpPorts: ports }) }) });
+  const tryRead = p => `try:\n    open(${JSON.stringify(p)}).read(); print("READ")\nexcept Exception as e:\n    print("blocked", type(e).__name__)`;
+  const checks = [
+    ['运行环境里的文件能读', tryRead(join(work, 'data.txt')), o => o.includes('READ')],
+    ['环境以外的文件读不到', tryRead(join(outside, 'x.txt')), o => o.includes('blocked')],
+    ['执行端自己的密钥读不到', tryRead(P.sign), o => o.includes('blocked')],
+    ['SSH 密钥目录读不到', tryRead(join(homedir(), '.ssh', 'authorized_keys')), o => o.includes('blocked')],
+    ['不能直接联网', 'import socket\ntry:\n    socket.create_connection(("1.1.1.1", 443), timeout=5); print("CONNECTED")\nexcept Exception as e:\n    print("blocked", type(e).__name__)', o => o.includes('blocked')],
+    ['经代理只能访问白名单（open.feishu.cn 可以，example.com 不行）', 'import urllib.request\ndef t(h):\n    try:\n        return urllib.request.urlopen("https://%s/" % h, timeout=10).status\n    except Exception as e:\n        return type(e).__name__\nprint(t("open.feishu.cn"), t("example.com"))', o => /^\d{3} /.test(o.trim()) && !/^\d{3} \d{3}$/.test(o.trim()), ['open.feishu.cn']],
+  ];
+  let bad = 0;
+  for (const [name, code, okIf, egress] of checks) {
+    const r = await run(code, egress);
+    const o = r.ok ? r.content : `ERROR ${r.error}`;
+    const pass = r.ok && okIf(o);
+    if (!pass) bad++;
+    console.log(`${pass ? '✓' : '✗'} ${name}：${o.trim().slice(0, 200)}`);
+  }
+  rm(work, { recursive: true, force: true });
+  rm(outside, { recursive: true, force: true });
+  console.log(bad ? `\n${bad} 项没有通过` : '\n全部通过');
+  process.exit(bad ? 1 : 0);
+}
+
+/** Linux: a systemd service running the executor as `user` (never root: the sandbox relies on an ordinary account). */
+function systemd(args) {
+  const user = flag(args, '--user');
+  if (process.getuid() !== 0) die('要用 root 运行（写 /etc/systemd/system）');
+  if (!user || user === 'root') die('要用 --user 指定运行执行端的普通用户（不能是 root），例如 --user amber-runner');
+  const home = execFileSync('getent', ['passwd', user]).toString().split(':')[5];
+  if (!home) die(`没有用户 ${user}`);
+  const dir = process.env.AMBER_EXECUTOR_DIR ?? join(home, '.config', 'amber-executor');
+  const unit = '/etc/systemd/system/amber-executor.service';
+  writeFileSync(unit, `[Unit]
+Description=Amber executor (${user})
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=${user}
+Environment=AMBER_EXECUTOR_DIR=${dir}
+Environment=HOME=${home}
+ExecStart=${process.execPath} ${fileURLToPath(import.meta.url)} run
+Restart=always
+RestartSec=5
+NoNewPrivileges=yes
+
+[Install]
+WantedBy=multi-user.target
+`);
+  execFileSync('systemctl', ['daemon-reload']);
+  execFileSync('systemctl', ['enable', '--now', 'amber-executor.service']);
+  console.log(`已安装并启动 ${unit}（以 ${user} 运行，配置目录 ${dir}）。日志：journalctl -u amber-executor -f`);
+}
+
 function flag(args, name) { const i = args.indexOf(name); return i >= 0 ? args[i + 1] : undefined; }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
   const [cmd, ...args] = process.argv.slice(2);
   // Our own config dir is protected in every command, not only while running jobs.
   setSandboxContext({ configDir: DIR });
-  const run = { init: () => init(args), env: () => envCmd(args), status, run: runLoop, 'install-launchd': () => launchd(true), 'uninstall-launchd': () => launchd(false) }[cmd];
+  const run = { init: () => init(args), env: () => envCmd(args), status, run: runLoop, 'install-launchd': () => launchd(true), 'uninstall-launchd': () => launchd(false), 'install-systemd': () => systemd(args), selftest }[cmd];
   if (!run) { console.log(readFileSync(fileURLToPath(import.meta.url), 'utf8').split('\n').slice(1, 10).map(l => l.replace(/^\/\/ ?/, '')).join('\n')); process.exit(cmd ? 1 : 0); }
   await run();
 }

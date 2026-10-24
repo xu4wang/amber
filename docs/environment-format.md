@@ -5,7 +5,7 @@
 这份格式**不依赖 Amber 或 botmux**，其他 agent 平台、沙箱实现都可以直接生成或使用：
 
 - **生成方**（把自己的权限配置转成这个格式）：例如 `export-botmux-env.mjs` 把 botmux 机器人的沙箱配置导出成一份定义。
-- **使用方**（按这个格式生成自己的沙箱规则）：例如 Amber 执行端把它编译成 macOS Seatbelt 规则。
+- **使用方**（按这个格式生成自己的沙箱规则）：例如 Amber 执行端把它编译成 macOS Seatbelt 规则，在 Linux 上编译成 bubblewrap 的挂载参数。
 
 本文是规范：「必须」表示实现必须做到，「建议」表示推荐做法。
 
@@ -168,7 +168,22 @@ Amber 的取值，供参考：
 (deny file-write* (subpath "/Users/me/.ssh"))
 ```
 
-**其他平台**：规范只要求最终效果和上面「规则怎么生效」一致，具体机制由平台实现决定。例如 Linux 上可以用 bubblewrap：只读路径用 `--ro-bind`、可读写路径用 `--bind`，按深度从浅到深挂载；`deny` 的路径不挂载，或用空目录 / 空文件覆盖（覆盖文件时要确认读到的是空内容而不是原文件）；强制拒绝的位置一律不挂载。这只是建议做法，Amber 目前只实现了 macOS。
+**Linux（bubblewrap / `bwrap`）**，Amber 执行端的做法：沙箱从空开始，只挂载规则允许的路径。规则同样按深度从浅到深处理，越深的越后挂载，盖过浅的：
+
+```
+--unshare-user --unshare-pid --unshare-ipc --unshare-uts --unshare-net    # 网络只有本机回环
+--proc /proc --dev /dev --tmpfs /tmp
+--ro-bind /usr /usr  --symlink usr/bin /bin  …                              # 基础规则：系统目录只读
+--ro-bind /data /data                                                     # readOnly
+--bind /data/export /data/export                                          # readWrite
+--tmpfs /data/private                                                     # deny（目录）：盖上一个空目录
+--ro-bind /dev/null /data/secret.txt                                      # deny（文件）：盖上空文件
+--remount-ro /data/private                                                # 盖上的空目录最后改成只读
+```
+
+`deny` 只在它被某个允许的路径挂载进来时才需要盖住；没挂载的路径在沙箱里本来就不存在。强制拒绝的位置同理，最后处理。网络：脚本在自己的网络命名空间里，执行端把代理端口和服务转发端口通过运行目录里的 Unix socket 接进去（沙箱里一个小转发程序在同样的端口上监听）。
+
+**其他平台**：规范只要求最终效果和上面「规则怎么生效」一致，具体机制由平台实现决定。
 
 ## 在 Amber 里怎么用（不属于格式本身）
 
@@ -188,6 +203,6 @@ Amber 的取值，供参考：
 
 ## 参考实现
 
-- 校验与编译：`src/sandbox-policy.ts`（`validateEnvAccess`、`buildPolicy`、`compileToSeatbelt`）。
+- 校验与编译：`src/sandbox-policy.ts`（`validateEnvAccess`、`buildPolicy`、`compileToSeatbelt`、`compileToBwrap`）；运行：`src/sandbox-run.ts`。
 - 导入、导出：`client/amber-executor/amber-executor.mjs`（`env import`、`env set`、`env export`）。
 - 从 botmux 生成：`client/amber-executor/export-botmux-env.mjs`。其他 agent 平台可以照着写一个自己的导出工具：把「这个 agent 能访问哪些路径、用什么身份调用外部工具」翻译成上面的字段。

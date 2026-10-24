@@ -309,6 +309,8 @@ export class ExecutorHub {
     const d = serviceDef(name);
     // Services that do not allow executors are still reachable from Amber's own machine, as they always were.
     if (!(name in j.calls) || !d || (executorId !== null && d.executor !== true)) throw new AmberError('forbidden', `这个应用没有声明服务 ${name}，或这个服务不允许在执行端上调用`);
+    // Link-mode executors (D58) are outside the network: a service's data goes there only when the service says so.
+    if (executorId !== null && d.links !== true && this.store.getExecutor(executorId)?.machine.startsWith('link:')) throw new AmberError('forbidden', `服务 ${name} 不允许在外部执行环境（链接模式的执行端）上调用`);
     if (j.calls[name] <= 0) throw new AmberError('forbidden', `服务 ${name} 的调用次数已用完`);
     const method = String(b?.method ?? '');
     const path = String(b?.path ?? '');
