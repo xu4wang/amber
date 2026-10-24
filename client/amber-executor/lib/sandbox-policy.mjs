@@ -1,5 +1,6 @@
 // GENERATED from src/sandbox-policy.ts by scripts/build-executor.mjs — do not edit.
-// Sandbox policy (D49, D51). Every script runs under macOS Seatbelt with a policy built from:
+// Sandbox policy (D49, D51, D58). Every script runs in a sandbox — macOS Seatbelt, or bubblewrap on Linux
+// executors (D58) — with a policy built from:
 //   baseline     system + language toolchains readable, so scripts can use external dependencies;
 //                credential stores denied (they can be re-opened only by an approved environment)
 //   environment  what the environment the command runs in grants (D51): an executor environment's
@@ -10,7 +11,7 @@
 // Model (three tiers, deny by default, the deepest matching rule wins) and the macOS baseline are
 // ported from botmux's FsPolicy (src/adapters/cli/fs-policy.ts, MIT License, © botmux contributors),
 // narrowed for scripts: no ~/Library, ~/.cache or /private/var/folders grants (HOME is the run dir).
-import { existsSync, realpathSync } from 'node:fs';
+import { existsSync, realpathSync, lstatSync, readlinkSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { posix } from 'node:path';
 
@@ -22,9 +23,12 @@ import { posix } from 'node:path';
 
 export const MAX_ACCESS_PATHS = 100;
 
-let CTX = { home: homedir(), configDir: '' };
-/** Set once at startup: the home directory and this process's config dir (signing key, secrets key, database / executor keys). */
-export function setSandboxContext(c                                      )       { CTX = { home: c.home ?? homedir(), configDir: c.configDir }; }
+                                                 
+let CTX                                                                 = { home: homedir(), configDir: '', platform: process.platform === 'linux' ? 'linux' : 'darwin' };
+/** Set once at startup: the home directory and this process's config dir (signing key, secrets key, database / executor keys).
+ *  `platform`: which sandbox the policy is for (default: this machine's); tests set it to compile the other one. */
+export function setSandboxContext(c                                                                  )       { CTX = { home: c.home ?? homedir(), configDir: c.configDir, platform: c.platform ?? CTX.platform }; }
+export const sandboxPlatform = ()                  => CTX.platform;
 
 /** Never readable or writable, whatever an environment says: Amber's and the executor's own keys, SSH keys, keychains. */
 export function hardDenyRoots(home = CTX.home, configDir = CTX.configDir)           {
@@ -33,6 +37,8 @@ export function hardDenyRoots(home = CTX.home, configDir = CTX.configDir)       
     ...(configDir ? [configDir] : []),
     `${h}/.config/amber`, `${h}/.config/amber-executor`,
     `${h}/.ssh`, `${h}/Library/Keychains`, '/Library/Keychains',
+    // Linux: the desktop keyring and the root account's home (an executor never runs as root, see docs).
+    ...(CTX.platform === 'linux' ? [`${h}/.local/share/keyrings`, '/root'] : []),
   ];
 }
 
@@ -50,14 +56,23 @@ export function credentialRoots(home = CTX.home)           {
   ];
 }
 
+/** System dirs readable on each platform. On Linux /dev, /proc and /tmp are set up by bwrap itself (sandbox-linux.ts). */
+function systemDirs()           {
+  const ro = (p        )         => ({ path: p, access: 'readOnly', source: 'baseline' });
+  if (CTX.platform === 'linux') return ['/usr', '/bin', '/sbin', '/lib', '/lib64', '/lib32', '/etc', '/opt', '/usr/local', '/var/lib/alternatives'].map(ro);
+  return [
+    ro('/System'), ro('/usr'), ro('/bin'), ro('/sbin'), ro('/Library'), ro('/opt'),
+    ro('/private/etc'), ro('/private/var/select'), ro('/private/var/db/timezone'), ro('/private/var/run'),
+    { path: '/dev', access: 'readWrite', source: 'baseline' },
+  ];
+}
+
 /** Read-only toolchains and system dirs, so interpreters, packages and CLIs work inside the sandbox. */
 function baseline(h        )           {
   const ro = (p        )         => ({ path: p, access: 'readOnly', source: 'baseline' });
   const deny = (p        )         => ({ path: p, access: 'deny', source: 'baseline' });
   return [
-    ro('/System'), ro('/usr'), ro('/bin'), ro('/sbin'), ro('/Library'), ro('/opt'),
-    ro('/private/etc'), ro('/private/var/select'), ro('/private/var/db/timezone'), ro('/private/var/run'),
-    { path: '/dev', access: 'readWrite', source: 'baseline' },
+    ...systemDirs(),
     // Language toolchains / version managers commonly under $HOME (read + exec, never write).
     ...['.fnm', '.nvm', '.volta', '.npm-global', '.nodenv', '.yarn', '.pnpm', '.bun', '.deno',
       '.pyenv', 'Library/Python', '.local/lib', '.local/bin', '.pipx', '.rbenv', '.rvm', '.gem',
@@ -128,12 +143,15 @@ export function credentialGrants(a           , home = CTX.home)           {
   return [...(a.readWrite ?? []), ...(a.readOnly ?? [])].filter(p => roots.some(r => within(p, r) || within(r, p)));
 }
 
-/** Real path when it exists (Seatbelt matches resolved paths: /tmp → /private/tmp), else the path itself. */
+/** Real path when it exists (Seatbelt matches resolved paths: /tmp → /private/tmp), else the path itself.
+ *  On Linux the top-level system links (/bin → usr/bin …) are kept as they are: bwrap recreates them as links. */
 function canonical(p        )         {
+  if (CTX.platform === 'linux' && LINUX_TOP_LINKS.includes(p)) return p;
   try { if (existsSync(p)) return realpathSync(p); } catch { /* keep as is */ }
-  for (const [a, b] of [['/tmp', '/private/tmp'], ['/var', '/private/var'], ['/etc', '/private/etc']]) if (within(p, a)) return b + p.slice(a.length);
+  if (CTX.platform === 'darwin') for (const [a, b] of [['/tmp', '/private/tmp'], ['/var', '/private/var'], ['/etc', '/private/etc']]) if (within(p, a)) return b + p.slice(a.length);
   return p;
 }
+const LINUX_TOP_LINKS = ['/bin', '/sbin', '/lib', '/lib64', '/lib32'];
 
 const depth = (p        ) => (p === '/' ? 0 : p.split('/').length - 1);
 const RESTRICT                           = { readWrite: 0, readOnly: 1, deny: 2 };
@@ -201,6 +219,43 @@ export function compileToSeatbelt(policy        , net                           
   // Last: Seatbelt applies the last matching rule, so these win over any grant above.
   for (const m of policy.mandatory) lines.push(`(deny file-read* (subpath "${esc(m)}"))`, `(deny file-write* (subpath "${esc(m)}"))`);
   return lines.join('\n') + '\n';
+}
+
+const kind = (p        )                                      => {
+  try { const s = lstatSync(p); return s.isSymbolicLink() ? 'link' : s.isDirectory() ? 'dir' : 'file'; } catch { return undefined; }
+};
+
+/** bubblewrap arguments for a policy (D58), the Linux counterpart of compileToSeatbelt. The sandbox starts empty:
+ *  only what a rule allows is mounted, in rule order (shallow → deep, so a deeper rule overrides a shallower one);
+ *  a denied path inside something mounted is covered with an empty tmpfs (a directory) or /dev/null (a file), and the
+ *  hard denies are covered last. Namespaces: user, pid, ipc, uts, cgroup — and network unless `net.all`, so the
+ *  script sees only its own loopback (sandbox-run.ts bridges the allowed local ports into it). Missing paths are skipped. */
+export function compileToBwrap(policy        , net                  )           {
+  const a = ['--die-with-parent', '--new-session', '--unshare-user', '--unshare-ipc', '--unshare-pid', '--unshare-uts', '--unshare-cgroup-try'];
+  if (!net.all) a.push('--unshare-net');
+  a.push('--proc', '/proc', '--dev', '/dev', '--tmpfs', '/tmp');
+  const mounted           = ['/proc', '/dev', '/tmp'];
+  const covered = (p        ) => mounted.some(m => within(p, m));
+  const later           = [];
+  const hide = (p        ) => {
+    const k = kind(p);
+    if (!k || !covered(p)) return;   // nothing there, or not visible anyway
+    if (k === 'dir') { a.push('--tmpfs', p); later.push(p); } else a.push('--ro-bind', '/dev/null', p);
+  };
+  for (const r of policy.rules) {
+    if (r.path === '/' || r.path === '/proc' || r.path === '/dev' || r.path === '/tmp') continue;
+    if (r.access === 'deny') { hide(r.path); continue; }
+    const k = kind(r.path);
+    if (!k) continue;
+    // Merged-/usr systems: /bin → usr/bin and the like stay links (their targets are mounted with /usr).
+    if (k === 'link' && LINUX_TOP_LINKS.includes(r.path)) { a.push('--symlink', readlinkSync(r.path), r.path); continue; }
+    a.push(r.access === 'readWrite' ? '--bind' : '--ro-bind', r.path, r.path);
+    mounted.push(r.path);
+  }
+  for (const m of policy.mandatory) hide(m);
+  // Covering tmpfs are read-only, set last (bwrap applies operations in order, and a deeper grant needs its mount point first).
+  for (const p of later) a.push('--remount-ro', p);
+  return a;
 }
 
 /** One line for cards and review documents. */

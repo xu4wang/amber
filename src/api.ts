@@ -27,6 +27,21 @@ async function readBody(req: IncomingMessage): Promise<any> {
   try { return JSON.parse(body); } catch { throw new AmberError('bad_json', '请求不是合法的 JSON'); }
 }
 
+/** One signed executor request (D50), however it arrived: over this API, or carried back by a link (D58, exec-link.ts). */
+export async function executorRequest(hub: ExecutorHub, path: string, h: Record<string, string | undefined>, raw: string, machine: string): Promise<{ status: number; body: unknown }> {
+  try {
+    if (path === '/v1/executor/register') return { status: 200, body: { ok: true, ...(await hub.register(h, 'POST', path, raw, machine)) } };
+    const e = hub.authenticate(h, 'POST', path, raw);
+    if (path === '/v1/executor/poll') return { status: 200, body: { ok: true, ...(await hub.poll(e)) } };
+    if (path === '/v1/executor/result') return { status: 200, body: hub.result(e, raw) };
+    if (path === '/v1/executor/relay') return { status: 200, body: await hub.relay(e, raw) };
+    return { status: 404, body: { ok: false, error: 'not_found' } };
+  } catch (e) {
+    if (e instanceof AmberError) return { status: e.code === 'not_found' ? 404 : e.code === 'unauthorized' ? 401 : e.code === 'forbidden' ? 403 : 400, body: { ok: false, error: e.code, message: e.message } };
+    return { status: 500, body: { ok: false, error: 'internal', message: (e as Error).message } };
+  }
+}
+
 export function startApi(port: number, machines: Record<string, string>, flow: Flow, agent: AgentGate, jwks: () => object, info: { webUrl: string }, hub?: ExecutorHub, pages?: PageService, triggers?: TriggerService): import('node:http').Server {
   const server = createServer(async (req, res) => {
     const reply = (status: number, body: unknown) => {
@@ -58,13 +73,8 @@ export function startApi(port: number, machines: Record<string, string>, flow: F
       // Executors (D50): every request is signed with the executor's own key (see exec-proto.ts).
       if (hub && path.startsWith('/v1/executor/')) {
         const raw = await readRaw(req, 1024 * 1024);
-        const h = req.headers as Record<string, string | undefined>;
-        if (path === '/v1/executor/register') return reply(200, { ok: true, ...(await hub.register(h, 'POST', path, raw, machine)) });
-        const e = hub.authenticate(h, 'POST', path, raw);
-        if (path === '/v1/executor/poll') return reply(200, { ok: true, ...(await hub.poll(e)) });
-        if (path === '/v1/executor/result') return reply(200, hub.result(e, raw));
-        if (path === '/v1/executor/relay') return reply(200, await hub.relay(e, raw));
-        return reply(404, { ok: false, error: 'not_found' });
+        const r = await executorRequest(hub, path, req.headers as Record<string, string | undefined>, raw, machine);
+        return reply(r.status, r.body);
       }
       // Page apps: the files come with the request (up to 10MB, base64 in JSON).
       if (path === '/v1/pages' && pages) {

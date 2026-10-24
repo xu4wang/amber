@@ -50,7 +50,7 @@
 
 ## 安装（在数据所在的机器上）
 
-要求：macOS，Node 22 或更新版本。这台机器的 IP 要在 Amber 的白名单里，和 agent 用 `amber` 命令的要求一样。
+要求：macOS，Node 22 或更新版本。这台机器的 IP 要在 Amber 的白名单里，和 agent 用 `amber` 命令的要求一样。Linux 机器、或者连不进 Amber 所在网络的机器，见下面「Linux 与链接模式」。
 
 ```bash
 # 1. 拿到代码（只用 client/amber-executor 这个目录，不需要安装依赖）
@@ -107,6 +107,61 @@ node ~/amber/client/amber-executor/amber-executor.mjs status
 
 
 初始化时执行端会记下 Amber 的签名公钥，之后只接受这把钥匙签的任务。Amber 换了签名密钥时，执行端会拒绝所有任务；确认是 Amber 自己换的之后，重新运行 `init … --repin`。
+
+## Linux 与链接模式（Amber 主动连过来）
+
+公司网络外的服务器连不到 Amber，但 Amber 能通过 HTTPS 访问它时，用**链接模式**：执行端在本机开一个小的 HTTP 服务，用 nginx 等挂到一个 HTTPS 地址上；Amber 按自己配置里的 `executorLinks` 主动连过去，把执行端要发的登记、取任务、回结果这些请求取回来处理，再把答复送回去。除了「谁先连谁」，其他完全一样：执行端的每个请求仍用它自己的私钥签名，任务仍由 Amber 签名并加密给它，管理员仍要核对指纹、批准它和每个运行环境。
+
+**沙箱**：Linux 上用 bubblewrap（`bwrap`）。运行环境定义文件和 macOS 完全通用：沙箱里只挂载环境允许的路径（只读的只读挂载），被禁止的子路径用空目录盖住，执行端自己的配置目录、`~/.ssh`、`/root` 永远看不到；脚本在自己的网络命名空间里，只有本机回环，经代理只能访问白名单里的地址，调用服务的转发口也一样接进去。
+
+**机器要求**（Linux）：
+- 能装 bubblewrap（多数发行版的软件源里都有，包名 `bubblewrap`），内核开了非特权用户命名空间（Ubuntu、Debian、RHEL 系 9 默认都开）。
+- Node 22 或更新版本、Python 3。
+- 一个**普通用户**专门运行执行端（不要用 root：沙箱依赖普通账号的权限）。
+- 一个 Amber 能访问到的 HTTPS 地址，转发到执行端监听的本机端口。机器不需要能访问 Amber。
+
+**安装**（以 root 准备，执行端本身以普通用户运行）：
+
+```bash
+dnf install -y bubblewrap        # 或 apt install bubblewrap
+useradd --system --create-home --shell /sbin/nologin amber-runner
+# 代码放在这个用户能读的地方，例如 /opt/amber-executor（只要 client/amber-executor 这个目录）
+R="sudo -u amber-runner -H env AMBER_EXECUTOR_DIR=/home/amber-runner/.config/amber-executor node /opt/amber-executor/amber-executor.mjs"
+$R selftest                      # 先检查这台机器的沙箱：全部通过再继续
+# Amber 的签名公钥：向 Amber 管理员要 <Amber 地址>/v1/keys 返回的 JSON，存成文件
+$R init --name sgvps --link --amber-key /tmp/amber-keys.json --listen 127.0.0.1:7350
+$R env set demo /home/amber-runner/demo      # 运行环境，和 macOS 一样
+node /opt/amber-executor/amber-executor.mjs install-systemd --user amber-runner   # 常驻（systemd）
+```
+
+nginx 只转发 `/amber-link/`：
+
+```nginx
+location /amber-link/ {
+    proxy_pass http://127.0.0.1:7350;
+    proxy_http_version 1.1;
+    proxy_read_timeout 90s;
+    proxy_buffering off;
+    client_max_body_size 20m;
+}
+```
+
+`<地址>/amber-link/hello` 会返回执行端的名字和公钥指纹（公开信息），可以用来确认 HTTPS 入口配好了。其他请求都必须带 Amber 的签名。
+
+**Amber 这边**（管理员）：在 Amber 的 `config.json` 里加上，然后重启 Amber：
+
+```json
+"executorLinks": [
+  { "name": "sgvps", "url": "https://amber-runner.example.com" }
+]
+```
+
+- `name` 必须和执行端 `init --name` 的名字一致：执行端只接受 Amber 为这个名字签的请求，Amber 也只接受它用这个名字登记。
+- 中间经过 CDN（比如 Cloudflare）时，CDN 能看到明文的执行结果。可以绕开它直连：`"connectTo": "1.2.3.4"`（连这个地址，TLS 和 Host 仍用 `url` 里的域名），再用 `"tlsFingerprint": "<证书 SHA-256>"` 固定证书（自签名证书也可以用）。
+- `parallel`：同时保持几条取请求的连接，默认 4（1–16）。
+- 连上之后，执行端照常申请登记，管理员核对指纹后批准。这类执行端的来源显示为 `link:<名字>`。
+
+**外部执行环境的限制**：机器在公司网络外，所以**默认不能调用 Amber 上登记的服务**（比如 data-mcp），转发会被拒绝。确实需要时，管理员在那个服务的配置里加 `"links": true`。内置的大模型服务不受这个限制（交给它的文字本来就来自那台机器）。审核派到外部执行环境的应用时，要按「代码、参数和密钥会在公司网络外解开」来把关。
 
 ## 管理员
 

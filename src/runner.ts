@@ -53,7 +53,7 @@ export function describeServices(s: Pick<Script, 'services'>): string {
 /** Local services a script may call (config: services). Only these addresses are reachable from the sandbox. */
 /** executor: may be called from scripts on executors, through Amber's relay (D52). */
 /** builtin: answered by Amber itself (the llm service), not forwarded anywhere. */
-export interface ServiceDef { audience: string; tcpPort?: number; unixSocket?: string; executor?: boolean; builtin?: boolean }
+export interface ServiceDef { audience: string; tcpPort?: number; unixSocket?: string; executor?: boolean; links?: boolean; builtin?: boolean }
 let SERVICES: Record<string, ServiceDef> = {};
 export function setServices(s: Record<string, ServiceDef>): void { SERVICES = s; }
 export function knownServices(): string[] { return Object.keys(SERVICES); }
