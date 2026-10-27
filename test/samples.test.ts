@@ -59,6 +59,12 @@ if os.environ.get("FAKE_ERR") == "scope":
 if os.environ.get("FAKE_ERR") == "other":
     sys.stderr.write(json.dumps({"ok": False, "error": {"type": "api", "code": 230001, "message": "chat not found"}}, indent=2))
     sys.exit(1)
+if k == "api GET" and a[2] == "/open-apis/authen/v1/user_info":
+    print(json.dumps({"code": 0, "data": {"open_id": "ou_me"}}))
+    sys.exit(0)
+if k == "api GET" and a[2].startswith("/open-apis/task/v2/tasklists/"):
+    print(json.dumps({"code": 0, "data": {"tasklist": {"name": "清单" + a[2].rsplit("/", 1)[1][:3]}}}))
+    sys.exit(0)
 if k == "api GET":
     # the transcript, written to the -o file in the current directory (the run's temp dir)
     assert "/minutes/v1/minutes/obc" in a[2] and a[2].endswith("/transcript"), a
@@ -85,6 +91,15 @@ data = {
   "minutes +search": {"items": [{"token": "obc" + ("o" if "--owner-ids" in a else "p") + ("2" if "--page-token" in a else "x") + "x" * 19, "display_info": "&lt;b&gt;周会&lt;/b&gt;\\n开始时间: 2026.10.19 10:00", "meta_data": {"app_link": "https://x.feishu.cn/minutes/obc"}}], "has_more": "--page-token" not in a, "page_token": "p2"},
   "minutes +detail": {"minutes": [{"minute_token": "obcmxxxxxxxxxxxxxxxxxxxx", "title": "周会", "artifacts": {"summary": "定了三件事", "todos": [{"content": "张三发周报"}], "chapters": [{"title": "开场"}]}}]},
   "docs +fetch": {"document": {"title": "方案", "content": "# 方案\\n内容"}},
+  # get-related-tasks: raw due (ms), members with roles, creator, tasklists; the same task may come twice across pages.
+  "task +get-related-tasks": {"items": [
+    {"guid": "t4", "summary": "没截止的周报", "status": "todo", "members": [{"id": "ou_me", "role": "assignee"}], "created_at": "2026-10-05 10:00:00"},
+    {"guid": "t5", "summary": "年底盘点", "status": "todo", "due": {"timestamp": str(int(__import__("time").time() * 1000) + 30 * 86400000)}, "members": [{"id": "ou_me", "role": "assignee"}], "created_at": "2026-08-05 10:00:00"},
+    {"guid": "t1", "summary": "写周报", "status": "todo", "due": {"timestamp": "1000000000000"}, "members": [{"id": "ou_me", "role": "assignee"}], "creator": {"id": "ou_x"}, "tasklists": [{"tasklist_guid": "aaa11111-2222-3333-4444-555555555555"}], "created_at": "2026-09-01 10:00:00", "url": "https://x/t1"},
+    {"guid": "t2", "summary": "跟进合同", "status": "todo", "due": {"timestamp": str(int(__import__("time").time() * 1000) + 3 * 86400000)}, "members": [{"id": "ou_me", "role": "follower"}], "creator": {"id": "ou_me"}, "created_at": "2026-10-02 10:00:00"},
+    {"guid": "t3", "summary": "已办完", "status": "done", "completed_at": "2026-10-03 10:00:00", "members": [{"id": "ou_me", "role": "assignee"}], "created_at": "2026-10-01 09:00:00"},
+    {"guid": "t1", "summary": "写周报", "status": "todo", "members": [{"id": "ou_me", "role": "assignee"}], "created_at": "2026-09-01 10:00:00"},]},
+  "task +search": {"items": [{"guid": "t9", "summary": "合同审批", "completed": False, "due_at": "2026-11-01T18:00:00+08:00", "url": "https://x/t9"}]},
 }[k]
 print(json.dumps({"ok": True, "data": data}))
 `, { mode: 0o755 });
@@ -132,9 +147,22 @@ print(json.dumps({"ok": True, "data": data}))
   assert.ok(!readdirSync(dir).some(f => f.startsWith('transcript-')), 'the transcript file is removed');
   assert.match(run({ op: '读文档', q: 'https://x.feishu.cn/docx/abc' }), /文档：方案/);
   assert.throws(() => run({ op: '会话记录', q: '项目群' }), 'a chat id or a person id only');
+  // Tasks: everything related to me is counted (once each), the open ones listed by due date, with my role and the list name.
+  const t1 = run({ op: '我的任务' });
+  assert.match(t1, /共 5 个/); assert.match(t1, /未完成 4，已完成 1/); assert.match(t1, /已逾期 1，7 天内到期 1，无截止 1，其他 1/);
+  assert.match(t1, /负责 4/); assert.match(t1, /关注 1/); assert.match(t1, /创建 1/); assert.match(t1, /2026-10 3/); assert.match(t1, /清单aaa 1/);
+  assert.ok(t1.indexOf('写周报') < t1.indexOf('跟进合同') && t1.indexOf('跟进合同') < t1.indexOf('年底盘点') && t1.indexOf('年底盘点') < t1.indexOf('没截止的周报'), 'overdue first, no due date last');
+  assert.match(t1, /跟进合同（未完成；关注\/创建；截止 /); assert.doesNotMatch(t1.split('明细')[1], /已办完/);
+  const tdone = run({ op: '我的任务', q: '已完成' });
+  assert.match(tdone, /已办完（完成；负责/); assert.doesNotMatch(tdone.split('明细')[1], /写周报/);
+  assert.match(run({ op: '我的任务', q: '全部' }), /全部明细（5 个/);
+  const t2 = run({ op: '我的任务', q: '周报' });
+  assert.match(t2, /共 2 个/); assert.doesNotMatch(t2, /跟进合同/);
+  assert.match(run({ op: '搜任务', q: '合同' }), /合同审批（未完成；相关；截止 2026-11-01 18:00）  https:\/\/x\/t9/);
+  assert.throws(() => run({ op: '搜任务' }), 'a keyword is required');
   // Read-only: every command it ran is a read.
   const used = new Set(readFileSync(log, 'utf8').trim().split('\n').map(l => JSON.parse(l).slice(0, 2).join(' ')));
-  assert.deepEqual([...used].sort(), ['api GET', 'docs +fetch', 'im +chat-messages-list', 'im +chat-search', 'im +messages-search', 'im +threads-messages-list', 'mail +message', 'mail +triage', 'minutes +detail', 'minutes +search']);
+  assert.deepEqual([...used].sort(), ['api GET', 'docs +fetch', 'im +chat-messages-list', 'im +chat-search', 'im +messages-search', 'im +threads-messages-list', 'mail +message', 'mail +triage', 'minutes +detail', 'minutes +search', 'task +get-related-tasks', 'task +search']);
 });
 
 test('samples: amber submit takes app.json as it is in the repo (code file, this chat, --user)', async () => {

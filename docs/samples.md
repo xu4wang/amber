@@ -7,7 +7,7 @@
 | 天气 | `samples/weather/` | 参数、默认用执行人的办公城市、访问外网、输出图表 |
 | 密钥保管箱 | `samples/secret-vault/` | 密钥（可以只填一部分）、配置项、agent 经你确认后读取密钥 |
 | 群聊日报 | `samples/chat-digest/` | 以执行人本人的飞书身份运行、内置大模型服务、定时任务 |
-| 我的飞书数据 | `samples/my-lark-data/` | 结果交给 agent（`amber read`）：agent 经你确认后读你的消息、邮件、文档 |
+| 我的飞书数据 | `samples/my-lark-data/` | 结果交给 agent（`amber read`）：agent 经你确认后读你的消息、邮件、文档、妙记、任务 |
 
 每个目录里有两个文件：
 
@@ -73,17 +73,18 @@ amber submit ~/amber/samples/weather/app.json --user 你的邮箱
 
 ## 我的飞书数据
 
-`samples/my-lark-data/`：让你自己的 agent 以**你本人的飞书身份**、只读地取你的飞书数据，拿回去接着处理。比如对 agent 说「看看我这周和张三的私聊里答应了什么」「把合同那封邮件的要点整理一下」。
+`samples/my-lark-data/`：让你自己的 agent 以**你本人的飞书身份**、只读地取你的飞书数据，拿回去接着处理。比如对 agent 说「看看我这周和张三的私聊里答应了什么」「把合同那封邮件的要点整理一下」「统计一下我手上的飞书任务」。
 
 - **装法**：管理员可以把它设为全局应用（每个人读的都是自己的数据，互不影响）；也可以装在你自己的私聊里。
-- **前提**（管理员）：Amber 的飞书应用开通了这些用户身份权限：`im:chat:read`、`im:message:readonly`、`im:message.group_msg:get_as_user`、`im:message.p2p_msg:get_as_user`、`search:message`（搜消息）、`mail:user_mailbox.message:readonly`、`mail:user_mailbox.message.subject:read`、`mail:user_mailbox.message.address:read`、`mail:user_mailbox.message.body:read`（邮件）、`docx:document:readonly`（文档）、`minutes:minutes.search:read`、`minutes:minutes:readonly`、`minutes:minutes.artifacts:read`、`minutes:minutes.transcript:export`（妙记）。新开通权限后，已授权过的人要重新发一次「授权飞书」。
+- **前提**（管理员）：Amber 的飞书应用开通了这些用户身份权限：`im:chat:read`、`im:message:readonly`、`im:message.group_msg:get_as_user`、`im:message.p2p_msg:get_as_user`、`search:message`（搜消息）、`mail:user_mailbox.message:readonly`、`mail:user_mailbox.message.subject:read`、`mail:user_mailbox.message.address:read`、`mail:user_mailbox.message.body:read`（邮件）、`docx:document:readonly`（文档）、`minutes:minutes.search:read`、`minutes:minutes:readonly`、`minutes:minutes.artifacts:read`、`minutes:minutes.transcript:export`（妙记）、`task:task:read`、`task:tasklist:read`（任务）。新开通权限后，已授权过的人要重新发一次「授权飞书」。
 - **你自己**：授权飞书一次（私聊 Amber 发 `授权飞书`）。
 - **参数**：
-  - 操作：`搜消息`、`会话记录`、`找会话`、`搜邮件`、`读邮件`、`读文档`、`搜妙记`、`读妙记`。
-  - 内容：搜消息、搜邮件时写关键词；会话记录写群的 `oc_…` 或私聊对方的 `ou_…`（先用「找会话」查）；读邮件写邮件 id（先用「搜邮件」查）；读文档写文档链接；搜妙记写关键词（可不填，列出时间范围内你拥有或参与的妙记）；读妙记写妙记链接（先用「搜妙记」查），返回 AI 总结、待办、章节和逐字稿。
+  - 操作：`搜消息`、`会话记录`、`找会话`、`搜邮件`、`读邮件`、`读文档`、`搜妙记`、`读妙记`、`我的任务`、`搜任务`。
+  - 内容：搜消息、搜邮件时写关键词；会话记录写群的 `oc_…` 或私聊对方的 `ou_…`（先用「找会话」查）；读邮件写邮件 id（先用「搜邮件」查）；读文档写文档链接；搜妙记写关键词（可不填，列出时间范围内你拥有或参与的妙记）；读妙记写妙记链接（先用「搜妙记」查），返回 AI 总结、待办、章节和逐字稿；我的任务写 `未完成`（默认）、`已完成`、`全部` 选列哪些明细，或写标题关键词只看相关的那些；搜任务写关键词。
   - 回看小时数（搜消息、会话记录、搜妙记，默认 24，最多 720）；最多条数（默认 30，最多 100）。
 - **用法**：agent 在和你的私聊里运行，比如 `amber read 我的飞书数据 op=搜邮件 q=合同 --user 你的邮箱`。Amber 私聊你发确认卡，你选「允许本次」或「允许一段时间」（这个 agent 会话在选定时长内不再询问）。结果加密交给 agent，见[读取个人数据](cli-and-skill.md#读取个人数据)。在飞书或网站上执行也可以，结果只显示给你自己。
 - **话题回复**：搜消息只能搜到含关键词的那一条；命中的消息在话题里时，话题里的其他消息（最多 20 条）缩进列在它下面，不然「要加白名单」下面那句「给 Wade」这种回复就看不到。一次最多展开 10 个话题。
+- **任务**：「我的任务」取与你相关的全部飞书任务（你负责、关注或创建的），先给统计：完成状态、未完成任务的截止情况（已逾期 / 7 天内到期 / 无截止）、你的角色、按创建月份、按任务清单；再按截止时间列明细（逾期的在前），每条带角色、截止时间、清单和链接。
 - **只读**：只调用搜索、列表、读取类的命令，不发消息、不改文档、不动邮件。
 - **输出长度**：搜消息、会话记录、找会话、搜邮件、搜妙记最多约 2.5 万字（agent 单次命令输出大约 3 万字就会被截掉），按整条截断并说明「还有 N 条没显示」；读邮件、读文档、读妙记最多约 6 万字。单条消息、邮件摘要过长时截断。
 - **可以学到**：`"toAgent": true` 把结果交给 agent；一个应用用「操作」参数提供几种只读查询；对 lark-cli 输出做容错解析。
