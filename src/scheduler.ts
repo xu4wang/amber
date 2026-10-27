@@ -4,7 +4,7 @@
 import type { Store, ScheduleRow, RequestRow, CommandRow } from './db.ts';
 import { computeSpecHash } from './db.ts';
 import type { Caller } from './engine.ts';
-import { findVisible, runCommand, validateArgs, AmberError, runParams, missingConfig, missingConfigMessage } from './engine.ts';
+import { findVisible, runCommand, validateArgs, AmberError, runParams, missingConfig, missingConfigMessage, SERVER_FAULTS } from './engine.ts';
 import { validateRule, nextRun, describeRule, formatAt } from './schedule-rule.ts';
 import type { Rule } from './schedule-rule.ts';
 import { scheduleResultCard, errorCard, scheduleListCard, rebindCard, closedCard } from './cards.ts';
@@ -117,11 +117,21 @@ export class Scheduler {
           return;
         }
       }
-      let r;
+      let r, serverFault = false;
       try {
         r = await runCommand(this.store, cmd, s.args, caller, { city: () => this.deps.cityOf(s.creatorUnionId), signer: this.deps.signer }, { viaForm: true });
       } catch (e) {
+        serverFault = e instanceof AmberError && SERVER_FAULTS.has(e.code);
         r = { ok: false, error: e instanceof AmberError ? e.message : (e as Error).message, runId: '', blocks: [], markdown: '', elapsedMs: 0, args: {} };
+      }
+      // Amber's own fault (10-22: lark-cli was being reinstalled): the app never ran, so it is no reason to pause the
+      // schedule. The creator hears about it once, not every run, until a run gets past it.
+      if (serverFault) {
+        const first = s.lastStatus !== 'server_error';
+        this.store.updateSchedule(s.id, { lastRunAt: Date.now(), lastStatus: 'server_error' });
+        log('schedule server fault', s.id, r.error);
+        if (first) await this.notifyCreator(s, `定时任务这次没有执行：${name}`, `定时任务 ${s.id}（${ruleText}）这次没有执行：${r.error}\n\n这是 Amber 服务端的问题，不算这个任务失败，不会因此暂停；恢复前不再重复通知。`);
+        return;
       }
       if (r.runId) this.store.setRunSchedule(r.runId, s.id);
       if (!r.ok) {

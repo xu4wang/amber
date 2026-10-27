@@ -97,7 +97,7 @@ export function feishuOAuth(appId: string, appSecret: string, f: typeof fetch = 
  *  package's entry is a `#!/usr/bin/env node` wrapper (no node on that PATH either), so this is the native binary it
  *  wraps. AMBER_LARK_CLI overrides. undefined when there is none. */
 export function resolveLarkCli(env: NodeJS.ProcessEnv = process.env): string | undefined {
-  if (env.AMBER_LARK_CLI) return env.AMBER_LARK_CLI;
+  if (env.AMBER_LARK_CLI) return existsSync(env.AMBER_LARK_CLI) ? env.AMBER_LARK_CLI : undefined;
   for (const d of (env.PATH ?? '').split(delimiter).filter(Boolean)) {
     const p = join(d, 'lark-cli');
     if (!existsSync(p)) continue;
@@ -132,8 +132,9 @@ export class LarkUserVault {
   private store: Store;
   private oauth: LarkOAuth;
   readonly appId: string;
-  /** Absolute path of lark-cli handed to scripts (resolveLarkCli at startup). */
-  larkCli: string | undefined = resolveLarkCli();
+  /** How lark-cli is found (tests replace it). */
+  resolveCli: () => string | undefined = () => resolveLarkCli();
+  private cli: string | undefined;
   /** Access tokens live in memory only: a restart costs one refresh, and nothing short-lived is ever on disk. */
   private access = new Map<string, Cached>();
   /** One refresh per person at a time: Feishu rotates the refresh token, so two at once would lose the race. */
@@ -175,6 +176,15 @@ export class LarkUserVault {
   private row(unionId: string): Row | undefined {
     const r = this.store.larkUserRow(unionId) as Row | undefined;
     return r && r.refresh_cipher ? r : undefined;
+  }
+
+  /** Absolute path of lark-cli handed to scripts. Looked up when a run needs it, and again whenever the file is gone:
+   * an upgrade replaces it, and a lookup made while it was being reinstalled finds nothing (10-22: Amber started in
+   * that window and every larkUser run failed until it was restarted). */
+  larkCli(): string | undefined {
+    if (this.cli && existsSync(this.cli)) return this.cli;
+    this.cli = this.resolveCli();
+    return this.cli;
   }
 
   /** The app's user scopes, re-read at most every 10 minutes (missingScopes runs on every larkUser run). */

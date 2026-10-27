@@ -2,7 +2,10 @@
 // gets that person's own short-lived token when they run it, masked in output, with Feishu as the only network.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { makeEnv, activate, script, urlButton, GROUP } from './env.ts';
+import { makeEnv, activate, script, urlButton, button, GROUP } from './env.ts';
+import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { FakeFeishu } from './fake-feishu.ts';
 import { validateScript } from '../src/runner.ts';
 import { runCommand, AmberError, larkUserVault } from '../src/engine.ts';
@@ -218,7 +221,8 @@ test('larkUser: lark-cli is handed to scripts as the native binary behind the np
   symlinkSync(join(d, 'pkg/scripts/run.js'), join(d, 'path/lark-cli'));
   assert.equal(resolveLarkCli({ PATH: `/nonexistent:${join(d, 'path')}` }), join(d, 'pkg/bin/lark-cli'));
   assert.equal(resolveLarkCli({ PATH: '/nonexistent' }), undefined);
-  assert.equal(resolveLarkCli({ PATH: join(d, 'path'), AMBER_LARK_CLI: '/x/lark-cli' }), '/x/lark-cli');
+  assert.equal(resolveLarkCli({ PATH: join(d, 'path'), AMBER_LARK_CLI: join(d, 'pkg/bin/lark-cli') }), join(d, 'pkg/bin/lark-cli'));
+  assert.equal(resolveLarkCli({ PATH: join(d, 'path'), AMBER_LARK_CLI: '/x/lark-cli' }), undefined, 'a configured path that is not there is no lark-cli');
 });
 
 test('larkUser on the website: the app page shows whether you authorized, and you can authorize there, only as yourself', async () => {
@@ -321,5 +325,59 @@ print("missing=" + ",".join(inp["larkUser"].get("missingScopes") or []))`, { lar
     // Authorizing again (the new grant carries the new scope) clears it.
     await authorize(env, oauth, alice);
     assert.match((await run()).markdown, /^missing=$/m);
+  } finally { await env.close(); }
+});
+
+test('larkUser: lark-cli is looked up when a run needs it; not finding it is Amber\'s fault, which never pauses a schedule', async () => {
+  const oauth = new FakeOAuth();
+  const env = await makeEnv({}, { larkOAuth: oauth });
+  try {
+    const { alice } = env;
+    await authorize(env, oauth, alice);
+    const v = larkUserVault()!;
+    const d = mkdtempSync(join(tmpdir(), 'amber-cli-'));
+    const cli = join(d, 'lark-cli');
+    writeFileSync(cli, '');
+    let lookups = 0, found: string | undefined = cli;
+    v.resolveCli = () => { lookups++; return found; };
+    const code = 'import json,sys\nprint("cli=" + json.load(sys.stdin)["larkUser"]["cli"])';
+    const id = await activate(env, { chatId: GROUP, chatType: 'group', name: '定时飞书', params: [], script: script(code, { larkUser: true }), options: { schedulable: true } }, alice);
+    const cmd = env.amber.store.getCommand(id)!;
+    const run = () => runCommand(env.amber.store, cmd, {}, { unionId: alice.unionId, chatId: GROUP, chatType: 'group', channel: 'bot' });
+    found = undefined; rmSync(cli);
+    // Not there (10-22: Amber started while lark-cli was being reinstalled): refused before the script starts, saying why.
+    const runsBefore = env.amber.store.runsByCaller(alice.unionId, 50).length;
+    await assert.rejects(run(), (e: any) => e instanceof AmberError && e.code === 'lark_cli_missing' && /找不到 lark-cli/.test(e.message));
+    assert.equal(env.amber.store.runsByCaller(alice.unionId, 50).length, runsBefore, 'the script never started');
+    // Back: found on the next run, without a restart, and kept while the file is there.
+    writeFileSync(cli, ''); found = cli;
+    assert.match((await run()).markdown, new RegExp('cli=' + cli));
+    const n = lookups;
+    await run();
+    assert.equal(lookups, n, 'no new lookup while the file is there');
+    // Replaced (an upgrade moved it): looked up again.
+    rmSync(cli);
+    const moved = join(d, 'lark-cli-2'); writeFileSync(moved, ''); found = moved;
+    assert.match((await run()).markdown, /cli=.*lark-cli-2/);
+    // A schedule: Amber's fault does not count towards pausing it, and the creator hears once, not every run.
+    found = undefined; rmSync(moved);
+    const r = await env.api('POST', '/v1/schedules', { chatId: GROUP, chatType: 'group', label: 'TestBot', user: alice.email, command: '定时飞书', at: '每 5 分钟' });
+    const card = env.fake.sent.at(-1)!;
+    await env.click(alice, card.id, button(card.card, 'req_ok')!);
+    const sid = (await env.api('GET', `/v1/requests/${r.body.requestId}`)).body.scheduleId as string;
+    assert.ok(sid, 'the schedule was created');
+    const sch = env.amber.bot.scheduler as any;
+    const tickAt = async (t: number) => { await sch.tick(t); await env.waitFor(() => !sch.active && sch.running.size === 0 || undefined); };
+    const told = () => env.fake.sent.filter(p => p.to.unionId === alice.unionId && /这次没有执行/.test(FakeFeishu.text(p.card))).length;
+    for (let k = 0; k < 4; k++) await tickAt(env.amber.store.getSchedule(sid)!.nextRunAt + 1000);
+    const s = env.amber.store.getSchedule(sid)!;
+    assert.equal(s.status, 'active', 'four runs Amber could not start: still active');
+    assert.equal(s.failCount, 0);
+    assert.equal(s.lastStatus, 'server_error');
+    assert.equal(told(), 1, 'told once');
+    // lark-cli is back: the schedule just runs.
+    writeFileSync(cli, ''); found = cli;
+    await tickAt(env.amber.store.getSchedule(sid)!.nextRunAt + 1000);
+    assert.equal(env.amber.store.getSchedule(sid)!.lastStatus, 'ok');
   } finally { await env.close(); }
 });
