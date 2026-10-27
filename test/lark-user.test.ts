@@ -375,6 +375,10 @@ test('larkUser: lark-cli is looked up when a run needs it; not finding it is Amb
     assert.equal(s.failCount, 0);
     assert.equal(s.lastStatus, 'server_error');
     assert.equal(told(), 1, 'told once');
+    assert.match(sch.view(env.amber.store.getSchedule(sid)!).lastText, /未执行（Amber 服务端问题）/);
+    // 「立即运行」 by hand: whoever pressed it hears why, even after the first notice.
+    await sch.runOnce(env.amber.store.getSchedule(sid)!, true);
+    assert.equal(told(), 2, 'a manual run is told');
     // lark-cli is back: the schedule just runs.
     writeFileSync(cli, ''); found = cli;
     await tickAt(env.amber.store.getSchedule(sid)!.nextRunAt + 1000);

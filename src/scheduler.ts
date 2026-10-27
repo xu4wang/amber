@@ -127,7 +127,7 @@ export class Scheduler {
       // Amber's own fault (10-22: lark-cli was being reinstalled): the app never ran, so it is no reason to pause the
       // schedule. The creator hears about it once, not every run, until a run gets past it.
       if (serverFault) {
-        const first = s.lastStatus !== 'server_error';
+        const first = manual || s.lastStatus !== 'server_error';   // someone pressed 「立即运行」: they hear why
         this.store.updateSchedule(s.id, { lastRunAt: Date.now(), lastStatus: 'server_error' });
         log('schedule server fault', s.id, r.error);
         if (first) await this.notifyCreator(s, `定时任务这次没有执行：${name}`, `定时任务 ${s.id}（${ruleText}）这次没有执行：${r.error}\n\n这是 Amber 服务端的问题，不算这个任务失败，不会因此暂停；恢复前不再重复通知。`);
@@ -251,7 +251,7 @@ export class Scheduler {
 
   view(s: ScheduleRow, viewer?: string): ScheduleView & { command: string; args: Record<string, string>; rule: Rule; nextRunAt: number; lastStatus: string | null; lastRunId: string | null } {
     const cmd = this.store.getCommand(s.commandId);
-    const last = s.lastRunAt ? `上次 ${formatAt(s.lastRunAt, s.rule.tz)} ${({ ok: '成功', ok_silent: '成功（无输出）', failed: '失败', missed: '错过（Amber 未运行）', skipped_overlap: '跳过（上次未结束）', delivery_failed: '结果发送失败' } as Record<string, string>)[s.lastStatus ?? ''] ?? ''}` : '还没运行过';
+    const last = s.lastRunAt ? `上次 ${formatAt(s.lastRunAt, s.rule.tz)} ${({ ok: '成功', ok_silent: '成功（无输出）', failed: '失败', missed: '错过（Amber 未运行）', skipped_overlap: '跳过（上次未结束）', delivery_failed: '结果发送失败', server_error: '未执行（Amber 服务端问题）' } as Record<string, string>)[s.lastStatus ?? ''] ?? ''}` : '还没运行过';
     return {
       id: s.id, name: cmd?.name ?? s.commandId, command: cmd?.name ?? s.commandId, ruleText: describeRule(s.rule), nextText: formatAt(s.nextRunAt, s.rule.tz),
       status: s.status, pauseReason: s.pauseReason, creatorOpenId: s.creatorOpenId, lastText: last, canManage: viewer ? this.canManage(s, viewer) : false, mine: !!viewer && viewer === s.creatorUnionId,
