@@ -176,6 +176,70 @@ def thread_lines(tid, hit_id, shown, timeout):
         out.append("  ↳ （话题里还有更多回复没显示，可以用「会话记录」查这个群）")
     return out
 
+# ---------- 飞书任务
+TASK_RE = re.compile(r"^[0-9a-fA-F-]{20,64}$")
+
+
+def due_dt(t):
+    """截止时间：get-related 给原始 due.timestamp（毫秒），其他命令给 due_at 字符串；没有截止时间返回 None。"""
+    d = t.get("due")
+    try:
+        if isinstance(d, dict) and str(d.get("timestamp") or "0") not in ("", "0"):
+            return datetime.fromtimestamp(int(d["timestamp"]) / 1000, TZ)
+        if isinstance(t.get("due_at"), str) and t["due_at"]:
+            return datetime.fromisoformat(t["due_at"].replace("Z", "+00:00")).astimezone(TZ)
+    except (ValueError, TypeError, OverflowError):
+        pass
+    return None
+
+
+def task_done(t):
+    if isinstance(t.get("completed"), bool):
+        return t["completed"]
+    return t.get("status") == "done" or str(t.get("completed_at") or "0") not in ("", "0")
+
+
+def task_roles(t, me):
+    """我在这个任务里的角色：负责 / 关注 / 创建（可能同时有几个）。"""
+    roles = []
+    for m in t.get("members") or []:
+        if isinstance(m, dict) and me and m.get("id") == me:
+            roles.append({"assignee": "负责", "follower": "关注"}.get(m.get("role"), m.get("role") or "成员"))
+    if me and isinstance(t.get("creator"), dict) and t["creator"].get("id") == me:
+        roles.append("创建")
+    order = {"负责": 0, "关注": 1, "创建": 2}
+    return sorted(set(roles), key=lambda r: (order.get(r, 9), r)) or ["相关"]
+
+
+TASKLIST_NAMES = {}
+
+
+def tasklist_name(guid):
+    if guid in TASKLIST_NAMES:
+        return TASKLIST_NAMES[guid]
+    name = guid[:8]
+    if TASK_RE.match(guid) and len(TASKLIST_NAMES) < 30:
+        try:
+            r = subprocess.run([CLI, "api", "GET", "/open-apis/task/v2/tasklists/%s" % guid, "--as", "user"], env=ENV, capture_output=True, text=True, timeout=30)
+            d = parse_json(r.stdout) or {}
+            name = first((d.get("data") or d).get("tasklist") or {}, "name") or name
+        except Exception:
+            pass
+    TASKLIST_NAMES[guid] = name
+    return name
+
+
+def task_line(t, me):
+    due = due_dt(t)
+    lists = [tasklist_name(x.get("tasklist_guid")) for x in (t.get("tasklists") or []) if isinstance(x, dict) and x.get("tasklist_guid")]
+    bits = ["完成" if task_done(t) else "未完成", "/".join(task_roles(t, me))]
+    bits.append("截止 " + due.strftime("%Y-%m-%d %H:%M") if due else "无截止")
+    if lists:
+        bits.append("清单：" + "、".join(lists))
+    if t.get("created_at"):
+        bits.append("创建 " + str(t["created_at"])[:10])
+    return "- %s（%s）%s" % (clean(t.get("summary") or t.get("guid"), 200), "；".join(bits), ("  " + t["url"]) if t.get("url") else "")
+
 
 lines = []
 if OP == "搜消息":
@@ -303,6 +367,57 @@ elif OP == "读妙记":
     finally:
         if os.path.exists(name):
             os.remove(name)
+elif OP in ("我的任务", "搜任务"):
+    me = None
+    try:
+        r = subprocess.run([CLI, "api", "GET", "/open-apis/authen/v1/user_info", "--as", "user"], env=ENV, capture_output=True, text=True, timeout=30)
+        me = ((parse_json(r.stdout) or {}).get("data") or {}).get("open_id")
+    except Exception:
+        pass
+    if OP == "搜任务":
+        if not Q:
+            sys.exit("搜任务要在「内容」里写关键词")
+        tasks = items(lark(["task", "+search", "--query", Q[:100], "--page-limit", "3"]))
+        lines.append("# 搜任务「%s」（%d 条%s）" % (Q, len(tasks), "，只列前 %d 条" % LIMIT if len(tasks) > LIMIT else ""))
+        lines += [task_line(t, me) for t in tasks[:LIMIT] if isinstance(t, dict)]
+    else:
+        # 与我相关的全部任务（负责、关注、创建），统计全量，明细按状态列。
+        tasks, seen = [], set()
+        for t in items(lark(["task", "+get-related-tasks", "--page-all"], timeout=170)):
+            if isinstance(t, dict) and t.get("guid") not in seen:
+                seen.add(t.get("guid"))
+                tasks.append(t)
+        want = Q if Q in ("未完成", "已完成", "全部") else "未完成"
+        kw = "" if Q in ("未完成", "已完成", "全部") else Q
+        if kw:
+            tasks = [t for t in tasks if kw.lower() in str(t.get("summary") or "").lower()]
+        todo = [t for t in tasks if not task_done(t)]
+        overdue = [t for t in todo if due_dt(t) and due_dt(t) < now]
+        soon = [t for t in todo if due_dt(t) and now <= due_dt(t) <= now + timedelta(days=7)]
+        nodue = [t for t in todo if not due_dt(t)]
+        roles, months, lists = {}, {}, {}
+        for t in tasks:
+            for x in task_roles(t, me):
+                roles[x] = roles.get(x, 0) + 1
+            m = str(t.get("created_at") or "")[:7] or "未知"
+            months[m] = months.get(m, 0) + 1
+            for x in (t.get("tasklists") or []) or [{}]:
+                g = x.get("tasklist_guid") if isinstance(x, dict) else None
+                k = tasklist_name(g) if g else "（不在清单里）"
+                lists[k] = lists.get(k, 0) + 1
+        lines.append("# 我的飞书任务%s（与我相关的共 %d 个）" % ("「%s」" % kw if kw else "", len(tasks)))
+        lines.append("- 状态：未完成 %d，已完成 %d" % (len(todo), len(tasks) - len(todo)))
+        lines.append("- 未完成的截止情况：已逾期 %d，7 天内到期 %d，无截止 %d，其他 %d" % (len(overdue), len(soon), len(nodue), len(todo) - len(overdue) - len(soon) - len(nodue)))
+        lines.append("- 我的角色（一个任务可能有几个）：" + "，".join("%s %d" % kv for kv in sorted(roles.items(), key=lambda kv: -kv[1])))
+        lines.append("- 按创建月份：" + "，".join("%s %d" % kv for kv in sorted(months.items(), reverse=True)))
+        lines.append("- 按任务清单：" + "，".join("%s %d" % kv for kv in sorted(lists.items(), key=lambda kv: -kv[1])))
+        pick = todo if want == "未完成" else ([t for t in tasks if task_done(t)] if want == "已完成" else tasks)
+        far = datetime(9999, 1, 1, tzinfo=TZ)
+        pick = sorted(pick, key=lambda t: (task_done(t), due_dt(t) or far))
+        lines.append("\n## %s明细（%d 个%s，按截止时间排）" % (want, len(pick), "，只列前 %d 个" % LIMIT if len(pick) > LIMIT else ""))
+        lines += [task_line(t, me) for t in pick[:LIMIT]]
+        if not me:
+            lines.append("\n（没取到你的飞书 open_id，角色显示为「相关」）")
 elif OP == "读文档":
     if not Q:
         sys.exit("读文档要在「内容」里写文档链接或 token")
@@ -314,7 +429,7 @@ elif OP == "读文档":
     lines.append(text if isinstance(text, str) else json.dumps(text, ensure_ascii=False))
 
 out = "\n".join(lines)
-if OP in ("搜消息", "会话记录", "找会话", "搜邮件", "搜妙记") and len(out) > LIST_MAX:
+if OP in ("搜消息", "会话记录", "找会话", "搜邮件", "搜妙记", "我的任务", "搜任务") and len(out) > LIST_MAX:
     # 按整行截，并说清还剩几条，不让 agent 以为看到的就是全部。
     n, size = 0, 0
     while n < len(lines) and size + len(lines[n]) + 1 <= LIST_MAX:
