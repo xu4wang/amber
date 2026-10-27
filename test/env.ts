@@ -1,9 +1,10 @@
 // Test environment: a complete Amber (bot, scheduler, agent API, website) on a temp data dir,
 // talking to a fake Feishu. Helpers simulate people sending messages and clicking cards.
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { startAmber, type Amber } from '../src/app.ts';
+import { larkUserVault } from '../src/engine.ts';
 import type { AmberConfig } from '../src/config.ts';
 import { FakeFeishu, fakeWs, type User } from './fake-feishu.ts';
 import type { LarkOAuth } from '../src/lark-user.ts';
@@ -96,6 +97,11 @@ export async function makeEnv(over: Partial<AmberConfig> = {}, extra: { larkOAut
   console.log = () => {};   // keep test output clean
   const amber = await startAmber(cfg, { apiPort, webPort, client: fake, ws: fakeWs, timers: false, ...(extra.larkOAuth ? { larkOAuth: extra.larkOAuth } : {}) });
   await new Promise(r => setTimeout(r, 50));
+  // larkUser runs need lark-cli on this machine; tests do not depend on the real one being installed.
+  const fakeCli = join(dir, 'lark-cli');
+  writeFileSync(fakeCli, '');
+  const vault = larkUserVault();
+  if (vault) vault.resolveCli = () => fakeCli;
   const bot = amber.bot as any;
   const msgChat = new Map<string, string>();
   const chatOfMessage = (id: string): string | undefined => {

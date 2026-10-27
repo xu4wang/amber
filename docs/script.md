@@ -124,7 +124,7 @@ Content-Type: application/json
 
 ## 以执行人的飞书身份运行
 
-在 `script` 里写 `"larkUser": true`，脚本每次执行都会从输入的 `larkUser` 里拿到**执行人本人**的飞书用户令牌（`user_access_token`），有效期覆盖整次运行。用它调用什么由脚本自己决定，Amber 不限制动作。最常见的用法是把 `env` 合进环境变量，再用 `cli`（这台机器上 lark-cli 的完整路径，沙箱的 PATH 里不一定有它）调 lark-cli：
+在 `script` 里写 `"larkUser": true`，脚本每次执行都会从输入的 `larkUser` 里拿到**执行人本人**的飞书用户令牌（`user_access_token`），有效期覆盖整次运行。用它调用什么由脚本自己决定，Amber 不限制动作。最常见的用法是把 `env` 合进环境变量，再用 `cli`（这台机器上 lark-cli 的完整路径，沙箱的 PATH 里不一定有它；Amber 每次运行前都确认它在，找不到时不运行脚本，所以 `cli` 总是有的）调 lark-cli：
 
 ```python
 import json, os, subprocess, sys

@@ -778,7 +778,7 @@ function storeInfo(c: CommandRow, viewer: string | undefined, store: Store, apps
   };
 }
 
-const LAST: Record<string, string> = { ok: '成功', ok_silent: '成功（无输出）', failed: '失败', missed: '错过', skipped_overlap: '跳过', delivery_failed: '结果发送失败' };
+const LAST: Record<string, string> = { ok: '成功', ok_silent: '成功（无输出）', failed: '失败', missed: '错过', skipped_overlap: '跳过', delivery_failed: '结果发送失败', server_error: '未执行（Amber 服务端问题）' };
 
 function schView(store: Store, s: ScheduleRow, viewer?: string, isAdmin?: (u: string) => boolean) {
   return {

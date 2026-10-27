@@ -1550,7 +1550,7 @@ document.addEventListener('click', async ev => {
     sch.disabled = true;
     const r = await post(`/web/api/schedules/${id}/${op}`, {});
     if (!r.ok) { alert(r.message || r.error); sch.disabled = false; return; }
-    if (op === 'run') alert(r.lastStatus === 'failed' ? '运行失败，详情见「最近运行」' : '已运行，结果已发到原来的位置');
+    if (op === 'run') alert(r.lastStatus === 'failed' ? '运行失败，详情见「最近运行」' : r.lastStatus === 'server_error' ? '这次没有执行：Amber 服务端问题，稍后再试' : '已运行，结果已发到原来的位置');
     await reload(op === 'delete' ? null : 's:' + id);
     if (op === 'delete') welcome();
   }

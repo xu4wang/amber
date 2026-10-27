@@ -51,6 +51,9 @@ let LARK_USER: { vault: LarkUserVault; onDead: (unionId: string) => void; onScop
 export function setLarkUser(v: LarkUserVault, onDead: (unionId: string) => void = () => {}, onScopesMissing: (unionId: string, scopes: string[]) => void = () => {}): void { LARK_USER = { vault: v, onDead, onScopesMissing }; }
 export function larkUserVault(): LarkUserVault | undefined { return LARK_USER?.vault; }
 export const LARK_AUTH_HINT = '私聊 Amber 发「授权飞书」';
+export const LARK_CLI_MISSING = 'Amber 服务器上暂时找不到 lark-cli（可能正在升级），这次没有执行，请稍后再试；一直这样请联系 Amber 管理员';
+/** Amber's own faults, not the app's or the person's: a schedule does not count them towards pausing. */
+export const SERVER_FAULTS = new Set(['lark_cli_missing']);
 export function secretVault(): SecretVault | undefined { return VAULT; }
 
 /** Declared secret names that have no value yet (all of them when no vault is configured). */
@@ -220,14 +223,18 @@ export async function runCommand(store: Store, cmd: CommandRow, rawArgs: Record<
       try {
         const t = await LARK_USER.vault.token(caller.unionId, script.timeoutMs ?? 0);
         const appId = LARK_USER.vault.appId;
-        const cli = LARK_USER.vault.larkCli;
-        larkUser = { accessToken: t.token, appId, expiresAt: t.expiresAt, env: { LARKSUITE_CLI_USER_ACCESS_TOKEN: t.token, LARKSUITE_CLI_APP_ID: appId }, ...(cli ? { cli } : {}) };
+        // Not found (being reinstalled, or not installed): an Amber fault, not the app's or the person's — the
+        // script never starts, and a schedule does not count it towards pausing (scheduler.ts).
+        const cli = LARK_USER.vault.larkCli();
+        if (!cli) throw new AmberError('lark_cli_missing', LARK_CLI_MISSING);
+        larkUser = { accessToken: t.token, appId, expiresAt: t.expiresAt, env: { LARKSUITE_CLI_USER_ACCESS_TOKEN: t.token, LARKSUITE_CLI_APP_ID: appId }, cli };
         // Scopes opened after this person authorized: the run goes ahead (most apps do not need them), the script is
         // told which ones are missing, and the person is reminded to authorize again.
         // Never holds a run up for long: the lookup gets 3 seconds, then the run goes ahead without it.
         const missing = await Promise.race([LARK_USER.vault.missingScopes(caller.unionId).catch(() => [] as string[]), new Promise<string[]>(res => setTimeout(() => res([]), 3000).unref())]);
         if (missing.length) { larkUser.missingScopes = missing; LARK_USER.onScopesMissing(caller.unionId, missing); }
       } catch (e) {
+        if (e instanceof AmberError) throw e;
         if (e instanceof NeedsLarkAuth) {
           LARK_USER.onDead(caller.unionId);
           throw new AmberError('needs_lark_auth', `这个应用以执行人的飞书身份运行，${e.message}。请${LARK_AUTH_HINT}，授权一次后再执行`);
