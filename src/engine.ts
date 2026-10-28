@@ -282,7 +282,7 @@ export async function runCommand(store: Store, cmd: CommandRow, rawArgs: Record<
     if (!r.ok) {
       store.finishRun(runId, 'failed', null, r.error ?? 'failed');
       store.audit(caller.unionId, 'run.failed', { runId, error: r.error });
-      emitEvent('run.failed', { runId, commandId: cmd.id, name: cmd.line ?? cmd.name, chatId: caller.chatId, chatType: caller.chatType, callerUnionId: caller.unionId, channel: opts.trial ? `${caller.channel}.trial` : caller.channel, error: (r.error ?? '').slice(0, 300) });
+      emitEvent('run.failed', { runId, commandId: cmd.id, name: cmd.line ?? cmd.name, appChatId: cmd.chatId, chatId: caller.chatId, chatType: caller.chatType, callerUnionId: caller.unionId, channel: opts.trial ? `${caller.channel}.trial` : caller.channel, error: (r.error ?? '').slice(0, 300) });
       return { runId, ok: false, blocks: [], markdown: '', error: r.error, elapsedMs: Date.now() - started, args };
     }
     const blocks: Block[] = [{ kind: 'markdown', text: r.content.trim() }];
@@ -290,7 +290,7 @@ export async function runCommand(store: Store, cmd: CommandRow, rawArgs: Record<
     store.finishRun(runId, 'ok', markdown, null);
     store.audit(caller.unionId, 'run.ok', { runId });
     // A scheduled run that printed something: monitoring apps print only when something is wrong.
-    if (caller.channel === 'schedule' && markdown) emitEvent('run.output', { runId, commandId: cmd.id, name: cmd.line ?? cmd.name, chatId: caller.chatId, chatType: caller.chatType, callerUnionId: caller.unionId, channel: caller.channel });
+    if (caller.channel === 'schedule' && markdown) emitEvent('run.output', { runId, commandId: cmd.id, name: cmd.line ?? cmd.name, appChatId: cmd.chatId, chatId: caller.chatId, chatType: caller.chatType, callerUnionId: caller.unionId, channel: caller.channel });
     return { runId, ok: true, blocks, markdown, elapsedMs: Date.now() - started, args };
   } finally { release(); }
 }

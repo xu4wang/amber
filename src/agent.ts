@@ -103,6 +103,11 @@ export class AgentGate {
     return { chatId: raw.chatId, chatType: raw.chatType, user, replyTo, inThread: !!(replyTo && raw.inThread), machine, requestedBy: label || '你的 agent' };
   }
 
+  /** Where an app this chat can use belongs (for a global app, not this chat); undefined when it cannot use it. */
+  appChatOf(ctx: Ctx, name: string): string | undefined {
+    try { return findVisible(this.store, this.viewer(ctx), name).chatId; } catch { return undefined; }
+  }
+
   private viewer(ctx: Ctx): Caller {
     return { unionId: ctx.user?.unionId ?? '', chatId: ctx.chatId, chatType: ctx.chatType, channel: 'agent' };
   }
