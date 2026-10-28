@@ -80,7 +80,7 @@ export class Scheduler {
   /** Paused by Amber itself (not by a person): for triggers. */
   private pausedEvent(s: ScheduleRow, reason: string): void {
     const cmd = this.store.getCommand(s.commandId);
-    emitEvent('schedule.paused', { scheduleId: s.id, commandId: s.commandId, name: cmd ? cmd.line ?? cmd.name : s.commandId, chatId: s.chatId, chatType: s.chatType, ownerUnionId: s.creatorUnionId, reason });
+    emitEvent('schedule.paused', { scheduleId: s.id, commandId: s.commandId, name: cmd ? cmd.line ?? cmd.name : s.commandId, ...(cmd ? { appChatId: cmd.chatId } : {}), chatId: s.chatId, chatType: s.chatType, ownerUnionId: s.creatorUnionId, reason });
   }
 
   private async notifyCreator(s: ScheduleRow, title: string, message: string): Promise<void> {

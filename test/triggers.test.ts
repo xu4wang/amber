@@ -17,7 +17,19 @@ test('triggers: who may subscribe, confirmation, notices for reviewers and owner
   const ask = (u: any, body: object) => env.api('POST', '/v1/triggers', { chatId: GROUP, chatType: 'group', user: u.email, label: 'TestBot', ...body });
   const triggers = (env.amber.bot as any).triggers;
   try {
-    await activate(env, { chatId: GROUP, chatType: 'group', name: '查数', params: [], script: script('print("ok")') }, bob);
+    const chashu = await activate(env, { chatId: GROUP, chatType: 'group', name: '查数', params: [], script: script('print("ok")') }, bob);
+    // --app of a global app, asked from somewhere else: the trigger names the app by where it belongs.
+    env.amber.store.setGlobal(chashu, true);
+    fake.chats.set('oc_carolgroup', { mode: 'group', name: 'carol 的群', members: new Set(['BOT', carol.unionId]) });
+    const g = await env.api('POST', '/v1/triggers', { chatId: 'oc_carolgroup', chatType: 'group', user: carol.email, label: 'TestBot', on: 'run.failed', app: '查数' });
+    assert.ok(g.body.triggerId, JSON.stringify(g.body));
+    assert.equal(env.amber.store.getTrigger(g.body.triggerId)!.filter.chatId, GROUP);
+    // Named the way events name it: the app's line (a renamed or Store-installed app keeps its line).
+    (env.amber.store as any).db.prepare('UPDATE commands SET line = ? WHERE id = ?').run('查数线', chashu);
+    const g2 = await env.api('POST', '/v1/triggers', { chatId: 'oc_carolgroup', chatType: 'group', user: carol.email, label: 'TestBot', on: 'run.failed', app: '查数' });
+    assert.deepEqual(env.amber.store.getTrigger(g2.body.triggerId)!.filter, { app: '查数线', chatId: GROUP });
+    (env.amber.store as any).db.prepare('UPDATE commands SET line = NULL WHERE id = ?').run(chashu);
+    env.amber.store.setGlobal(chashu, false);
 
     // 1. Everyone's app events are for reviewers and admins; others only their own apps.
     assert.match((await ask(carol, { on: 'app.review_started' })).body.message, /只有审核人和管理员/);
@@ -182,6 +194,14 @@ test('triggers: rate limit, retries, executors, schedules and pages', async () =
     const named = fake.sent.slice(n4).map(m => JSON.stringify(m.card)).filter(c => c.includes('amber-event run.failed'));
     assert.equal(named.length, 1);
     assert.match(named[0], /run=x2/);
+    // A global app is named by where it belongs; its runs happen anywhere (someone's private chat, another group).
+    const n5 = fake.sent.length;
+    emitEvent('run.failed', { runId: 'x3', name: '甲', appChatId: GROUP, chatId: 'oc_elsewhere', callerUnionId: bob.unionId });
+    emitEvent('run.failed', { runId: 'x4', name: '甲', appChatId: 'oc_other_home', chatId: GROUP, callerUnionId: bob.unionId });
+    await triggers.dispatch();
+    const global = fake.sent.slice(n5).map(m => JSON.stringify(m.card)).filter(c => c.includes('amber-event run.failed') && /run=x[34]/.test(c));
+    assert.equal(global.length, 1, 'the app of the same name that belongs elsewhere is another app');
+    assert.match(global[0], /run=x3/);
 
     // Schedules paused by Amber, and pages: their owners.
     await mk(bob, { on: 'schedule.paused' });
@@ -216,6 +236,13 @@ test('triggers: events come from where things happen', async () => {
     ev = types();
     assert.ok(ev.some((e: any) => e.type === 'run.failed' && e.commandId === bad && e.callerUnionId === bob.unionId && /坏了/.test(e.error)));
     assert.equal(ev.filter((e: any) => e.type === 'run.output').length, 1, 'only a scheduled run with output');
+    // Where the app belongs travels with run and schedule events (for a global app it is not where it ran).
+    assert.ok(ev.filter((e: any) => e.type === 'run.failed' || e.type === 'run.output').every((e: any) => e.appChatId === GROUP));
+    const cmd = env.amber.store.getCommand(ok)!;
+    const s = env.amber.store.insertSchedule({ commandId: ok, specHash: cmd.specHash, chatId: 'oc_dm_on_bob', chatType: 'p2p', replyTo: null, inThread: false,
+      creatorUnionId: bob.unionId, creatorOpenId: bob.openId, args: {}, rule: { kind: 'daily', time: '09:00', tz: 'Asia/Shanghai' }, nextRunAt: Date.now() + 3600_000, requestedBy: 'test' });
+    (env.amber.bot.scheduler as any).pause(s, '测试');
+    assert.ok(types().some((e: any) => e.type === 'schedule.paused' && e.scheduleId === s.id && e.appChatId === GROUP && e.chatId === 'oc_dm_on_bob'));
     await env.amber.bot.retire(ok, { unionId: bob.unionId }, 'test');
     assert.ok(types().some((e: any) => e.type === 'app.retired' && e.commandId === ok));
   } finally { await env.close(); }

@@ -22,6 +22,8 @@ export const isEventType = (t: unknown): t is EventType => typeof t === 'string'
 /** What an event says. ownerUnionId: the app's, page's or schedule's owner; callerUnionId: who ran it. */
 export interface EventData {
   name?: string; commandId?: string; specHash?: string; chatId?: string; chatType?: string; ownerUnionId?: string;
+  /** Where the app itself belongs (run and schedule events: chatId is where it ran, which for a global app is anywhere). */
+  appChatId?: string;
   callerUnionId?: string; runId?: string; channel?: string; scheduleId?: string; reason?: string; error?: string;
   executor?: string; machine?: string; pageId?: string; newVersion?: boolean;
 }

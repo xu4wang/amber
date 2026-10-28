@@ -327,7 +327,8 @@ export class TriggerService {
 
 function matches(t: TriggerRow, d: EventData): boolean {
   if (t.filter.app && d.name !== t.filter.app) return false;
-  if (t.filter.chatId && d.chatId !== t.filter.chatId) return false;
+  // An app is named by where it belongs; a global app's runs and schedules are elsewhere.
+  if (t.filter.chatId && (d.appChatId ?? d.chatId) !== t.filter.chatId) return false;
   return true;
 }
 
