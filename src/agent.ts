@@ -103,9 +103,10 @@ export class AgentGate {
     return { chatId: raw.chatId, chatType: raw.chatType, user, replyTo, inThread: !!(replyTo && raw.inThread), machine, requestedBy: label || '你的 agent' };
   }
 
-  /** Where an app this chat can use belongs (for a global app, not this chat); undefined when it cannot use it. */
-  appChatOf(ctx: Ctx, name: string): string | undefined {
-    try { return findVisible(this.store, this.viewer(ctx), name).chatId; } catch { return undefined; }
+  /** An app this chat can use, as triggers name it: its line (what events carry as the name) and where it belongs
+   *  (for a global app, not this chat). Undefined when this chat cannot use it. */
+  appFor(ctx: Ctx, name: string): { app: string; chatId: string } | undefined {
+    try { const c = findVisible(this.store, this.viewer(ctx), name); return { app: c.line ?? c.name, chatId: c.chatId }; } catch { return undefined; }
   }
 
   private viewer(ctx: Ctx): Caller {

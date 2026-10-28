@@ -114,7 +114,8 @@ export function startApi(port: number, machines: Record<string, string>, flow: F
         if (path === '/v1/triggers') {
           // "here": this group (and thread, when asked in one); --app: an app this chat can use (a global one belongs elsewhere).
           const here = body.to === 'here' && ctx.chatType === 'group';
-          const spec = { on: body.on, name: body.name, app: body.app, appChatId: body.app ? (agent.appChatOf(ctx, String(body.app)) ?? ctx.chatId) : undefined, to: here ? 'chat' : 'me', chatId: ctx.chatId, rootId: here ? ctx.replyTo : undefined, mention: body.mention };
+          const found = body.app ? agent.appFor(ctx, String(body.app)) : undefined;
+          const spec = { on: body.on, name: body.name, app: found?.app ?? body.app, appChatId: body.app ? (found?.chatId ?? ctx.chatId) : undefined, to: here ? 'chat' : 'me', chatId: ctx.chatId, rootId: here ? ctx.replyTo : undefined, mention: body.mention };
           return reply(200, { ok: true, ...(await triggers.request({ ...ctx, user: ctx.user }, spec)) });
         }
         if (path === '/v1/triggers/list') return reply(200, { ok: true, triggers: await triggers.list(ctx.user.unionId) });

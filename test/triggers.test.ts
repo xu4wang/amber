@@ -24,6 +24,11 @@ test('triggers: who may subscribe, confirmation, notices for reviewers and owner
     const g = await env.api('POST', '/v1/triggers', { chatId: 'oc_carolgroup', chatType: 'group', user: carol.email, label: 'TestBot', on: 'run.failed', app: '查数' });
     assert.ok(g.body.triggerId, JSON.stringify(g.body));
     assert.equal(env.amber.store.getTrigger(g.body.triggerId)!.filter.chatId, GROUP);
+    // Named the way events name it: the app's line (a renamed or Store-installed app keeps its line).
+    (env.amber.store as any).db.prepare('UPDATE commands SET line = ? WHERE id = ?').run('查数线', chashu);
+    const g2 = await env.api('POST', '/v1/triggers', { chatId: 'oc_carolgroup', chatType: 'group', user: carol.email, label: 'TestBot', on: 'run.failed', app: '查数' });
+    assert.deepEqual(env.amber.store.getTrigger(g2.body.triggerId)!.filter, { app: '查数线', chatId: GROUP });
+    (env.amber.store as any).db.prepare('UPDATE commands SET line = NULL WHERE id = ?').run(chashu);
     env.amber.store.setGlobal(chashu, false);
 
     // 1. Everyone's app events are for reviewers and admins; others only their own apps.
