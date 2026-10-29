@@ -218,7 +218,8 @@ export async function runCommand(store: Store, cmd: CommandRow, rawArgs: Record<
     if (script.larkUser) {
       if (!LARK_USER) throw new AmberError('no_lark_user', '飞书用户身份服务不可用');
       // asPerson: an agent read (`amber read`) the person allowed on a card in their private chat with Amber, or allowed
-      // that agent for a while — the card click, not the agent, says who it runs as.
+      // that agent for a while; or an agent's `amber run` the person confirmed on its card — the click, not the agent,
+      // says who it runs as.
       if ((caller.channel === 'agent' && !opts.asPerson) || !caller.unionId.startsWith('on_')) throw new AmberError('forbidden', '这个应用以执行人的飞书身份运行，只能由人执行（在飞书或网站上）');
       try {
         const t = await LARK_USER.vault.token(caller.unionId, script.timeoutMs ?? 0);

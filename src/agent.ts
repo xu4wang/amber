@@ -64,8 +64,9 @@ const AGENT_READS_PER_USER_10MIN = 30;
 interface ReadGrant { id: string; unionId: string; commandId: string; machine: string; label: string; chatId: string; session: string; until: number }
 
 export function needsPerson(c: CommandRow): boolean {
-  // Commands with secrets (D48) always need a person: an agent alone never gets to use them.
-  return c.options.confirm || Object.keys(c.script.services ?? {}).length > 0 || !!c.script.secrets?.length;
+  // Commands with secrets (D48) always need a person: an agent alone never gets to use them. Nor does a command that
+  // runs as the person's own Feishu identity (larkUser): whoever clicks the card is who it runs as.
+  return c.options.confirm || Object.keys(c.script.services ?? {}).length > 0 || !!c.script.secrets?.length || !!c.script.larkUser;
 }
 
 /** Checks the given arguments before asking a person; values taken from the clicker (city) are filled in later. */
@@ -583,7 +584,8 @@ export class AgentGate {
     setTimeout(async () => {
       let card: object;
       try {
-        const r = await runCommand(this.store, cmd, req.args, caller, { city: () => this.deps.cityOf(clicker.unionId), signer: this.deps.signer }, { viaForm: true });
+        // asPerson: the click, not the agent, says who it runs as — a larkUser app gets the clicker's own token.
+        const r = await runCommand(this.store, cmd, req.args, caller, { city: () => this.deps.cityOf(clicker.unionId), signer: this.deps.signer }, { viaForm: true, asPerson: true });
         this.store.transitionRequest(req.id, 'running', r.ok ? 'done' : 'failed', { runId: r.runId, error: r.error });
         card = r.ok ? resultCard(cmd.name, clicker.openId, r.blocks, r.runId, r.elapsedMs, cmd.id, cmd.global && !!cmd.script.secrets?.length, await this.deps.mentionsFor(caller.chatId, caller.chatType, r.blocks)) : errorCard(cmd.name, `执行失败：${r.error}`);
       } catch (e) {

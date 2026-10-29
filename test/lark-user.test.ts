@@ -385,3 +385,29 @@ test('larkUser: lark-cli is looked up when a run needs it; not finding it is Amb
     assert.equal(env.amber.store.getSchedule(sid)!.lastStatus, 'ok');
   } finally { await env.close(); }
 });
+
+test('larkUser: an agent cannot run it by itself; its `amber run` posts a card, and it runs as whoever clicks', async () => {
+  const oauth = new FakeOAuth();
+  const env = await makeEnv({}, { larkOAuth: oauth });
+  try {
+    const { alice, bob, fake } = env;
+    fake.chats.get(GROUP)!.members.add(alice.unionId);
+    await authorize(env, oauth, alice);
+    // No confirm option: running as a person is reason enough for a card.
+    await activate(env, { chatId: GROUP, chatType: 'group', name: '本人操作', params: [], script: USES_TOKEN }, alice);
+    const ask = (u?: any) => env.api('POST', '/v1/runs', { chatId: GROUP, chatType: 'group', label: '甘特', ...(u ? { user: u.email } : {}), command: '本人操作' });
+    const before = fake.sent.length;
+    const r = await ask(alice);
+    assert.equal(r.body.mode, 'confirm_card', JSON.stringify(r.body));
+    const card = fake.sent.slice(before).find(s => button(s.card, 'req_ok'))!;
+    assert.ok(card, 'a confirmation card in the group');
+    assert.match(JSON.stringify(await env.click(bob, card.id, button(card.card, 'req_ok')!)), /只有/, 'only the person named can click');
+    await env.click(alice, card.id, button(card.card, 'req_ok')!);
+    const req = await env.waitFor(() => { const q = (env.amber.store as any).getRequest(r.body.requestId); return q.status !== 'running' && q.status !== 'awaiting' && q; });
+    assert.equal(req.status, 'done', req.error);
+    const run = env.amber.store.getRun(req.runId)!;
+    assert.equal(run.callerUnionId, alice.unionId, 'runs as the clicker');
+    assert.match(String(run.result), /owner=on_alice/, 'with her own token');
+    assert.doesNotMatch(String(run.result), /u-access-/);
+  } finally { await env.close(); }
+});
