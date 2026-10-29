@@ -110,7 +110,7 @@ amber global 天气 --user user@example.com          # 设为全局 / amber loca
 ```
 
 - 私聊时 `chatType` 写 `p2p`，并加 `"claimer": "用户邮箱"`（认领卡发到他和 Amber 的私聊）。群应用要求 Amber 在群里。
-- **示例应用**：Amber 仓库 `samples/` 里有天气、密钥保管箱、群聊日报、我的飞书数据（`app.json` + `app.py`）。用户要装时运行 `amber submit <仓库>/samples/<名字>/app.json --user <他的邮箱>`（不写会话就用当前会话，代码从 `codeFile` 读）；写新应用时也可以参考它们的写法。
+- **示例应用**：Amber 仓库 `samples/` 里有天气、密钥保管箱、群聊日报、PR变动提醒（定时盯 GitHub PR、有动静 @ 机器人）、我的飞书数据（`app.json` + `app.py`）。用户要装时运行 `amber submit <仓库>/samples/<名字>/app.json --user <他的邮箱>`（不写会话就用当前会话，代码从 `codeFile` 读）；写新应用时也可以参考它们的写法。
 - 同名的上一版还停在认领卡上（没提交审核）时：私聊草稿再提交一次就会替换它，旧认领卡显示「已被新版本替换」；群里的草稿或已在审核中的版本不会被替换，提交会被拒绝（`name_taken`），请用户在旧认领卡上丢弃或等审核结束。
 - 群里提交时**要带上** `"claimer"`（让你固化的那个人的邮箱或 union_id）：认领卡会 @ 他提醒他来认领。同一个群里可能有几个人各有一个同名应用，Amber 按认领人判断这是谁的那个的新版本；不带 claimer 又有多个同名应用时会被拒绝。新应用谁都可以认领，新版本只有原创建人能认领。
 - 想让认领卡出现在当前话题里，加 `"originMessageId": "<话题里的消息 id>", "inThread": true`；不加就发在群主时间线上。
