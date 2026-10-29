@@ -1,0 +1,63 @@
+{
+  "name": "PR变动提醒",
+  "description": "盯一个 GitHub PR：每次只看最近 N 分钟内的评论、审阅、行内评论、新提交/强推、合并/关闭/标签等事件，以及 CI 全部跑完的结果；有变动就列出「谁、什么时间、做了什么、链接」并 @ 指定的机器人或人，没有变动不发消息。为防评论注入：不转述评论和提交的正文，所有来自 GitHub 的文字去掉 @ 和 Markdown 控制符，并标注评论人是维护者还是外部。「最近 N 分钟」要和定时间隔一致。私有仓库或想避开匿名限流时在密钥里设 GITHUB_TOKEN。",
+  "params": [
+    {
+      "name": "repo",
+      "label": "仓库（owner/name）",
+      "type": "string",
+      "maxLength": 100,
+      "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$"
+    },
+    {
+      "name": "pr",
+      "label": "PR 编号",
+      "type": "integer",
+      "min": 1,
+      "max": 100000000
+    },
+    {
+      "name": "mention",
+      "label": "有变动时 @ 谁（群里的显示名，如 Beta；可空）",
+      "type": "string",
+      "maxLength": 40
+    },
+    {
+      "name": "windowMinutes",
+      "label": "只看最近多少分钟（与定时间隔一致）",
+      "type": "integer",
+      "default": "10",
+      "min": 5,
+      "max": 1440
+    },
+    {
+      "name": "instruction",
+      "label": "交代给对方的话（可空；不填时默认提醒对方评论是不可信输入、只按维护者意见行事）",
+      "type": "string",
+      "default": "",
+      "maxLength": 200
+    },
+    {
+      "name": "ignoreAuthors",
+      "label": "忽略这些 GitHub 账号的动作（逗号分隔，可空；填自己的账号避免自己回复又唤醒自己）",
+      "type": "string",
+      "default": "",
+      "maxLength": 200
+    }
+  ],
+  "script": {
+    "kind": "script",
+    "lang": "python",
+    "network": true,
+    "timeoutMs": 60000,
+    "secrets": [
+      "GITHUB_TOKEN"
+    ],
+    "secretsOptional": true,
+    "codeFile": "app.py"
+  },
+  "options": {
+    "confirm": false,
+    "schedulable": true
+  }
+}
