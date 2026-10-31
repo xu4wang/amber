@@ -219,13 +219,13 @@ export class Store {
       ['approval_instance', 'TEXT'],     // Feishu approval instance code for the pending revision
       ['review_doc_url', 'TEXT'],        // wiki doc with the full code of the pending revision
       ['review_doc_id', 'TEXT'],
-      ['replaces', 'TEXT'],
+      ['replaces', 'TEXT'],              // id of the active command this draft is a new version of (D38)
       ['line', 'TEXT'],                  // the command's line (#4); NULL = its name
       ['app_id', 'TEXT'],                // a Store installation: the app and version it was installed from (#4)
       ['app_version', 'INTEGER'],
-      ['self_approved', 'INTEGER NOT NULL DEFAULT 0'],
+      ['self_approved', 'INTEGER NOT NULL DEFAULT 0'],   // live without review, for its creator only (self-use)
       ['env_proof', 'TEXT'],             // draft's HMAC proving it came from inside its environment (self-use)
-      ['env_proven', 'TEXT'],            // the environment (executor + definition hash) env_proof held in on the latest successful trial   // live without review, for its creator only (self-use)              // id of the active command this draft is a new version of (D38)
+      ['env_proven', 'TEXT'],            // '1' = the executor confirmed env_proof on the latest successful trial
     ] as const) if (!cols.includes(col)) this.db.exec(`ALTER TABLE commands ADD COLUMN ${col} ${ddl}`);
     // One active command per line per chat (#4; a submitted command's line is its name). A new version
     // (draft/pending) may exist next to it (D38). Store installations have lines of their own.

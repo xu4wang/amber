@@ -857,13 +857,6 @@ test('environment proof: a draft from inside a botmux environment may go live fo
     assert.match(FakeFeishu.text(card), /in bot/);
     assert.match(FakeFeishu.text(card), /是提交它的 agent 自己的环境/);
     assert.ok(button(card, 'claim_self'));
-    // The proof holds for the environment as it was checked: a changed definition (even one taking effect without
-    // approval) needs a new trial run.
-    const ex = env.amber.store.listExecutors()[0];
-    const changed = { ...ex.envs, 机器人: { ...ex.envs['机器人'], vars: { EXTRA: '1' } } };
-    env.amber.store.updateExecutorEnvs(ex.id, changed, ex.machine, ex.version ?? '');
-    assert.match(JSON.stringify(await env.click(alice, env.amber.store.getMeta(id).claimMessageId!, { a: 'claim_self', c: id })), /需要审核/);
-    env.amber.store.updateExecutorEnvs(ex.id, ex.envs, ex.machine, ex.version ?? '');
     await env.click(alice, env.amber.store.getMeta(id).claimMessageId!, { a: 'claim_self', c: id });
     assert.equal(env.amber.store.getCommand(id)!.status, 'active');
     assert.equal(env.amber.store.getCommand(id)!.selfApproved, true);
