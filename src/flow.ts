@@ -4,7 +4,7 @@
 //   first run a successful trial with their own identity.
 // - Every configured reviewer must approve the exact spec_hash (D16); any reject rejects.
 import type * as lark from '@larksuiteoapi/node-sdk';
-import { randomUUID } from 'node:crypto';
+import { randomUUID, createHash } from 'node:crypto';
 import type { Store, CommandRow, ParamDef, Script, CommandOptions } from './db.ts';
 import { normalizeOptions } from './db.ts';
 import { computeSpecHash } from './db.ts';
@@ -466,10 +466,19 @@ export class Flow {
   /** The draft runs in an environment it proved it came from (its executor confirmed the proof on the latest successful
    *  trial), and that environment is a botmux bot's exported sandbox on an approved executor: the agent's own reach. */
   envProvenFor(c: CommandRow): boolean {
+    const stamp = this.envStamp(c);
+    return !!stamp && this.store.getMeta(c.id).envProven === stamp;
+  }
+
+  /** The draft's environment as approved right now (executor + definition), for a botmux bot's exported sandbox only.
+   *  A proof holds for the environment it was checked against: any change to the definition (even one that takes
+   *  effect without approval) or to the executor needs a new trial run. */
+  private envStamp(c: CommandRow): string | undefined {
     const p = c.script.env ? parseEnv(c.script.env) : undefined;
-    if (!p || !this.store.getMeta(c.id).envProven) return false;
-    const env = this.store.approvedExecutor(p.executor)?.envs[p.env];
-    return typeof env?.source === 'string' && env.source.startsWith('botmux:');
+    const e = p ? this.store.approvedExecutor(p.executor) : undefined;
+    const env = p && e ? e.envs[p.env] : undefined;
+    if (!env || typeof env.source !== 'string' || !env.source.startsWith('botmux:')) return undefined;
+    return `${e!.id}:${createHash('sha256').update(JSON.stringify(env)).digest('hex').slice(0, 32)}`;
   }
 
   /** Called after a version is activated: retire the version it replaced and hand over (D38). */
@@ -512,9 +521,11 @@ export class Flow {
       // (and the fallback card when Feishu refuses the result card) follow the current attempt.
       this.store.setMeta(c.id, { trialBy: null, envProven: null });
       try {
+        const stamp = this.envStamp(c);
         const r = await runCommand(this.store, c, form, caller, facts, { trial: true, envProof: meta.envProof });
         if (!r.ok) return claimCard(c, { error: r.error }, meta.submittedBy, this.prevOf(c.id));
-        this.store.setMeta(c.id, { trialBy: caller.unionId, envProven: r.envProven ? 1 : null });
+        // The environment as it was when the run was sent: a later change no longer matches at claim time (envProvenFor).
+        this.store.setMeta(c.id, { trialBy: caller.unionId, envProven: r.envProven && stamp ? stamp : null });
         return claimCard(c, { by: caller.openId, blocks: r.blocks, selfUse: this.selfUseAllowed(c) }, meta.submittedBy, this.prevOf(c.id));
       } catch (e) {
         return claimCard(c, { error: e instanceof AmberError ? e.message : (e as Error).message }, meta.submittedBy, this.prevOf(c.id));

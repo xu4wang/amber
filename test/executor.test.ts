@@ -4,7 +4,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, execFile, execFileSync, type ChildProcess } from 'node:child_process';
 import { promisify } from 'node:util';
-import { mkdirSync, writeFileSync, rmSync, readFileSync, realpathSync, existsSync } from 'node:fs';
+import { mkdirSync, writeFileSync, rmSync, readFileSync, realpathSync, existsSync, symlinkSync, readdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -857,6 +857,13 @@ test('environment proof: a draft from inside a botmux environment may go live fo
     assert.match(FakeFeishu.text(card), /in bot/);
     assert.match(FakeFeishu.text(card), /是提交它的 agent 自己的环境/);
     assert.ok(button(card, 'claim_self'));
+    // The proof holds for the environment as it was checked: a changed definition (even one taking effect without
+    // approval) needs a new trial run.
+    const ex = env.amber.store.listExecutors()[0];
+    const changed = { ...ex.envs, 机器人: { ...ex.envs['机器人'], vars: { EXTRA: '1' } } };
+    env.amber.store.updateExecutorEnvs(ex.id, changed, ex.machine, ex.version ?? '');
+    assert.match(JSON.stringify(await env.click(alice, env.amber.store.getMeta(id).claimMessageId!, { a: 'claim_self', c: id })), /需要审核/);
+    env.amber.store.updateExecutorEnvs(ex.id, ex.envs, ex.machine, ex.version ?? '');
     await env.click(alice, env.amber.store.getMeta(id).claimMessageId!, { a: 'claim_self', c: id });
     assert.equal(env.amber.store.getCommand(id)!.status, 'active');
     assert.equal(env.amber.store.getCommand(id)!.selfApproved, true);
@@ -877,14 +884,48 @@ test('environment proof: a draft from inside a botmux environment may go live fo
     }
     // Amber checks the environment too: even an executor that vouched for a hand-made environment would not do.
     const hand = env.amber.store.listAll().find((c: any) => c.name === '手写环境')!;
-    env.amber.store.setMeta(hand.id, { envProven: 1 });
+    env.amber.store.setMeta(hand.id, { envProven: env.amber.store.getMeta(id).envProven! });
     assert.equal(env.amber.bot.flow.selfUseAllowed(hand), false);
     const own = env.amber.store.listAll().find((c: any) => c.name === '没证明')!;
-    env.amber.store.setMeta(own.id, { envProven: 1 });
+    env.amber.store.setMeta(own.id, { envProven: env.amber.store.getMeta(id).envProven! });
     assert.equal(env.amber.bot.flow.selfUseAllowed(own), true, 'control: the same check passes for the bot environment');
   } finally {
     child?.kill('SIGKILL');
     await env.close();
     rmSync(base, { recursive: true, force: true });
   }
+});
+
+test('environment keys: none where another environment can read them, and never written through a link', () => {
+  const base = join(H, `.amber-envkeys-${process.pid}`);
+  const dir = join(base, 'conf'), a = join(base, 'a'), b = join(base, 'b'), c = join(base, 'c'), outside = join(base, 'outside');
+  for (const d of [dir, a, b, c, outside]) mkdirSync(d, { recursive: true });
+  symlinkSync(outside, join(c, '.amber'));
+  try {
+    const run = (envs: object) => JSON.parse(execFileSync(process.execPath, ['--input-type=module', '-e', `
+      const m = await import(${JSON.stringify(EXE)});
+      const cfg = { name: 'x', envs: ${JSON.stringify(envs)} };
+      m.writeEnvKeys(cfg);
+      console.log('RESULT ' + JSON.stringify(Object.fromEntries(Object.keys(cfg.envs).map(k => [k, m.envKeyExposed(cfg, k)]))));`], { env: { ...process.env, AMBER_EXECUTOR_DIR: dir }, encoding: 'utf8' }).split('RESULT ').pop()!);
+    // b's access reaches a's workdir: a gets no key (and one written earlier is taken back); b itself is fine.
+    assert.deepEqual(run({ A: { workdir: a, source: 'botmux:a' } }), { A: false });
+    assert.equal(existsSync(join(a, '.amber', 'env-A.key')), true);
+    assert.deepEqual(run({ A: { workdir: a, source: 'botmux:a' }, B: { workdir: b, source: 'botmux:b', access: { readWrite: ['{WORKDIR}'], readOnly: [base] } } }), { A: true, B: false });
+    assert.equal(existsSync(join(a, '.amber', 'env-A.key')), false);
+    assert.equal(existsSync(join(b, '.amber', 'env-B.key')), true);
+    // A deeper deny keeps it closed again.
+    assert.deepEqual(run({ A: { workdir: a, source: 'botmux:a' }, B: { workdir: b, source: 'botmux:b', access: { readWrite: ['{WORKDIR}'], readOnly: [base], deny: [join(a, '.amber')] } } }), { A: false, B: false });
+    assert.equal(existsSync(join(a, '.amber', 'env-A.key')), true);
+    // .amber is a link the bot made: nothing is written where it points.
+    run({ C: { workdir: c, source: 'botmux:c' } });
+    assert.deepEqual(readdirSync(outside), []);
+    // A link at the temporary file's name is not followed either.
+    const d = join(base, 'd'), victim = join(outside, 'victim');
+    mkdirSync(join(d, '.amber'), { recursive: true });
+    writeFileSync(victim, 'orig');
+    symlinkSync(victim, join(d, '.amber', 'env-D.key.tmp'));
+    run({ D: { workdir: d, source: 'botmux:d' } });
+    assert.equal(readFileSync(victim, 'utf8'), 'orig');
+    assert.match(readFileSync(join(d, '.amber', 'env-D.key'), 'utf8'), /^[0-9a-f]{64}\n$/);
+  } finally { rmSync(base, { recursive: true, force: true }); }
 });

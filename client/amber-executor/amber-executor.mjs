@@ -26,7 +26,7 @@
 // running, the executor checks the signature, the addressee, the expiry, that it has not seen the job
 // before, and recomputes the spec hash; then runs the code in a sandbox built from the environment's
 // approved access (same rules as Amber, lib/ is generated from Amber's sources). Commands declare no paths.
-import { readFileSync, writeFileSync, existsSync, mkdirSync, chmodSync, renameSync, unlinkSync, realpathSync, statSync, readdirSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync, mkdirSync, chmodSync, renameSync, unlinkSync, realpathSync, statSync, readdirSync, lstatSync } from 'node:fs';
 import { createPublicKey } from 'node:crypto';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
@@ -491,17 +491,53 @@ function envKeyMaster() {
 export const envKeyOf = name => createHmac('sha256', envKeyMaster()).update(`amber-env-key:v1\n${name}`).digest('hex');
 export const envKeyFile = (env, name) => join(normalizePath(env.workdir), '.amber', `env-${name}.key`);
 
+const real = p => { try { return realpathSync(p); } catch { return p; } };
+const inside = (p, root) => p === root || p.startsWith(root === '/' ? '/' : `${root}/`);
+/** Could a script in another environment of this executor read this environment's key? Then the key would prove
+ *  nothing about who submitted (that environment could sign for this one), so there is no key at all. */
+export function envKeyExposed(cfg, name) {
+  const f = real(join(normalizePath(cfg.envs[name].workdir), '.amber'));
+  for (const [other, o] of Object.entries(cfg.envs ?? {})) {
+    if (other === name) continue;
+    let a;
+    try { const w = normalizePath(o.workdir); a = validateEnvAccess(o.access ?? { readWrite: [w] }, { workdir: w }); } catch { return true; }
+    const deny = (a.deny ?? []).map(real);
+    // A deny at or below the allowing root, covering the key, wins (as in the sandbox: the deeper rule wins).
+    if ([...(a.readWrite ?? []), ...(a.readOnly ?? [])].map(real).some(r => (inside(f, r) || inside(r, f)) && !deny.some(d => inside(f, d) && inside(d, r)))) return true;
+  }
+  return false;
+}
+const keyUsable = (cfg, name) => envKeyEligible(cfg.envs?.[name]) && !envKeyExposed(cfg, name);
+
+/** Writes a new file without following a link someone put at its name (the workdir belongs to the bot). */
+function writeFresh(p, s) {
+  const t = `${p}.tmp`;
+  try { unlinkSync(t); } catch { /* not there */ }
+  writeFileSync(t, s, { mode: 0o600, flag: 'wx' });
+  renameSync(t, p);
+}
+
 /** Puts each eligible environment's key in its workdir (again, if someone deleted or changed it). */
 export function writeEnvKeys(cfg) {
   for (const [name, env] of Object.entries(cfg.envs ?? {})) {
     if (!envKeyEligible(env)) continue;
+    const f = envKeyFile(env, name), d = join(f, '..');
     try {
-      const f = envKeyFile(env, name), d = join(f, '..'), k = `${envKeyOf(name)}\n`;
-      mkdirSync(d, { recursive: true, mode: 0o700 });
-      if (!existsSync(join(d, '.gitignore'))) writeFileSync(join(d, '.gitignore'), '*\n');
+      if (envKeyExposed(cfg, name)) {
+        // Another environment reaches this workdir: take back a key written earlier.
+        try { if (lstatSync(d).isDirectory()) unlinkSync(f); } catch { /* none */ }
+        log('environment key not written: another environment can read', d);
+        continue;
+      }
+      // The bot controls its workdir: .amber must be a real directory there, not a link to somewhere else.
+      if (!existsSync(d)) mkdirSync(d, { mode: 0o700 });
+      const st = lstatSync(d);
+      if (!st.isDirectory() || st.isSymbolicLink() || real(d) !== join(real(normalizePath(env.workdir)), '.amber')) throw new Error(`${d} 不是 workdir 里的目录`);
+      try { writeFileSync(join(d, '.gitignore'), '*\n', { flag: 'wx' }); } catch { /* there already */ }
+      const k = `${envKeyOf(name)}\n`;
       let cur = '';
-      try { cur = readFileSync(f, 'utf8'); } catch { /* not there yet */ }
-      if (cur !== k) writePrivate(f, k);
+      try { if (lstatSync(f).isFile()) cur = readFileSync(f, 'utf8'); } catch { /* not there yet */ }
+      if (cur !== k) writeFresh(f, k);
     } catch (e) { log('environment key not written', name, e.message); }
   }
 }
@@ -509,7 +545,7 @@ export function writeEnvKeys(cfg) {
 /** Does the job's envProof show its draft came from inside the environment? (see writeEnvKeys) */
 export function checkEnvProof(cfg, payload) {
   const env = cfg.envs?.[payload.env], s = payload.spec?.script;
-  if (!envKeyEligible(env) || typeof payload.envProof !== 'string' || !/^[0-9a-f]{64}$/.test(payload.envProof) || typeof s?.code !== 'string') return false;
+  if (!env || !keyUsable(cfg, payload.env) || typeof payload.envProof !== 'string' || !/^[0-9a-f]{64}$/.test(payload.envProof) || typeof s?.code !== 'string') return false;
   const msg = `amber-env-proof:v1\n${s.env}\n${createHash('sha256').update(s.code, 'utf8').digest('hex')}`;
   const want = createHmac('sha256', envKeyOf(payload.env)).update(msg).digest();
   return timingSafeEqual(want, Buffer.from(payload.envProof, 'hex'));

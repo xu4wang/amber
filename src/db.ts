@@ -225,7 +225,7 @@ export class Store {
       ['app_version', 'INTEGER'],
       ['self_approved', 'INTEGER NOT NULL DEFAULT 0'],
       ['env_proof', 'TEXT'],             // draft's HMAC proving it came from inside its environment (self-use)
-      ['env_proven', 'INTEGER'],         // 1 = the executor confirmed env_proof on the latest successful trial   // live without review, for its creator only (self-use)              // id of the active command this draft is a new version of (D38)
+      ['env_proven', 'TEXT'],            // the environment (executor + definition hash) env_proof held in on the latest successful trial   // live without review, for its creator only (self-use)              // id of the active command this draft is a new version of (D38)
     ] as const) if (!cols.includes(col)) this.db.exec(`ALTER TABLE commands ADD COLUMN ${col} ${ddl}`);
     // One active command per line per chat (#4; a submitted command's line is its name). A new version
     // (draft/pending) may exist next to it (D38). Store installations have lines of their own.
@@ -558,11 +558,11 @@ export class Store {
     return (this.db.prepare('SELECT * FROM commands ORDER BY created_at').all() as Record<string, unknown>[]).map(r => this.toRow(r));
   }
 
-  getMeta(id: string): { expectedClaimer?: string; trialBy?: string; claimMessageId?: string; originMessageId?: string; ownerOpenId?: string; submittedBy?: string; replaces?: string; envProof?: string; envProven?: boolean } {
+  getMeta(id: string): { expectedClaimer?: string; trialBy?: string; claimMessageId?: string; originMessageId?: string; ownerOpenId?: string; submittedBy?: string; replaces?: string; envProof?: string; envProven?: string } {
     const r = this.db.prepare('SELECT expected_claimer, trial_by, claim_message_id, origin_message_id, owner_open_id, submitted_by, replaces, env_proof, env_proven FROM commands WHERE id = ?').get(id) as Record<string, unknown> | undefined;
     return {
       envProof: (r?.env_proof as string) || undefined,
-      envProven: Number(r?.env_proven ?? 0) === 1,
+      envProven: (r?.env_proven as string) || undefined,
       replaces: (r?.replaces as string) || undefined,
       expectedClaimer: (r?.expected_claimer as string) || undefined,
       trialBy: (r?.trial_by as string) || undefined,
@@ -573,7 +573,7 @@ export class Store {
     };
   }
 
-  setMeta(id: string, m: { expectedClaimer?: string | null; trialBy?: string | null; claimMessageId?: string | null; originMessageId?: string | null; submittedBy?: string | null; ownerUnionId?: string; ownerOpenId?: string | null; replaces?: string | null; envProof?: string | null; envProven?: number | null }): void {
+  setMeta(id: string, m: { expectedClaimer?: string | null; trialBy?: string | null; claimMessageId?: string | null; originMessageId?: string | null; submittedBy?: string | null; ownerUnionId?: string; ownerOpenId?: string | null; replaces?: string | null; envProof?: string | null; envProven?: string | null }): void {
     const map: Record<string, string> = { envProof: 'env_proof', envProven: 'env_proven', replaces: 'replaces', expectedClaimer: 'expected_claimer', trialBy: 'trial_by', claimMessageId: 'claim_message_id', originMessageId: 'origin_message_id', submittedBy: 'submitted_by', ownerUnionId: 'owner_union_id', ownerOpenId: 'owner_open_id' };
     for (const [k, v] of Object.entries(m)) {
       if (v === undefined) continue;
