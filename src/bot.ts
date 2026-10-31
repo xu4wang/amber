@@ -5,7 +5,7 @@ import { emitEvent, appEvent } from './events.ts';
 import { randomUUID } from 'node:crypto';
 import type { Store, CommandRow, ScopeType } from './db.ts';
 import type { Caller, Block } from './engine.ts';
-import { ENV_NOT_GLOBAL, visibleCommands, findVisible, findManageable, runCommand, AmberError, secretVault, lineOf, dropOrphanSettings, runParams } from './engine.ts';
+import { ENV_NOT_GLOBAL, SELF_USE_ONLY, visibleCommands, findVisible, findManageable, runCommand, AmberError, secretVault, lineOf, dropOrphanSettings, runParams } from './engine.ts';
 import { cardFooter, withFooter, Mentions, reassignCard, cloneCard, listCard, formCard, runningCard, trialRunningCard, resultCard, assistThinkingCard, assistCard, errorCard, infoCard, retireConfirmCard, closedCard, secretFormCard, secretPickCard, executorApprovalCard, executorDecidedCard, executorListCard, executorFollowCard } from './cards.ts';
 import { ExecutorHub } from './executors.ts';
 import { AppStore } from './apps.ts';
@@ -96,6 +96,7 @@ export class AmberBot {
     this.signer = new Signer(cfg.configDir);
     this.flow = new Flow(this.client, store, cfg.reviewers);
     this.flow.policy = cfg.reviewPolicy ?? 'all';
+    this.flow.selfUseServices = cfg.selfUse?.services;
     this.flow.signer = this.signer;
     this.flow.review = new FeishuReview(this.client, { approval: cfg.approval, wiki: cfg.wiki });
     this.flow.nameOf = (u: string) => this.nameOf(u);
@@ -279,6 +280,8 @@ export class AmberBot {
     if (!this.isAdmin(admin.unionId)) throw new AmberError('forbidden', '只有管理员可以重新分配应用');
     const c = this.store.getCommand(cmdId);
     if (!c || c.status !== 'active' || c.scopeType !== 'group') throw new AmberError('not_found', '没有找到这个群应用');
+    // It would run as the new owner: unreviewed code must not change hands.
+    if (c.selfApproved) throw new AmberError('self_use', SELF_USE_ONLY);
     this.memberCache.delete(c.chatId);   // decide on the current roster, not a cached one
     const orphan = await this.isOrphan(c);
     if (orphan === undefined) throw new AmberError('unknown_membership', 'Amber 暂时无法确认创建人是否还在群里（缺少「获取群成员」权限）');
@@ -311,6 +314,7 @@ export class AmberBot {
     if (c.ownerUnionId !== from.unionId) throw new AmberError('forbidden', '只有应用的创建人可以复制给别人');
     if (c.scopeType !== 'group') throw new AmberError('bad_target', '只有群里的应用可以复制给同群的人');
     if (this.store.installOf(c.id)) throw new AmberError('bad_target', '从 Amber Store 装的应用不能复制；对方可以自己去 Store 安装');
+    if (c.selfApproved) throw new AmberError('self_use', SELF_USE_ONLY);
     if (toUnionId === from.unionId) throw new AmberError('bad_target', '不能复制给自己');
     this.memberCache.delete(c.chatId);
     if (await this.isMember(c.chatId, toUnionId) !== true) throw new AmberError('bad_target', '只能复制给这个群的成员');
@@ -621,6 +625,10 @@ export class AmberBot {
     const toGlobal = verb === '全局' || verb === '设为全局';
     if (toGlobal && cmd.script.env) {
       await this.replyCard(messageId, inThread, errorCard('Amber', ENV_NOT_GLOBAL));
+      return true;
+    }
+    if (toGlobal && cmd.selfApproved) {
+      await this.replyCard(messageId, inThread, errorCard('Amber', SELF_USE_ONLY));
       return true;
     }
     if (toGlobal && !cmd.global && this.store.listActiveGlobal().some(g => g.name === cmd!.name)) {
@@ -1106,6 +1114,7 @@ export class AmberBot {
         return { toast: { type: 'info', content: '正在发起审批，结果会更新在这张卡片上' } };
       }
       if (typeof value.a === 'string' && value.a.startsWith('claim_')) {
+        if (value.a === 'claim_self' && this.trialsRunning.has(String(value.c))) return { toast: { type: 'info', content: '试运行还在进行中，等结果出来后再操作' } };
         return raw(await this.flow.onClaimAction(value.a, String(value.c), caller, { city: () => this.cityOf(caller.unionId), signer: this.signer }));
       }
       if (value.a === 'sec_form' || value.a === 'sec_save') {

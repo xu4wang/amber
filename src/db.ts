@@ -57,6 +57,9 @@ export interface CommandRow {
    *  A submitted command's line is its name; a Store installation gets its own, so several people can install
    *  the same app in one chat without sharing anything. */
   line: string;
+  /** Went live without review, for its creator's own use (self-use): only its creator may run it, and it cannot be
+   *  shared (global, copy, reassign) until a reviewed version replaces it. */
+  selfApproved: boolean;
 }
 
 export function computeSpecHash(c: Pick<CommandRow, 'name' | 'params' | 'script' | 'options'>): string {
@@ -219,7 +222,8 @@ export class Store {
       ['replaces', 'TEXT'],
       ['line', 'TEXT'],                  // the command's line (#4); NULL = its name
       ['app_id', 'TEXT'],                // a Store installation: the app and version it was installed from (#4)
-      ['app_version', 'INTEGER'],              // id of the active command this draft is a new version of (D38)
+      ['app_version', 'INTEGER'],
+      ['self_approved', 'INTEGER NOT NULL DEFAULT 0'],   // live without review, for its creator only (self-use)              // id of the active command this draft is a new version of (D38)
     ] as const) if (!cols.includes(col)) this.db.exec(`ALTER TABLE commands ADD COLUMN ${col} ${ddl}`);
     // One active command per line per chat (#4; a submitted command's line is its name). A new version
     // (draft/pending) may exist next to it (D38). Store installations have lines of their own.
@@ -498,12 +502,13 @@ export class Store {
       createdAt: Number(r.created_at),
       global: Number(r.global ?? 0) === 1,
       line: r.line ? String(r.line) : String(r.name),
+      selfApproved: Number(r.self_approved ?? 0) === 1,
     };
   }
 
-  insertCommand(c: Omit<CommandRow, 'id' | 'specHash' | 'createdAt' | 'global' | 'line'> & { line?: string }): CommandRow {
+  insertCommand(c: Omit<CommandRow, 'id' | 'specHash' | 'createdAt' | 'global' | 'line' | 'selfApproved'> & { line?: string }): CommandRow {
     c = { ...c, options: normalizeOptions(c.options) };
-    const row: CommandRow = { ...c, id: randomUUID().slice(0, 8), specHash: computeSpecHash(c), createdAt: Date.now(), global: false, line: c.line ?? c.name };
+    const row: CommandRow = { ...c, id: randomUUID().slice(0, 8), specHash: computeSpecHash(c), createdAt: Date.now(), global: false, line: c.line ?? c.name, selfApproved: false };
     this.db.prepare(`INSERT INTO commands (id, scope_type, chat_id, owner_union_id, name, description, params_json, script_json, side_effect, status, spec_hash, created_at, line)
       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(row.id, row.scopeType, row.chatId, row.ownerUnionId, row.name, row.description,
       JSON.stringify(row.params), JSON.stringify(row.script), 'n/a', row.status, row.specHash, row.createdAt, row.line === row.name ? null : row.line);
@@ -537,6 +542,10 @@ export class Store {
 
   listActiveGlobal(): CommandRow[] {
     return (this.db.prepare(`SELECT * FROM commands WHERE global = 1 AND status = 'active' ORDER BY name`).all() as Record<string, unknown>[]).map(r => this.toRow(r));
+  }
+
+  setSelfApproved(id: string, v: boolean): void {
+    this.db.prepare('UPDATE commands SET self_approved = ? WHERE id = ?').run(v ? 1 : 0, id);
   }
 
   setGlobal(id: string, global: boolean): void {

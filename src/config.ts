@@ -12,6 +12,10 @@ export interface AmberConfig {
   reviewers: string[];
   /** How many reviewers must approve: every one (default) or any one. A rejection from any reviewer always rejects. */
   reviewPolicy: 'all' | 'any';
+  /** Self-use without review: a creator's app that reaches nothing beyond what its creator and their agent already
+   *  can goes live after their trial run, for them only. `services` = the services such an app may use (they answer
+   *  with the runner's own permissions, as they would the agent). Unset = every app is reviewed. */
+  selfUse?: { services: string[] };
   /** Admins: emails (resolved to union_id at runtime) or union_ids ("on_..."). Admins change command scope by chatting with Amber. */
   admins: string[];
   /** Local services scripts may call with an execution identity token (D27). */
@@ -65,6 +69,7 @@ export function loadConfig(): AmberConfig {
     dataDir,
     reviewers: Array.isArray(fileCfg.reviewers) ? fileCfg.reviewers : [],
     reviewPolicy: reviewPolicyOf(fileCfg.reviewPolicy),
+    ...(fileCfg.selfUse !== undefined ? { selfUse: selfUseOf(fileCfg.selfUse) } : {}),
     admins: Array.isArray(fileCfg.admins) ? fileCfg.admins : [],
     services: fileCfg.services && typeof fileCfg.services === 'object' ? fileCfg.services : {},
     configDir,
@@ -78,6 +83,12 @@ export function loadConfig(): AmberConfig {
     ...(fileCfg.llm && typeof fileCfg.llm === 'object' && fileCfg.llm.command ? { llm: fileCfg.llm } : {}),
     ...(fileCfg.executorLinks ? { executorLinks: validateLinks(fileCfg.executorLinks) } : {}),
   };
+}
+
+function selfUseOf(v: unknown): { services: string[] } {
+  const s = (v as { services?: unknown })?.services ?? [];
+  if (!v || typeof v !== 'object' || !Array.isArray(s) || s.some(x => typeof x !== 'string')) throw new Error('config.json: selfUse must be {"services": ["服务名", …]}');
+  return { services: s as string[] };
 }
 
 function reviewPolicyOf(v: unknown): 'all' | 'any' {

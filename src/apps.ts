@@ -8,7 +8,7 @@ import type { Store, CommandRow, AppRow, ListingRow } from './db.ts';
 import { computeSpecHash } from './db.ts';
 import type { Flow } from './flow.ts';
 import { specSummary, codePanels, reviewRuleText, reviewPassed } from './flow.ts';
-import { AmberError, visibleCommands, runParams, configParams } from './engine.ts';
+import { AmberError, SELF_USE_ONLY, visibleCommands, runParams, configParams } from './engine.ts';
 import { sanitizeMarkdown, person, buttonRow } from './cards.ts';
 import { describeServices } from './runner.ts';
 import { lineDiff } from './diff.ts';
@@ -72,6 +72,7 @@ export class AppStore {
     if (c.status !== 'active') return '应用未生效';
     if (c.ownerUnionId !== who) return '只有应用的创建人可以申请上架';
     if (this.store.installOf(c.id)) return '这是从 Amber Store 安装的应用，不能再上架';
+    if (c.selfApproved) return SELF_USE_ONLY;
     if (c.script.env) return '在执行端环境里运行的应用（写了 env）暂时不能上架：环境绑定在某台机器、某个机器人上，装到别处用不了';
     if (this.appOfOriginal(c)) return '已经上架了';
     if (this.store.pendingListingFor(c.id)) return '上架申请正在审核中';
