@@ -19,7 +19,7 @@ function load(name: string): Record<string, any> {
 }
 
 test('samples: there are the documented ones, and every script compiles', () => {
-  assert.deepEqual(SAMPLES.sort(), ['chat-digest', 'my-lark-data', 'pr-watch', 'secret-vault', 'weather']);
+  assert.deepEqual(SAMPLES.sort(), ['chat-digest', 'my-lark-data', 'my-lark-ops', 'pr-watch', 'secret-vault', 'weather']);
   const doc = readFileSync(join(ROOT, 'docs', 'samples.md'), 'utf8');
   for (const s of SAMPLES) {
     assert.ok(doc.includes(`samples/${s}/`), `docs/samples.md explains ${s}`);
@@ -233,4 +233,47 @@ urllib.request.urlopen = fake
   assert.match(out, /\n@Beta o\/r#7 有新动态。/);
   assert.doesNotMatch(run({}), /@/, 'no one to mention: just the list');
   assert.equal(run({ mention: 'Beta' }, { FAKE_OLD: '1' }), '', 'nothing new: no output, so no message');
+});
+
+test('samples: my-lark-ops finds people by name or email with the person\'s own search, never guesses, and adds them as the person', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'amber-mlo-'));
+  const log = join(dir, 'calls.log');
+  writeFileSync(join(dir, 'lark-cli'), `#!/usr/bin/env python3
+import json, os, sys
+a = sys.argv[1:]
+open(${JSON.stringify(log)}, "a").write(json.dumps(a, ensure_ascii=False) + "\\n")
+assert a[-2:] == ["--as", "user"] or ("--as" in a and a[a.index("--as") + 1] == "user"), "always as the person"
+P = [{"localized_name": "朱李纳", "enterprise_email": "kira@x.com", "open_id": "ou_zhu"},
+     {"localized_name": "张伟", "enterprise_email": "zw1@x.com", "department": "研发", "open_id": "ou_zw1"},
+     {"localized_name": "张伟", "enterprise_email": "zw2@x.com", "department": "销售", "open_id": "ou_zw2"},
+     {"localized_name": "孟豪伟", "enterprise_email": "m2@x.com", "open_id": "ou_mhw"},
+     {"localized_name": "孟豪", "enterprise_email": "tyler@x.com", "open_id": "ou_mh"},
+     {"localized_name": "外人", "email": "out@y.com", "open_id": "ou_out", "is_cross_tenant": True}]
+if a[:2] == ["contact", "+search-user"]:
+    qs = a[a.index("--queries") + 1].split(",")
+    assert len(qs) <= 20 and "--exclude-external-users" in a
+    print(json.dumps({"ok": True, "data": {"users": [dict(u, matched_query=q) for q in qs for u in P if q in u["localized_name"] or q.lower() in (u.get("enterprise_email", ""), u.get("email", ""))]}}))
+    sys.exit(0)
+assert a[0] == "api" and "batch_get_id" not in a[2], "batch_get_id does not take a user token"
+data = json.loads(a[a.index("--data") + 1]); params = json.loads(a[a.index("--params") + 1])
+if a[2] == "/open-apis/im/v1/chats":
+    print(json.dumps({"code": 0, "data": {"chat_id": "oc_new", "name": data["name"]}}))
+else:
+    print(json.dumps({"code": 0, "data": {"invalid_id_list": [i for i in data["id_list"] if i.startswith("on_dead")]}}))
+`, { mode: 0o755 });
+  const run = (params: Record<string, string>) => execFileSync('python3', [join(ROOT, 'samples', 'my-lark-ops', 'app.py')], {
+    input: JSON.stringify({ params, larkUser: { accessToken: 'u', appId: 'cli_x', expiresAt: 0, env: {}, cli: join(dir, 'lark-cli') } }),
+  }).toString();
+  const q = run({ op: '查邮箱', users: '朱李纳,张伟,孟豪,不存在' });
+  assert.match(q, /\| 朱李纳 \| kira@x\.com \|/); assert.match(q, /\| 孟豪 \| tyler@x\.com \|/, 'an exact name, not 孟豪伟');
+  assert.match(q, /重名、没有处理：张伟：zw1@x\.com（研发）、zw2@x\.com（销售）/); assert.match(q, /不存在（按姓名查不到）/);
+  const add = run({ op: '拉人', chat_id: 'oc_abc', users: '朱李纳,tyler@x.com,out@y.com,on_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa,on_deadaaaaaaaaaaaaaaaaaaaaaaaaaaaa,张伟', bots: 'cli_aa5da1b1d7789cf9' });
+  assert.match(add, /成功 4 个/); assert.match(add, /没拉进去：on_dead/); assert.match(add, /out@y\.com（按邮箱查不到）/, 'not someone outside the company');
+  assert.match(add, /重名、没有处理：张伟/);
+  const calls = readFileSync(log, 'utf8').trim().split('\n').map(l => JSON.parse(l));
+  const members = calls.filter(c => String(c[2]).endsWith('/members')).map(c => [JSON.parse(c[c.indexOf('--params') + 1]).member_id_type, JSON.parse(c[c.indexOf('--data') + 1]).id_list]);
+  assert.deepEqual(members, [['open_id', ['ou_zhu', 'ou_mh']], ['union_id', ['on_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', 'on_deadaaaaaaaaaaaaaaaaaaaaaaaaaaaa']], ['app_id', ['cli_aa5da1b1d7789cf9']]]);
+  assert.match(run({ op: '建群', name: '项目群', users: '孟豪' }), /已建群「项目群」[\s\S]*拉进 1 个人/);
+  assert.throws(() => run({ op: '拉人', chat_id: 'x; rm', users: '孟豪' }), 'a chat id only');
+  assert.throws(() => run({ op: '拉人', chat_id: 'oc_abc', users: '<script>' }), 'names are names');
 });

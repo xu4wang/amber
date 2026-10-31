@@ -1,0 +1,56 @@
+{
+  "name": "我的飞书操作",
+  "description": "以执行人本人的飞书身份做需要「本人」才能做的写操作，每次都由本人在确认卡上点「执行」后才进行。用「操作」选做什么，现在支持：建群（群主是执行人）、拉人（把人和机器人拉进一个群）、查邮箱（按姓名查同事的企业邮箱）。成员写邮箱、union_id（on_…）或姓名（本公司里只有一个同名的人才算，重名的会列出来、不处理），机器人写应用 id（cli_…），用逗号隔开；一次最多 50 人、5 个机器人。每个操作都是固定的飞书接口，不接受任意接口；以后加新操作会作为新版本重新审核。不改群设置、不移出成员、不发消息。",
+  "params": [
+    {
+      "name": "op",
+      "label": "操作（建群/拉人/查邮箱）",
+      "type": "string",
+      "required": true,
+      "pattern": "^(建群|拉人|查邮箱)$",
+      "maxLength": 10
+    },
+    {
+      "name": "name",
+      "label": "群名（建群时）",
+      "type": "string",
+      "maxLength": 60
+    },
+    {
+      "name": "chat_id",
+      "label": "群（拉人时，oc_…）",
+      "type": "string",
+      "maxLength": 64
+    },
+    {
+      "name": "users",
+      "label": "成员（邮箱、union_id 或姓名，逗号分隔）",
+      "type": "string",
+      "maxLength": 3000
+    },
+    {
+      "name": "bots",
+      "label": "机器人（应用 id cli_…，逗号分隔，可空）",
+      "type": "string",
+      "maxLength": 200
+    },
+    {
+      "name": "description",
+      "label": "群描述（建群时，可空）",
+      "type": "string",
+      "maxLength": 100
+    }
+  ],
+  "script": {
+    "kind": "script",
+    "lang": "python",
+    "network": false,
+    "timeoutMs": 120000,
+    "larkUser": true,
+    "codeFile": "app.py"
+  },
+  "options": {
+    "confirm": true,
+    "schedulable": false
+  }
+}
