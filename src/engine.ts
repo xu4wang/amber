@@ -132,12 +132,13 @@ export const SELF_USE_ONLY = '这个版本是「仅自己用」免审生效的�
 
 /** Why an app cannot go live without review for its creator's own use: it would reach something its creator's agent
  *  cannot reach on its own. Empty = it may (self-use). `services` = the services allowed without review (config). */
-export function selfUseBlockers(script: Script, services: string[]): string[] {
+export function selfUseBlockers(script: Script, services: string[], opts: { envProven?: boolean } = {}): string[] {
   const out: string[] = [];
   if (script.larkUser) out.push('以执行人的飞书身份运行（larkUser）');
   if (script.secrets?.length) out.push('使用密钥');
   if (script.network) out.push('访问外网');
-  if (script.env) out.push('在执行端环境里运行（env）');
+  // An environment the agent proved it is inside (an exported botmux sandbox, see flow.ts envProvenFor) adds nothing.
+  if (script.env && !opts.envProven) out.push('在执行端环境里运行（env）');
   const other = serviceNames(script).filter(n => !services.includes(n));
   if (other.length) out.push(`调用服务 ${other.join('、')}`);
   return out;
@@ -186,9 +187,9 @@ export async function validateArgs(params: ParamDef[], raw: Record<string, strin
 }
 
 export type Block = { kind: 'markdown'; text: string };
-export interface RunOutcome { runId: string; ok: boolean; blocks: Block[]; markdown: string; error?: string; elapsedMs: number; args: Record<string, string> }
+export interface RunOutcome { runId: string; ok: boolean; blocks: Block[]; markdown: string; error?: string; elapsedMs: number; args: Record<string, string>; envProven?: boolean }
 
-export async function runCommand(store: Store, cmd: CommandRow, rawArgs: Record<string, string | undefined>, caller: Caller, facts: CallerFacts = {}, opts: { trial?: boolean; viaForm?: boolean; asPerson?: boolean } = {}): Promise<RunOutcome> {
+export async function runCommand(store: Store, cmd: CommandRow, rawArgs: Record<string, string | undefined>, caller: Caller, facts: CallerFacts = {}, opts: { trial?: boolean; viaForm?: boolean; asPerson?: boolean; envProof?: string } = {}): Promise<RunOutcome> {
   if (cmd.status !== 'active' && !(opts.trial && cmd.status === 'draft')) throw new AmberError('not_active', '应用未生效');
   if (computeSpecHash(cmd) !== cmd.specHash) throw new AmberError('spec_mismatch', '应用定义与审核通过的版本不一致，已拒绝执行');
   // The stored definition is re-validated with the same rules as a new draft, and only the validated
@@ -291,7 +292,7 @@ export async function runCommand(store: Store, cmd: CommandRow, rawArgs: Record<
     const input = { params: { ...args, ...config }, caller: { unionId: caller.unionId, chatId: caller.chatId, channel: caller.channel, city }, runId, ...(Object.keys(services).length ? { services } : {}), ...(secrets ? { secrets } : {}), ...(larkUser ? { larkUser } : {}) };
     // script.env (D50): on the executor that holds the data, never here. Without it: on Amber's own machine, as the same kind of job.
     const raw = !HUB ? { ok: false, content: '', error: '执行端服务不可用' }
-      : script.env ? await HUB.run(script, { name: cmd.name, params: cmd.params, script: cmd.script, options: cmd.options }, cmd.specHash, input, { allowHosts: getGlobalAllowHosts(store), grant })
+      : script.env ? await HUB.run(script, { name: cmd.name, params: cmd.params, script: cmd.script, options: cmd.options }, cmd.specHash, input, { allowHosts: getGlobalAllowHosts(store), grant, ...(opts.trial && opts.envProof ? { envProof: opts.envProof } : {}) })
       // A run with a Feishu user token reaches Feishu and nothing else (D54), whatever Amber's own allow list says.
       : await HUB.runLocal(script, input, { egress: larkUser ? FEISHU_HOSTS : localEgress(store), grant });
     // A secret (or the user token) that ends up in the output or the error message is masked before it is stored or shown.
@@ -310,6 +311,6 @@ export async function runCommand(store: Store, cmd: CommandRow, rawArgs: Record<
     store.audit(caller.unionId, 'run.ok', { runId });
     // A scheduled run that printed something: monitoring apps print only when something is wrong.
     if (caller.channel === 'schedule' && markdown) emitEvent('run.output', { runId, commandId: cmd.id, name: cmd.line ?? cmd.name, appChatId: cmd.chatId, chatId: caller.chatId, chatType: caller.chatType, callerUnionId: caller.unionId, channel: caller.channel });
-    return { runId, ok: true, blocks, markdown, elapsedMs: Date.now() - started, args };
+    return { runId, ok: true, blocks, markdown, elapsedMs: Date.now() - started, args, ...(r.envProven ? { envProven: true } : {}) };
   } finally { release(); }
 }

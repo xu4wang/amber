@@ -26,7 +26,7 @@
 // running, the executor checks the signature, the addressee, the expiry, that it has not seen the job
 // before, and recomputes the spec hash; then runs the code in a sandbox built from the environment's
 // approved access (same rules as Amber, lib/ is generated from Amber's sources). Commands declare no paths.
-import { readFileSync, writeFileSync, existsSync, mkdirSync, chmodSync, renameSync, unlinkSync, realpathSync, statSync, readdirSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync, mkdirSync, chmodSync, renameSync, unlinkSync, realpathSync, statSync, readdirSync, lstatSync } from 'node:fs';
 import { createPublicKey } from 'node:crypto';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
@@ -34,7 +34,7 @@ import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'node:child_process';
 import { newExecutorKeys, keyFromPem, pubB64, fingerprint, showFingerprint, signRequest, openJob, specHashOf, redact, verifyRelayResponse, verifyLinkRequest, REQUEST_SKEW_MS, EXECUTOR_NAME, ENV_NAME } from './lib/exec-proto.mjs';
 import { createServer } from 'node:http';
-import { randomBytes } from 'node:crypto';
+import { randomBytes, createHmac, createHash, timingSafeEqual } from 'node:crypto';
 import { setSandboxContext, validateEnvAccess, buildPolicy, compileToSeatbelt, compileToBwrap, sandboxPlatform, normalizePath, hardDenyRoots, credentialGrants, describeAccess } from './lib/sandbox-policy.mjs';
 import { runSandboxed } from './lib/sandbox-run.mjs';
 import { validateHosts } from './lib/egress-proxy.mjs';
@@ -43,7 +43,7 @@ import { startRelayPorts } from './lib/relay-port.mjs';
 export const VERSION = '1';
 const DIR = process.env.AMBER_EXECUTOR_DIR ?? join(homedir(), '.config', 'amber-executor');
 const ENV_DIR = join(DIR, 'envs');
-const P = { envCache: join(DIR, 'envs.last-good.json'), config: join(DIR, 'config.json'), sign: join(DIR, 'sign-key.pem'), box: join(DIR, 'box-key.pem'), amber: join(DIR, 'amber-key.json'), seen: join(DIR, 'seen-jobs.json') };
+const P = { envKeyMaster: join(DIR, 'env-key-master'), envCache: join(DIR, 'envs.last-good.json'), config: join(DIR, 'config.json'), sign: join(DIR, 'sign-key.pem'), box: join(DIR, 'box-key.pem'), amber: join(DIR, 'amber-key.json'), seen: join(DIR, 'seen-jobs.json') };
 const DEFAULT_PYTHON = '/usr/bin/python3';
 /** Jobs at once on this machine, unless config.json sets maxParallel (1–64). Amber also caps each executor;
  *  whichever is lower applies (a job over this one is refused here and fails at once). */
@@ -294,7 +294,8 @@ export async function handle(cfg, me, amberPub, envelope) {
     const r = await runSandboxed({ code: job.code, python: job.python, ...sandbox, input, timeoutMs: job.timeoutMs, env: { ...job.vars, WORKDIR: job.workdir }, ...(job.egress ? { egress: job.egress } : {}), ...(job.realHome ? { home: homedir() } : {}) });
     // The log never sees a secret: the error text can contain one (e.g. an exception message).
     log('job done', envelope.jobId, r.ok ? 'ok' : `failed: ${redact(r.error ?? '', secrets)}`);
-    await call(cfg, me, '/v1/executor/result', { jobId: envelope.jobId, ok: r.ok, content: redact(r.content, secrets), ...(r.error ? { error: redact(r.error, secrets) } : {}) });
+    await call(cfg, me, '/v1/executor/result', { jobId: envelope.jobId, ok: r.ok, content: redact(r.content, secrets), ...(r.error ? { error: redact(r.error, secrets) } : {}),
+      ...(payload.envProof !== undefined ? { envProven: checkEnvProof(cfg, payload) } : {}) });
   } catch (e) {
     log('job refused', envelope?.jobId, redact(e.message, secrets));
     // Only answer jobs that were really for us (signature checked); anything else is dropped.
@@ -474,12 +475,100 @@ function writeDef(def, name) {
   console.log(`环境「${name}」：${describeAccess(entry.access)}${cred.length ? `\n注意：含凭证路径 ${cred.join('、')}` : ''}\n已写入 ${join(ENV_DIR, `${name}.json`)}`);
 }
 
+// Environment keys (self-use without review): an environment exported from a botmux bot (source "botmux:…") is that
+// bot's own sandbox. Its key sits in its workdir, so whatever can read the workdir — the bot's agent — can prove a
+// draft comes from inside the environment: `amber submit` puts an HMAC of the environment and the code in the draft,
+// and the executor checks it on the trial run. The keys derive from a master secret in this config dir, which no
+// environment can open; nothing secret goes over the network.
+export const envKeyEligible = env => typeof env?.source === 'string' && env.source.startsWith('botmux:');
+function envKeyMaster() {
+  try { const k = readFileSync(P.envKeyMaster, 'utf8').trim(); if (/^[0-9a-f]{64}$/.test(k)) return k; } catch { /* first use */ }
+  const k = randomBytes(32).toString('hex');
+  mkdirSync(DIR, { recursive: true, mode: 0o700 });
+  writePrivate(P.envKeyMaster, k);
+  return k;
+}
+export const envKeyOf = name => createHmac('sha256', envKeyMaster()).update(`amber-env-key:v1\n${name}`).digest('hex');
+export const envKeyFile = (env, name) => join(normalizePath(env.workdir), '.amber', `env-${name}.key`);
+
+const real = p => { try { return realpathSync(p); } catch { return p; } };
+const inside = (p, root) => p === root || p.startsWith(root === '/' ? '/' : `${root}/`);
+/** Could a script in another environment of this executor read this environment's key? Then the key would prove
+ *  nothing about who submitted (that environment could sign for this one), so there is no key at all. */
+export function envKeyExposed(cfg, name) {
+  const f = real(join(normalizePath(cfg.envs[name].workdir), '.amber'));
+  for (const [other, o] of Object.entries(cfg.envs ?? {})) {
+    if (other === name) continue;
+    // That environment's whole sandbox policy, baseline grants included (the same rules a run gets).
+    let rules;
+    try { const w = normalizePath(o.workdir); rules = buildPolicy({ runDir: join(DIR, 'no-run'), access: validateEnvAccess(o.access ?? { readWrite: [w] }, { workdir: w }) }).rules; } catch { return true; }
+    // The deepest rule covering .amber decides (as in the sandbox); any readable rule below it opens part of it.
+    const cover = rules.filter(r => inside(f, real(r.path))).sort((x, y) => y.path.length - x.path.length)[0];
+    if (cover && cover.access !== 'deny') return true;
+    if (rules.some(r => r.access !== 'deny' && inside(real(r.path), f) && real(r.path) !== f)) return true;
+  }
+  return false;
+}
+const keyUsable = (cfg, name) => envKeyEligible(cfg.envs?.[name]) && !envKeyExposed(cfg, name);
+
+/** Writes a new file without following a link someone put at its name (the workdir belongs to the bot). */
+function writeFresh(p, s) {
+  const t = `${p}.tmp`;
+  try { unlinkSync(t); } catch { /* not there */ }
+  writeFileSync(t, s, { mode: 0o600, flag: 'wx' });
+  renameSync(t, p);
+}
+
+/** Puts each eligible environment's key in its workdir (again, if someone deleted or changed it). */
+export function writeEnvKeys(cfg) {
+  for (const [name, env] of Object.entries(cfg.envs ?? {})) {
+    if (!envKeyEligible(env)) continue;
+    const f = envKeyFile(env, name), d = join(f, '..');
+    try {
+      if (envKeyExposed(cfg, name)) {
+        // Another environment reaches this workdir: take back a key written earlier.
+        try { if (lstatSync(d).isDirectory()) unlinkSync(f); } catch { /* none */ }
+        log('environment key not written: another environment can read', d);
+        continue;
+      }
+      // The bot controls its workdir: .amber must be a real directory there, not a link to somewhere else.
+      if (!existsSync(d)) mkdirSync(d, { mode: 0o700 });
+      const st = lstatSync(d);
+      if (!st.isDirectory() || st.isSymbolicLink() || real(d) !== join(real(normalizePath(env.workdir)), '.amber')) throw new Error(`${d} 不是 workdir 里的目录`);
+      let madeIgnore = false;
+      try { writeFileSync(join(d, '.gitignore'), '*\n', { flag: 'wx' }); madeIgnore = true; } catch { /* there already */ }
+      const k = `${envKeyOf(name)}\n`;
+      let cur = '';
+      try { if (lstatSync(f).isFile()) cur = readFileSync(f, 'utf8'); } catch { /* not there yet */ }
+      const wrote = cur !== k;
+      if (wrote) writeFresh(f, k);
+      // The bot could swap .amber for a link between the check and the writes: whatever landed elsewhere is removed.
+      if (real(d) !== join(real(normalizePath(env.workdir)), '.amber')) {
+        // Only what this pass created there (never a file that was already in that directory).
+        for (const x of [...(wrote ? [f] : []), ...(madeIgnore ? [join(d, '.gitignore')] : [])]) try { unlinkSync(x); } catch { /* gone */ }
+        throw new Error(`${d} 在写入时被换成了链接`);
+      }
+    } catch (e) { log('environment key not written', name, e.message); }
+  }
+}
+
+/** Does the job's envProof show its draft came from inside the environment? (see writeEnvKeys) */
+export function checkEnvProof(cfg, payload) {
+  const env = cfg.envs?.[payload.env], s = payload.spec?.script;
+  if (!env || !keyUsable(cfg, payload.env) || typeof payload.envProof !== 'string' || !/^[0-9a-f]{64}$/.test(payload.envProof) || typeof s?.code !== 'string') return false;
+  const msg = `amber-env-proof:v1\n${s.env}\n${createHash('sha256').update(s.code, 'utf8').digest('hex')}`;
+  const want = createHmac('sha256', envKeyOf(payload.env)).update(msg).digest();
+  return timingSafeEqual(want, Buffer.from(payload.envProof, 'hex'));
+}
+
 /** Re-reads envs/; true when anything changed (the caller re-registers; Amber applies or asks for approval). */
 export function refreshEnvs(cfg) {
+  writeEnvKeys(cfg);
   const next = loadEnvs();
   if (JSON.stringify(next) === JSON.stringify(cfg.envs ?? {})) return false;
   log('environments changed:', Object.keys(next).join(', ') || 'none');
   cfg.envs = next;
+  writeEnvKeys(cfg);
   return true;
 }
 

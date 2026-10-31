@@ -4,11 +4,11 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, execFile, execFileSync, type ChildProcess } from 'node:child_process';
 import { promisify } from 'node:util';
-import { mkdirSync, writeFileSync, rmSync, readFileSync, realpathSync } from 'node:fs';
+import { mkdirSync, writeFileSync, rmSync, readFileSync, realpathSync, existsSync, symlinkSync, readdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { generateKeyPairSync } from 'node:crypto';
+import { generateKeyPairSync, createHmac, createHash } from 'node:crypto';
 import { makeEnv, activate, button, script, GROUP, claimsService } from './env.ts';
 import { FakeFeishu } from './fake-feishu.ts';
 import { sealJob, openJob, newExecutorKeys, keyFromPem, pubB64, signRequest, specHashOf, fingerprint, showFingerprint } from '../src/exec-proto.ts';
@@ -802,4 +802,131 @@ test('relay: a ticket is swapped for a token signed at that moment, once; unknow
     assert.deepEqual(issued, [['demo', 2]], 'a token is signed only for an accepted ticket');
     hub.finish('j-grant', { ok: true, content: '' });
   } finally { await env.close(); svc.close(); }
+});
+
+test('environment proof: a draft from inside a botmux environment may go live for self-use; anything else is reviewed', async () => {
+  const env = await makeEnv({ selfUse: { services: [] } });
+  const base = join(H, `.amber-envproof-${process.pid}`);
+  const dir = join(base, 'conf'), data = join(base, 'bot'), other = join(base, 'other');
+  mkdirSync(data, { recursive: true });
+  mkdirSync(other, { recursive: true });
+  let child: ChildProcess | undefined;
+  let out = '';
+  try {
+    const { alice, fake } = env;
+    env.amber.hub.pollWaitMs = 1500;
+    const url = `http://127.0.0.1:${env.apiPort}`;
+    await cli(dir, 'init', '--name', 'bot-box', '--amber', url);
+    const def = join(base, 'env.json');
+    writeFileSync(def, JSON.stringify({ name: '机器人', workdir: data, source: 'botmux:cli_bot' }));
+    await cli(dir, 'env', 'import', def);
+    writeFileSync(def, JSON.stringify({ name: '手写', workdir: other, source: 'test:hand' }));
+    await cli(dir, 'env', 'import', def);
+    child = spawn(process.execPath, [EXE, 'run'], { env: { ...process.env, AMBER_EXECUTOR_DIR: dir } });
+    child.stdout!.on('data', b => { out += b; });
+    child.stderr!.on('data', b => { out += b; });
+    const reg = await env.waitFor(() => fake.sent.find(s => s.to.unionId === alice.unionId && /执行端申请登记/.test(FakeFeishu.text(s.card))));
+    await env.click(alice, reg.id, button(reg.card, 'exe_ok')!);
+    await env.waitFor(() => /approved; waiting/.test(out));
+    // The bot's environment gets its key in its workdir (owner-only); the hand-made one gets none.
+    const keyFile = join(data, '.amber', 'env-机器人.key');
+    assert.equal(existsSync(keyFile), true);
+    assert.equal(execFileSync('stat', ['-f', '%Lp', keyFile], { encoding: 'utf8' }).trim(), '600');
+    assert.equal(readFileSync(join(data, '.amber', '.gitignore'), 'utf8'), '*\n');
+    assert.equal(existsSync(join(other, '.amber')), false);
+    const key = readFileSync(keyFile, 'utf8').trim();
+    const proof = (ref: string, code: string, k = key) => createHmac('sha256', k).update(`amber-env-proof:v1\n${ref}\n${createHash('sha256').update(code).digest('hex')}`).digest('hex');
+
+    // The agent's `amber submit` finds the key through the environment's workdir and signs the draft.
+    const code = 'import os\nprint("in", os.path.basename(os.environ["WORKDIR"]))';
+    const draftFile = join(base, 'draft.json');
+    writeFileSync(draftFile, JSON.stringify({ chatId: GROUP, chatType: 'group', name: '自己环境', params: [], script: { kind: 'script', lang: 'python', code, env: 'bot-box/机器人' } }));
+    const sub = spawn('python3', [join(ROOT, 'client', 'amber'), 'submit', draftFile], { env: { ...process.env, AMBER_URL: url, AMBER_LABEL: 'TestBot', BOTMUX_CHAT_ID: '', AMBER_ENV_KEY: '' } });
+    let subOut = '', subErr = '';
+    sub.stdout.on('data', d => { subOut += d; });
+    sub.stderr.on('data', d => { subErr += d; });
+    assert.equal(await new Promise<number>(res => sub.on('close', c => res(c ?? -1))), 0, subErr);
+    const id = /已提交草稿 (\S+)，/.exec(subOut)![1];
+    assert.equal(env.amber.store.getMeta(id).envProof, proof('bot-box/机器人', code));
+    const tryIt = async (cid: string) => {
+      const mid = env.amber.store.getMeta(cid).claimMessageId!;
+      await env.click(alice, mid, { a: 'claim_try', c: cid });
+      return await env.waitFor(() => button(fake.cardOf(mid), 'claim_submit') && fake.cardOf(mid));
+    };
+    const card = await tryIt(id);
+    assert.match(FakeFeishu.text(card), /in bot/);
+    assert.match(FakeFeishu.text(card), /是提交它的 agent 自己的环境/);
+    assert.ok(button(card, 'claim_self'));
+    await env.click(alice, env.amber.store.getMeta(id).claimMessageId!, { a: 'claim_self', c: id });
+    assert.equal(env.amber.store.getCommand(id)!.status, 'active');
+    assert.equal(env.amber.store.getCommand(id)!.selfApproved, true);
+
+    // A wrong proof, a proof for other code, a proof for a hand-made environment, or none: reviewed.
+    const cases: [string, string, string | undefined][] = [
+      ['伪造', 'bot-box/机器人', 'a'.repeat(64)],
+      ['别的代码', 'bot-box/机器人', proof('bot-box/机器人', 'print(2)')],
+      ['手写环境', 'bot-box/手写', proof('bot-box/手写', code)],
+      ['没证明', 'bot-box/机器人', undefined],
+    ];
+    for (const [name, ref, envProof] of cases) {
+      const r = await env.submit({ chatId: GROUP, chatType: 'group', name, params: [], script: { kind: 'script', lang: 'python', code, env: ref }, ...(envProof ? { envProof } : {}) });
+      assert.equal(r.ok, true, JSON.stringify(r));
+      const c = await tryIt(r.id);
+      assert.equal(button(c, 'claim_self'), undefined, name);
+      assert.match(JSON.stringify(await env.click(alice, r.claimMessageId, { a: 'claim_self', c: r.id })), /需要审核/, name);
+    }
+    // Amber checks the environment too: even an executor that vouched for a hand-made environment would not do.
+    const hand = env.amber.store.listAll().find((c: any) => c.name === '手写环境')!;
+    env.amber.store.setMeta(hand.id, { envProven: env.amber.store.getMeta(id).envProven! });
+    assert.equal(env.amber.bot.flow.selfUseAllowed(hand), false);
+    const own = env.amber.store.listAll().find((c: any) => c.name === '没证明')!;
+    env.amber.store.setMeta(own.id, { envProven: env.amber.store.getMeta(id).envProven! });
+    assert.equal(env.amber.bot.flow.selfUseAllowed(own), true, 'control: the same check passes for the bot environment');
+  } finally {
+    child?.kill('SIGKILL');
+    await env.close();
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('environment keys: none where another environment can read them, and never written through a link', () => {
+  const base = join(H, `.amber-envkeys-${process.pid}`);
+  const dir = join(base, 'conf'), a = join(base, 'a'), b = join(base, 'b'), c = join(base, 'c'), outside = join(base, 'outside');
+  for (const d of [dir, a, b, c, outside]) mkdirSync(d, { recursive: true });
+  symlinkSync(outside, join(c, '.amber'));
+  try {
+    const run = (envs: object, home?: string) => JSON.parse(execFileSync(process.execPath, ['--input-type=module', '-e', `
+      const m = await import(${JSON.stringify(EXE)});
+      ${home ? `(await import(${JSON.stringify(join(dirname(EXE), 'lib', 'sandbox-policy.mjs'))})).setSandboxContext({ home: ${JSON.stringify(home)}, configDir: ${JSON.stringify(dir)} });` : ''}
+      const cfg = { name: 'x', envs: ${JSON.stringify(envs)} };
+      m.writeEnvKeys(cfg);
+      console.log('RESULT ' + JSON.stringify(Object.fromEntries(Object.keys(cfg.envs).map(k => [k, m.envKeyExposed(cfg, k)]))));`], { env: { ...process.env, AMBER_EXECUTOR_DIR: dir }, encoding: 'utf8' }).split('RESULT ').pop()!);
+    // b's access reaches a's workdir: a gets no key (and one written earlier is taken back); b itself is fine.
+    assert.deepEqual(run({ A: { workdir: a, source: 'botmux:a' } }), { A: false });
+    assert.equal(existsSync(join(a, '.amber', 'env-A.key')), true);
+    assert.deepEqual(run({ A: { workdir: a, source: 'botmux:a' }, B: { workdir: b, source: 'botmux:b', access: { readWrite: ['{WORKDIR}'], readOnly: [base] } } }), { A: true, B: false });
+    assert.equal(existsSync(join(a, '.amber', 'env-A.key')), false);
+    assert.equal(existsSync(join(b, '.amber', 'env-B.key')), true);
+    // A grant of just the key file is enough to expose it.
+    assert.deepEqual(run({ A: { workdir: a, source: 'botmux:a' }, B: { workdir: b, source: 'test:b', access: { readWrite: ['{WORKDIR}'], readOnly: [join(a, '.amber', 'env-A.key')] } } }), { A: true, B: false });
+    // A deeper deny keeps it closed again.
+    assert.deepEqual(run({ A: { workdir: a, source: 'botmux:a' }, B: { workdir: b, source: 'botmux:b', access: { readWrite: ['{WORKDIR}'], readOnly: [base], deny: [join(a, '.amber')] } } }), { A: false, B: false });
+    assert.equal(existsSync(join(a, '.amber', 'env-A.key')), true);
+    // .amber is a link the bot made: nothing is written where it points.
+    run({ C: { workdir: c, source: 'botmux:c' } });
+    assert.deepEqual(readdirSync(outside), []);
+    // Every sandbox can read the toolchain dirs under the home directory (~/go …): a workdir there is exposed too.
+    const g = join(base, 'go', 'proj');
+    mkdirSync(g, { recursive: true });
+    assert.deepEqual(run({ G: { workdir: g, source: 'botmux:g' }, H: { workdir: b, source: 'test:h' } }, base), { G: true, H: false });
+    assert.equal(existsSync(join(g, '.amber', 'env-G.key')), false);
+    // A link at the temporary file's name is not followed either.
+    const d = join(base, 'd'), victim = join(outside, 'victim');
+    mkdirSync(join(d, '.amber'), { recursive: true });
+    writeFileSync(victim, 'orig');
+    symlinkSync(victim, join(d, '.amber', 'env-D.key.tmp'));
+    run({ D: { workdir: d, source: 'botmux:d' } });
+    assert.equal(readFileSync(victim, 'utf8'), 'orig');
+    assert.match(readFileSync(join(d, '.amber', 'env-D.key'), 'utf8'), /^[0-9a-f]{64}\n$/);
+  } finally { rmSync(base, { recursive: true, force: true }); }
 });

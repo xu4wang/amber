@@ -219,11 +219,13 @@ export class Store {
       ['approval_instance', 'TEXT'],     // Feishu approval instance code for the pending revision
       ['review_doc_url', 'TEXT'],        // wiki doc with the full code of the pending revision
       ['review_doc_id', 'TEXT'],
-      ['replaces', 'TEXT'],
+      ['replaces', 'TEXT'],              // id of the active command this draft is a new version of (D38)
       ['line', 'TEXT'],                  // the command's line (#4); NULL = its name
       ['app_id', 'TEXT'],                // a Store installation: the app and version it was installed from (#4)
       ['app_version', 'INTEGER'],
-      ['self_approved', 'INTEGER NOT NULL DEFAULT 0'],   // live without review, for its creator only (self-use)              // id of the active command this draft is a new version of (D38)
+      ['self_approved', 'INTEGER NOT NULL DEFAULT 0'],   // live without review, for its creator only (self-use)
+      ['env_proof', 'TEXT'],             // draft's HMAC proving it came from inside its environment (self-use)
+      ['env_proven', 'TEXT'],            // '1' = the executor confirmed env_proof on the latest successful trial
     ] as const) if (!cols.includes(col)) this.db.exec(`ALTER TABLE commands ADD COLUMN ${col} ${ddl}`);
     // One active command per line per chat (#4; a submitted command's line is its name). A new version
     // (draft/pending) may exist next to it (D38). Store installations have lines of their own.
@@ -556,9 +558,11 @@ export class Store {
     return (this.db.prepare('SELECT * FROM commands ORDER BY created_at').all() as Record<string, unknown>[]).map(r => this.toRow(r));
   }
 
-  getMeta(id: string): { expectedClaimer?: string; trialBy?: string; claimMessageId?: string; originMessageId?: string; ownerOpenId?: string; submittedBy?: string; replaces?: string } {
-    const r = this.db.prepare('SELECT expected_claimer, trial_by, claim_message_id, origin_message_id, owner_open_id, submitted_by, replaces FROM commands WHERE id = ?').get(id) as Record<string, unknown> | undefined;
+  getMeta(id: string): { expectedClaimer?: string; trialBy?: string; claimMessageId?: string; originMessageId?: string; ownerOpenId?: string; submittedBy?: string; replaces?: string; envProof?: string; envProven?: string } {
+    const r = this.db.prepare('SELECT expected_claimer, trial_by, claim_message_id, origin_message_id, owner_open_id, submitted_by, replaces, env_proof, env_proven FROM commands WHERE id = ?').get(id) as Record<string, unknown> | undefined;
     return {
+      envProof: (r?.env_proof as string) || undefined,
+      envProven: (r?.env_proven as string) || undefined,
       replaces: (r?.replaces as string) || undefined,
       expectedClaimer: (r?.expected_claimer as string) || undefined,
       trialBy: (r?.trial_by as string) || undefined,
@@ -569,8 +573,8 @@ export class Store {
     };
   }
 
-  setMeta(id: string, m: { expectedClaimer?: string | null; trialBy?: string | null; claimMessageId?: string | null; originMessageId?: string | null; submittedBy?: string | null; ownerUnionId?: string; ownerOpenId?: string | null; replaces?: string | null }): void {
-    const map: Record<string, string> = { replaces: 'replaces', expectedClaimer: 'expected_claimer', trialBy: 'trial_by', claimMessageId: 'claim_message_id', originMessageId: 'origin_message_id', submittedBy: 'submitted_by', ownerUnionId: 'owner_union_id', ownerOpenId: 'owner_open_id' };
+  setMeta(id: string, m: { expectedClaimer?: string | null; trialBy?: string | null; claimMessageId?: string | null; originMessageId?: string | null; submittedBy?: string | null; ownerUnionId?: string; ownerOpenId?: string | null; replaces?: string | null; envProof?: string | null; envProven?: string | null }): void {
+    const map: Record<string, string> = { envProof: 'env_proof', envProven: 'env_proven', replaces: 'replaces', expectedClaimer: 'expected_claimer', trialBy: 'trial_by', claimMessageId: 'claim_message_id', originMessageId: 'origin_message_id', submittedBy: 'submitted_by', ownerUnionId: 'owner_union_id', ownerOpenId: 'owner_open_id' };
     for (const [k, v] of Object.entries(m)) {
       if (v === undefined) continue;
       this.db.prepare(`UPDATE commands SET ${map[k]} = ? WHERE id = ?`).run(v, id);

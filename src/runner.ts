@@ -81,7 +81,8 @@ export interface ScriptInput {
   larkUser?: { accessToken: string; appId: string; expiresAt: number; env: Record<string, string>; cli?: string; missingScopes?: string[] };
 }
 
-export interface ScriptResult { ok: boolean; content: string; error?: string }
+/** envProven: the executor checked the job's envProof (self-use without review) and it held. */
+export interface ScriptResult { ok: boolean; content: string; error?: string; envProven?: boolean }
 
 export function validateScript(s: unknown): Script {
   const x = s as Record<string, unknown>;

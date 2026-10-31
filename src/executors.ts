@@ -284,7 +284,7 @@ export class ExecutorHub {
     // Late, unknown or someone else's: ignored (the run has already failed or belongs elsewhere).
     if (!j || j.executorId !== e.id || !j.picked) return { ok: false };
     const content = typeof b.content === 'string' ? b.content.slice(0, 300 * 1024) : '';
-    this.finish(b.jobId, b.ok === true ? { ok: true, content } : { ok: false, content: '', error: `执行端：${String(b.error ?? '失败').slice(0, 1000)}` });
+    this.finish(b.jobId, b.ok === true ? { ok: true, content, ...(b.envProven === true ? { envProven: true } : {}) } : { ok: false, content: '', error: `执行端：${String(b.error ?? '失败').slice(0, 1000)}` });
     return { ok: true };
   }
 
@@ -398,7 +398,7 @@ export class ExecutorHub {
 
   /** Runs a remote command: never on Amber's machine. */
   /** `allowHosts`: the global network allow list (every environment); the executor adds the environment's own. */
-  async run(script: Script, spec: { name: string; params: unknown; script: unknown; options: unknown }, specHash: string, input: ScriptInput, opts: { allowHosts?: string[]; grant?: CallGrant } = {}): Promise<ScriptResult> {
+  async run(script: Script, spec: { name: string; params: unknown; script: unknown; options: unknown }, specHash: string, input: ScriptInput, opts: { allowHosts?: string[]; grant?: CallGrant; envProof?: string } = {}): Promise<ScriptResult> {
     const p = parseEnv(script.env ?? '');
     if (!p) return { ok: false, content: '', error: '执行位置（env）写得不对' };
     const e = this.store.approvedExecutor(p.executor);
@@ -410,7 +410,7 @@ export class ExecutorHub {
     // script.timeoutMs is already the effective limit for this run (engine.ts); the executor is told it too.
     const timeoutMs = (script.timeoutMs ?? 60000) + RESULT_GRACE_MS;
     // Services: only the tokens travel (engine.ts); the executor gives the script a relay port and relays the calls here.
-    const envelope = this.signer.sealJob(e.id, e.boxPub, jobId, this.pickupMs * 2, { jobId, runId: input.runId, env: p.env, spec, specHash, input, timeoutMs: script.timeoutMs, allowHosts: opts.allowHosts ?? [] });
+    const envelope = this.signer.sealJob(e.id, e.boxPub, jobId, this.pickupMs * 2, { jobId, runId: input.runId, env: p.env, spec, specHash, input, timeoutMs: script.timeoutMs, allowHosts: opts.allowHosts ?? [], ...(opts.envProof ? { envProof: opts.envProof } : {}) });
     this.store.audit(input.caller.unionId, 'executor.dispatch', { runId: input.runId, executor: e.id, name: e.name, env: p.env, jobId });
     return await new Promise<ScriptResult>(resolve => {
       const calls = Object.fromEntries(Object.entries(script.services ?? {}).map(([n, u]) => [n, u.calls]));
