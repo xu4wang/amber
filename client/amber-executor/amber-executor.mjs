@@ -499,11 +499,13 @@ export function envKeyExposed(cfg, name) {
   const f = real(join(normalizePath(cfg.envs[name].workdir), '.amber'));
   for (const [other, o] of Object.entries(cfg.envs ?? {})) {
     if (other === name) continue;
-    let a;
-    try { const w = normalizePath(o.workdir); a = validateEnvAccess(o.access ?? { readWrite: [w] }, { workdir: w }); } catch { return true; }
-    const deny = (a.deny ?? []).map(real);
-    // A deny at or below the allowing root, covering the key, wins (as in the sandbox: the deeper rule wins).
-    if ([...(a.readWrite ?? []), ...(a.readOnly ?? [])].map(real).some(r => (inside(f, r) || inside(r, f)) && !deny.some(d => inside(f, d) && inside(d, r)))) return true;
+    // That environment's whole sandbox policy, baseline grants included (the same rules a run gets).
+    let rules;
+    try { const w = normalizePath(o.workdir); rules = buildPolicy({ runDir: join(DIR, 'no-run'), access: validateEnvAccess(o.access ?? { readWrite: [w] }, { workdir: w }) }).rules; } catch { return true; }
+    // The deepest rule covering .amber decides (as in the sandbox); any readable rule below it opens part of it.
+    const cover = rules.filter(r => inside(f, real(r.path))).sort((x, y) => y.path.length - x.path.length)[0];
+    if (cover && cover.access !== 'deny') return true;
+    if (rules.some(r => r.access !== 'deny' && inside(real(r.path), f) && real(r.path) !== f)) return true;
   }
   return false;
 }

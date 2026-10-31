@@ -902,8 +902,9 @@ test('environment keys: none where another environment can read them, and never 
   for (const d of [dir, a, b, c, outside]) mkdirSync(d, { recursive: true });
   symlinkSync(outside, join(c, '.amber'));
   try {
-    const run = (envs: object) => JSON.parse(execFileSync(process.execPath, ['--input-type=module', '-e', `
+    const run = (envs: object, home?: string) => JSON.parse(execFileSync(process.execPath, ['--input-type=module', '-e', `
       const m = await import(${JSON.stringify(EXE)});
+      ${home ? `(await import(${JSON.stringify(join(dirname(EXE), 'lib', 'sandbox-policy.mjs'))})).setSandboxContext({ home: ${JSON.stringify(home)}, configDir: ${JSON.stringify(dir)} });` : ''}
       const cfg = { name: 'x', envs: ${JSON.stringify(envs)} };
       m.writeEnvKeys(cfg);
       console.log('RESULT ' + JSON.stringify(Object.fromEntries(Object.keys(cfg.envs).map(k => [k, m.envKeyExposed(cfg, k)]))));`], { env: { ...process.env, AMBER_EXECUTOR_DIR: dir }, encoding: 'utf8' }).split('RESULT ').pop()!);
@@ -913,12 +914,19 @@ test('environment keys: none where another environment can read them, and never 
     assert.deepEqual(run({ A: { workdir: a, source: 'botmux:a' }, B: { workdir: b, source: 'botmux:b', access: { readWrite: ['{WORKDIR}'], readOnly: [base] } } }), { A: true, B: false });
     assert.equal(existsSync(join(a, '.amber', 'env-A.key')), false);
     assert.equal(existsSync(join(b, '.amber', 'env-B.key')), true);
+    // A grant of just the key file is enough to expose it.
+    assert.deepEqual(run({ A: { workdir: a, source: 'botmux:a' }, B: { workdir: b, source: 'test:b', access: { readWrite: ['{WORKDIR}'], readOnly: [join(a, '.amber', 'env-A.key')] } } }), { A: true, B: false });
     // A deeper deny keeps it closed again.
     assert.deepEqual(run({ A: { workdir: a, source: 'botmux:a' }, B: { workdir: b, source: 'botmux:b', access: { readWrite: ['{WORKDIR}'], readOnly: [base], deny: [join(a, '.amber')] } } }), { A: false, B: false });
     assert.equal(existsSync(join(a, '.amber', 'env-A.key')), true);
     // .amber is a link the bot made: nothing is written where it points.
     run({ C: { workdir: c, source: 'botmux:c' } });
     assert.deepEqual(readdirSync(outside), []);
+    // Every sandbox can read the toolchain dirs under the home directory (~/go …): a workdir there is exposed too.
+    const g = join(base, 'go', 'proj');
+    mkdirSync(g, { recursive: true });
+    assert.deepEqual(run({ G: { workdir: g, source: 'botmux:g' }, H: { workdir: b, source: 'test:h' } }, base), { G: true, H: false });
+    assert.equal(existsSync(join(g, '.amber', 'env-G.key')), false);
     // A link at the temporary file's name is not followed either.
     const d = join(base, 'd'), victim = join(outside, 'victim');
     mkdirSync(join(d, '.amber'), { recursive: true });
