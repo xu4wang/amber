@@ -358,6 +358,35 @@ def fmt_params(c):
     return "\n".join(lines) or "  （无参数）"
 
 
+
+def env_proof(script):
+    """A draft that runs in an environment: prove it comes from inside that environment, for self-use without review.
+    The executor keeps the environment's key in its workdir (<workdir>/.amber/env-<name>.key), so only what can read the
+    workdir — the agent whose sandbox the environment is — can sign. HMAC of the environment and the code; the executor
+    checks it on the trial run. No key readable here: no proof, and the app goes to review as before."""
+    env, code = script.get("env"), script.get("code")
+    if not isinstance(env, str) or "/" not in env or not isinstance(code, str):
+        return None
+    name = env.split("/", 1)[1]
+    paths = [os.environ["AMBER_ENV_KEY"]] if os.environ.get("AMBER_ENV_KEY") else []
+    try:
+        for ex in call("GET", "/v1/envs").get("executors") or []:
+            for e in ex.get("envs") or []:
+                if e.get("ref") == env and e.get("workdir"):
+                    paths.append(os.path.join(os.path.expanduser(e["workdir"]), ".amber", "env-%s.key" % name))
+    except BaseException:
+        pass
+    for p in paths:
+        try:
+            with open(p, encoding="utf-8") as f:
+                key = f.read().strip()
+        except OSError:
+            continue
+        msg = "amber-env-proof:v1\n%s\n%s" % (env, hashlib.sha256(code.encode("utf-8")).hexdigest())
+        return hmac.new(key.encode("utf-8"), msg.encode("utf-8"), hashlib.sha256).hexdigest()
+    return None
+
+
 def main(argv):
     opts, pos, args = parse(argv)
     if not pos:
@@ -430,6 +459,9 @@ def main(argv):
         label = opts.get("label") or os.environ.get("AMBER_LABEL")
         if label:
             draft["submittedBy"] = label
+        proof = env_proof(sc)
+        if proof:
+            draft["envProof"] = proof
         r = call("POST", "/v1/drafts", draft)
         return out(r, opts, "已提交草稿 %s，Amber 已发出认领卡。" % r.get("id"))
     if cmd == "wait":

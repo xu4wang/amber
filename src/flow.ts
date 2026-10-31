@@ -8,7 +8,7 @@ import { randomUUID } from 'node:crypto';
 import type { Store, CommandRow, ParamDef, Script, CommandOptions } from './db.ts';
 import { normalizeOptions } from './db.ts';
 import { computeSpecHash } from './db.ts';
-import { validateScript, describeServices } from './runner.ts';
+import { validateScript, describeServices, parseEnv } from './runner.ts';
 import { getLimits, fmtDuration, LONG_RUN_MS } from './limits.ts';
 import { describeSecrets } from './secrets.ts';
 import type { FeishuReview } from './feishu-review.ts';
@@ -38,6 +38,9 @@ export interface DraftInput {
   machine?: string;
   /** Proposed by the submitter; approved together with the code (D30). */
   options?: Partial<CommandOptions>;
+  /** Drafts with script.env: HMAC (hex) of the environment and the code with the environment's key, which only
+   *  something inside the environment can read (amber submit adds it). Checked by the executor on the trial run. */
+  envProof?: string;
 }
 
 function shell(title: string, template: string, elements: unknown[]): object {
@@ -139,7 +142,7 @@ export function claimCard(c: CommandRow, trial?: { by?: string; blocks?: Block[]
   const buttons: unknown[] = [];
   // Self-use: an app that reaches nothing beyond what its creator's agent already can may go live for them alone.
   if (trial?.blocks && trial.selfUse) {
-    els.push({ tag: 'markdown', content: '<font color="grey">这个应用没有用到个人飞书身份、密钥、外网、执行端环境或其他需要审核的服务，可以「直接生效（仅自己用）」：只有你本人能执行，不能设为全局、上架、复制或转给别人。要给别人用就「提交审核」。</font>' });
+    els.push({ tag: 'markdown', content: (c.script.env ? `<font color="grey">执行位置 ${sanitizeMarkdown(c.script.env, 80)} 是提交它的 agent 自己的环境（试运行时已验证），不算扩权。</font>\n` : '') + '<font color="grey">这个应用没有用到个人飞书身份、密钥、外网或其他需要审核的服务，可以「直接生效（仅自己用）」：只有你本人能执行，不能设为全局、上架、复制或转给别人。要给别人用就「提交审核」。</font>' });
     buttons.push(btn('直接生效（仅自己用）', { a: 'claim_self', c: c.id }, 'primary'));
     buttons.push(btn('提交审核', { a: 'claim_submit', c: c.id }));
   } else if (trial?.blocks) buttons.push(btn('提交审核', { a: 'claim_submit', c: c.id }, 'primary'));
@@ -343,6 +346,8 @@ export class Flow {
       scopeType: d.chatType, chatId: d.chatId, ownerUnionId: expectedClaimer ?? '', name: d.name, description: d.description ?? '',
       params: d.params ?? [], script: d.script, options, status: 'draft', line,
     });
+    if (d.envProof !== undefined && (typeof d.envProof !== 'string' || !/^[0-9a-f]{64}$/.test(d.envProof))) throw new AmberError('bad_env_proof', 'envProof 格式不对');
+    if (d.script.env && d.envProof) this.store.setMeta(row.id, { envProof: d.envProof });
     this.store.setMeta(row.id, { expectedClaimer: expectedClaimer ?? null, originMessageId: d.originMessageId ?? null, submittedBy: d.submittedBy ?? null, replaces: prev?.id ?? null });
     this.store.audit(null, 'draft.submit', { id: row.id, name: row.name, chatId: row.chatId, chatType: d.chatType, submittedBy: d.submittedBy, machine: d.machine ?? null, specHash: row.specHash, replaces: prev?.id ?? null });
     // Group: claim card in the group (only members can click). p2p: Amber can't enter the agent's DM, so the claim card goes to the claimer's DM with Amber.
@@ -452,10 +457,19 @@ export class Flow {
   /** May this draft go live without review, for its claimer's own use? Not a new version of a global or listed app:
    *  others run those, so their new versions are reviewed. */
   selfUseAllowed(c: CommandRow): boolean {
-    if (!this.selfUseServices || selfUseBlockers(c.script, this.selfUseServices).length) return false;
+    if (!this.selfUseServices || selfUseBlockers(c.script, this.selfUseServices, { envProven: this.envProvenFor(c) }).length) return false;
     const r = this.store.getMeta(c.id).replaces;
     const prev = r ? this.store.getCommand(r) : undefined;
     return !(prev && (prev.global || this.isListed(prev)));
+  }
+
+  /** The draft runs in an environment it proved it came from (its executor confirmed the proof on the latest successful
+   *  trial), and that environment is a botmux bot's exported sandbox on an approved executor: the agent's own reach. */
+  envProvenFor(c: CommandRow): boolean {
+    const p = c.script.env ? parseEnv(c.script.env) : undefined;
+    if (!p || !this.store.getMeta(c.id).envProven) return false;
+    const env = this.store.approvedExecutor(p.executor)?.envs[p.env];
+    return typeof env?.source === 'string' && env.source.startsWith('botmux:');
   }
 
   /** Called after a version is activated: retire the version it replaced and hand over (D38). */
@@ -496,11 +510,11 @@ export class Flow {
     if (action === 'claim_try') {
       // Only the latest trial counts: a failed one takes back an earlier success, so the submit button
       // (and the fallback card when Feishu refuses the result card) follow the current attempt.
-      this.store.setMeta(c.id, { trialBy: null });
+      this.store.setMeta(c.id, { trialBy: null, envProven: null });
       try {
-        const r = await runCommand(this.store, c, form, caller, facts, { trial: true });
+        const r = await runCommand(this.store, c, form, caller, facts, { trial: true, envProof: meta.envProof });
         if (!r.ok) return claimCard(c, { error: r.error }, meta.submittedBy, this.prevOf(c.id));
-        this.store.setMeta(c.id, { trialBy: caller.unionId });
+        this.store.setMeta(c.id, { trialBy: caller.unionId, envProven: r.envProven ? 1 : null });
         return claimCard(c, { by: caller.openId, blocks: r.blocks, selfUse: this.selfUseAllowed(c) }, meta.submittedBy, this.prevOf(c.id));
       } catch (e) {
         return claimCard(c, { error: e instanceof AmberError ? e.message : (e as Error).message }, meta.submittedBy, this.prevOf(c.id));
