@@ -95,6 +95,7 @@ export class AmberBot {
     this.ws = (inject.ws as lark.WSClient) ?? new lark.WSClient({ appId: cfg.appId, appSecret: cfg.appSecret, loggerLevel: lark.LoggerLevel.warn });
     this.signer = new Signer(cfg.configDir);
     this.flow = new Flow(this.client, store, cfg.reviewers);
+    this.flow.policy = cfg.reviewPolicy ?? 'all';
     this.flow.signer = this.signer;
     this.flow.review = new FeishuReview(this.client, { approval: cfg.approval, wiki: cfg.wiki });
     this.flow.nameOf = (u: string) => this.nameOf(u);
