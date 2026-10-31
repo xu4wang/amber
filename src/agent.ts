@@ -8,7 +8,7 @@
 import { randomUUID } from 'node:crypto';
 import type { Store, CommandRow, RequestRow, RequestKind, ScopeType } from './db.ts';
 import type { Caller, Block } from './engine.ts';
-import { ENV_NOT_GLOBAL, visibleCommands, findVisible, findManageable, runCommand, validateArgs, AmberError, missingSecrets, secretVault, lineOf, runParams, configParams, configValues, missingConfig, missingConfigMessage } from './engine.ts';
+import { ENV_NOT_GLOBAL, SELF_USE_ONLY, visibleCommands, findVisible, findManageable, runCommand, validateArgs, AmberError, missingSecrets, secretVault, lineOf, runParams, configParams, configValues, missingConfig, missingConfigMessage } from './engine.ts';
 import type { Signer } from './identity.ts';
 import { checkPublicKey, seal, READ_INFO, type SealedBox } from './secret-box.ts';
 import { requestCard, agentReadDoneCard, runningCard, resultCard, errorCard, closedCard, person, sanitizeMarkdown, type Mentions } from './cards.ts';
@@ -215,6 +215,7 @@ export class AgentGate {
       if (!allowed) throw new AmberError('forbidden', kind === 'retire' ? '只有应用的创建人或管理员可以下线' : '只有管理员可以修改应用的执行范围');
     }
     if (kind === 'scope_global' && cmd.script.env) throw new AmberError('env_not_global', ENV_NOT_GLOBAL);
+    if (kind === 'scope_global' && cmd.selfApproved) throw new AmberError('self_use', SELF_USE_ONLY);
     if (kind === 'scope_global' && cmd.global) throw new AmberError('not_needed', `「${cmd.name}」已经是全局应用`);
     if (kind === 'scope_local' && !cmd.global) throw new AmberError('not_needed', `「${cmd.name}」本来就只在创建处可用`);
     if (kind === 'scope_global' && this.store.listActiveGlobal().some(g => g.name === cmd.name && g.id !== cmd.id)) throw new AmberError('conflict', `已经有一个全局应用叫「${cmd.name}」，不能重名`);
@@ -472,6 +473,7 @@ export class AgentGate {
       }
       const toGlobal = req.kind === 'scope_global';
       if (toGlobal && cmd.script.env) throw new AmberError('env_not_global', ENV_NOT_GLOBAL);
+      if (toGlobal && cmd.selfApproved) throw new AmberError('self_use', SELF_USE_ONLY);
       if (toGlobal && this.store.listActiveGlobal().some(g => g.name === cmd.name && g.id !== cmd.id)) throw new AmberError('conflict', `已经有一个全局应用叫「${cmd.name}」，不能重名`);
       this.store.setGlobal(cmd.id, toGlobal);
       this.store.audit(actor, toGlobal ? 'scope.promote' : 'scope.demote', { id: cmd.id, name: cmd.name, via: 'agent', request: req.id });

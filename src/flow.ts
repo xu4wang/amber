@@ -14,7 +14,7 @@ import { describeSecrets } from './secrets.ts';
 import type { FeishuReview } from './feishu-review.ts';
 import { emitEvent, appEvent } from './events.ts';
 import type { Caller, CallerFacts, Block } from './engine.ts';
-import { runCommand, AmberError, dropOrphanSettings, executorHub } from './engine.ts';
+import { runCommand, AmberError, dropOrphanSettings, executorHub, selfUseBlockers } from './engine.ts';
 import { sanitizeMarkdown, person, renderBlocks, buttonRow, cardFooter, withFooter } from './cards.ts';
 import { lineDiff } from './diff.ts';
 
@@ -116,7 +116,7 @@ function changePanels(c: CommandRow, prev: CommandRow): unknown[] {
   return els;
 }
 
-export function claimCard(c: CommandRow, trial?: { by?: string; blocks?: Block[]; error?: string }, submittedBy?: string, prev?: CommandRow, notifyOpenId?: string): object {
+export function claimCard(c: CommandRow, trial?: { by?: string; blocks?: Block[]; error?: string; selfUse?: boolean }, submittedBy?: string, prev?: CommandRow, notifyOpenId?: string): object {
   const who = (submittedBy ? `**${sanitizeMarkdown(submittedBy, 80)}**` : 'agent') + (notifyOpenId ? `（替 ${person(notifyOpenId)}）` : '');
   const intro = prev
     ? `${who} 提交了「${sanitizeMarkdown(c.name, 40)}」的**新版本**，等待认领。审核通过后会替换当前版本（${prev.specHash.slice(0, 8)}）。只有原创建人可以认领。\n<font color="grey">请确认这是你让 agent 做的；不认识的草稿直接点「丢弃」。</font>`
@@ -137,7 +137,12 @@ export function claimCard(c: CommandRow, trial?: { by?: string; blocks?: Block[]
   if (c.script.services?.['data-mcp']) els.push({ tag: 'markdown', content: '<font color="grey">试运行时数据服务每次查询最多返回 20 行，结果可能不全；正式执行时没有这个限制（上限 1000 行）。</font>' });
   if (c.script.secrets?.length) els.push({ tag: 'markdown', content: c.script.secretsOptional ? '<font color="grey">这个应用的密钥可以只填一部分，也可以先不填：点「设置密钥」，Amber 会私聊你填写。</font>' : '<font color="grey">这个应用需要密钥：先点「设置密钥」，Amber 会私聊你填写，再试运行。</font>' });
   const buttons: unknown[] = [];
-  if (trial?.blocks) buttons.push(btn('提交审核', { a: 'claim_submit', c: c.id }, 'primary'));
+  // Self-use: an app that reaches nothing beyond what its creator's agent already can may go live for them alone.
+  if (trial?.blocks && trial.selfUse) {
+    els.push({ tag: 'markdown', content: '<font color="grey">这个应用没有用到个人飞书身份、密钥、外网、执行端环境或其他需要审核的服务，可以「直接生效（仅自己用）」：只有你本人能执行，不能设为全局、上架、复制或转给别人。要给别人用就「提交审核」。</font>' });
+    buttons.push(btn('直接生效（仅自己用）', { a: 'claim_self', c: c.id }, 'primary'));
+    buttons.push(btn('提交审核', { a: 'claim_submit', c: c.id }));
+  } else if (trial?.blocks) buttons.push(btn('提交审核', { a: 'claim_submit', c: c.id }, 'primary'));
   // Secrets are typed in the clicker's private chat with Amber, never on this card (D48).
   if (c.script.secrets?.length) buttons.push(btn('设置密钥', { a: 'sec_form', c: c.id }));
   buttons.push(btn('丢弃', { a: 'claim_drop', c: c.id }, 'danger'));
@@ -417,7 +422,7 @@ export class Flow {
     if (!c || c.status !== 'draft') return shell('Amber', 'grey', [{ tag: 'markdown', content: '这张认领卡已失效（草稿已提交、丢弃或不存在）。' }]);
     const meta = this.store.getMeta(c.id);
     const trial = meta.trialBy === caller.unionId
-      ? { by: caller.openId, blocks: [{ kind: 'markdown' as const, text: '⚠️ 试运行成功了，但结果在飞书卡片里显示不了（飞书拒收了这张卡）。提交审核时，完整结果会写进审核文档。' }] }
+      ? { by: caller.openId, blocks: [{ kind: 'markdown' as const, text: '⚠️ 试运行成功了，但结果在飞书卡片里显示不了（飞书拒收了这张卡）。提交审核时，完整结果会写进审核文档。' }], selfUse: this.selfUseAllowed(c) }
       : { error: '试运行结果在飞书卡片里显示不了（飞书拒收了这张卡）' };
     return claimCard(c, trial, meta.submittedBy, this.prevOf(c.id));
   }
@@ -439,6 +444,18 @@ export class Flow {
     if (prev && prev.ownerUnionId !== caller.unionId) {
       throw new AmberError('not_owner', `这是「${c.name}」的新版本，只有原创建人可以认领`);
     }
+  }
+
+  /** Self-use without review (config selfUse): the services such an app may use. undefined = off. */
+  selfUseServices: string[] | undefined;
+
+  /** May this draft go live without review, for its claimer's own use? Not a new version of a global or listed app:
+   *  others run those, so their new versions are reviewed. */
+  selfUseAllowed(c: CommandRow): boolean {
+    if (!this.selfUseServices || selfUseBlockers(c.script, this.selfUseServices).length) return false;
+    const r = this.store.getMeta(c.id).replaces;
+    const prev = r ? this.store.getCommand(r) : undefined;
+    return !(prev && (prev.global || this.isListed(prev)));
   }
 
   /** Called after a version is activated: retire the version it replaced and hand over (D38). */
@@ -484,10 +501,23 @@ export class Flow {
         const r = await runCommand(this.store, c, form, caller, facts, { trial: true });
         if (!r.ok) return claimCard(c, { error: r.error }, meta.submittedBy, this.prevOf(c.id));
         this.store.setMeta(c.id, { trialBy: caller.unionId });
-        return claimCard(c, { by: caller.openId, blocks: r.blocks }, meta.submittedBy, this.prevOf(c.id));
+        return claimCard(c, { by: caller.openId, blocks: r.blocks, selfUse: this.selfUseAllowed(c) }, meta.submittedBy, this.prevOf(c.id));
       } catch (e) {
         return claimCard(c, { error: e instanceof AmberError ? e.message : (e as Error).message }, meta.submittedBy, this.prevOf(c.id));
       }
+    }
+    if (action === 'claim_self') {
+      if (meta.trialBy !== caller.unionId) throw new AmberError('trial_first', '请先由你本人试运行成功');
+      if (computeSpecHash(c) !== c.specHash) throw new AmberError('spec_mismatch', '定义已变化，请重新提交');
+      if (!this.selfUseAllowed(c)) throw new AmberError('review_required', '这个应用需要审核后才能生效，请点「提交审核」');
+      this.store.setMeta(c.id, { ownerUnionId: caller.unionId, ownerOpenId: caller.openId ?? null });
+      this.store.audit(caller.unionId, 'draft.claim', { id: c.id, specHash: c.specHash, selfUse: true });
+      this.store.setSelfApproved(c.id, true);
+      await this.activate(c, { via: 'self_use', by: caller.unionId });
+      const where = c.scopeType === 'p2p' ? '在你和 Amber 的私聊里' : '在本群 @Amber';
+      return shell(`已生效（仅自己用）：${c.name}`, 'green', [
+        { tag: 'markdown', content: `✅ ${person(caller.openId)} 已认领，应用「${sanitizeMarkdown(c.name, 40)}」已生效，**只有你本人能执行**（未经审核）。${where}发「${sanitizeMarkdown(c.name, 40)}」即可使用。\n<font color="grey">要设为全局、上架、复制或转给别人，请让 agent 重新提交并选「提交审核」。</font>` },
+      ]);
     }
     if (action === 'claim_submit') {
       if (meta.trialBy !== caller.unionId) throw new AmberError('trial_first', '请先由你本人试运行成功，再提交审核');

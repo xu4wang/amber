@@ -1,6 +1,6 @@
 import type { Store, CommandRow, ParamDef } from './db.ts';
 import { computeSpecHash } from './db.ts';
-import { serviceDef, validateScript, type ScriptInput } from './runner.ts';
+import { serviceDef, serviceNames, validateScript, type Script, type ScriptInput } from './runner.ts';
 import type { Signer } from './identity.ts';
 import { redact, type SecretVault } from './secrets.ts';
 import type { ExecutorHub, CallGrant } from './executors.ts';
@@ -127,6 +127,22 @@ export function findVisible(store: Store, caller: Caller, idOrName: string): Com
 
 /** An app that runs in an executor environment (script.env) can never be global: that would let everyone run
  *  code in a bot's environment, with whatever data it can reach. Who may use an environment is #8. */
+/** A self-use version (went live without review) is its creator's alone. */
+export const SELF_USE_ONLY = '这个版本是「仅自己用」免审生效的，只有创建人本人能执行，也不能设为全局、上架、复制或转给别人。要给别人用，请让 agent 重新提交这个应用，认领时选「提交审核」';
+
+/** Why an app cannot go live without review for its creator's own use: it would reach something its creator's agent
+ *  cannot reach on its own. Empty = it may (self-use). `services` = the services allowed without review (config). */
+export function selfUseBlockers(script: Script, services: string[]): string[] {
+  const out: string[] = [];
+  if (script.larkUser) out.push('以执行人的飞书身份运行（larkUser）');
+  if (script.secrets?.length) out.push('使用密钥');
+  if (script.network) out.push('访问外网');
+  if (script.env) out.push('在执行端环境里运行（env）');
+  const other = serviceNames(script).filter(n => !services.includes(n));
+  if (other.length) out.push(`调用服务 ${other.join('、')}`);
+  return out;
+}
+
 export const ENV_NOT_GLOBAL = '在执行端环境里运行的应用（写了 env）不能设为全局：那等于让所有人都能在这个环境里执行、访问它能访问的数据';
 
 /** For managing (take offline, change scope): what the caller can run, and for an admin also anyone's
@@ -182,6 +198,8 @@ export async function runCommand(store: Store, cmd: CommandRow, rawArgs: Record<
   try { script = validateScript(cmd.script); } catch (e) { throw new AmberError('invalid_script', `应用定义不合规，已拒绝执行：${(e as Error).message}`); }
   // Belt and braces for ENV_NOT_GLOBAL: a global app with an environment runs for its creator only.
   if (cmd.global && script.env && caller.unionId !== cmd.ownerUnionId) throw new AmberError('forbidden', ENV_NOT_GLOBAL);
+  // A self-use version runs for its creator only, however it is reached (global, a page, an agent, a schedule).
+  if (cmd.selfApproved && caller.unionId !== cmd.ownerUnionId) throw new AmberError('forbidden', SELF_USE_ONLY);
   // confirm = true: only runnable from the confirmation form, never from a one-line shortcut (D30).
   if (cmd.options.confirm && !opts.trial && !opts.viaForm) throw new AmberError('needs_confirm', '这个应用需要在表单卡片上确认后执行');
   const args = await validateArgs(runParams(cmd.params), rawArgs, facts);
