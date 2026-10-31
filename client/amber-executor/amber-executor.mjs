@@ -535,11 +535,19 @@ export function writeEnvKeys(cfg) {
       if (!existsSync(d)) mkdirSync(d, { mode: 0o700 });
       const st = lstatSync(d);
       if (!st.isDirectory() || st.isSymbolicLink() || real(d) !== join(real(normalizePath(env.workdir)), '.amber')) throw new Error(`${d} 不是 workdir 里的目录`);
-      try { writeFileSync(join(d, '.gitignore'), '*\n', { flag: 'wx' }); } catch { /* there already */ }
+      let madeIgnore = false;
+      try { writeFileSync(join(d, '.gitignore'), '*\n', { flag: 'wx' }); madeIgnore = true; } catch { /* there already */ }
       const k = `${envKeyOf(name)}\n`;
       let cur = '';
       try { if (lstatSync(f).isFile()) cur = readFileSync(f, 'utf8'); } catch { /* not there yet */ }
-      if (cur !== k) writeFresh(f, k);
+      const wrote = cur !== k;
+      if (wrote) writeFresh(f, k);
+      // The bot could swap .amber for a link between the check and the writes: whatever landed elsewhere is removed.
+      if (real(d) !== join(real(normalizePath(env.workdir)), '.amber')) {
+        // Only what this pass created there (never a file that was already in that directory).
+        for (const x of [...(wrote ? [f] : []), ...(madeIgnore ? [join(d, '.gitignore')] : [])]) try { unlinkSync(x); } catch { /* gone */ }
+        throw new Error(`${d} 在写入时被换成了链接`);
+      }
     } catch (e) { log('environment key not written', name, e.message); }
   }
 }
