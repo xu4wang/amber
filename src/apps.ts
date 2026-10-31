@@ -7,7 +7,7 @@ import { randomUUID } from 'node:crypto';
 import type { Store, CommandRow, AppRow, ListingRow } from './db.ts';
 import { computeSpecHash } from './db.ts';
 import type { Flow } from './flow.ts';
-import { specSummary, codePanels } from './flow.ts';
+import { specSummary, codePanels, reviewRuleText, reviewPassed } from './flow.ts';
 import { AmberError, visibleCommands, runParams, configParams } from './engine.ts';
 import { sanitizeMarkdown, person, buttonRow } from './cards.ts';
 import { describeServices } from './runner.ts';
@@ -31,9 +31,9 @@ const shell = (title: string, template: string, elements: unknown[]) => ({ schem
 const btn = (text: string, value: Record<string, string>, type = 'default', extra: Record<string, unknown> = {}) => ({ tag: 'button', text: { tag: 'plain_text', content: text }, type, behaviors: [{ type: 'callback', value }], ...extra });
 
 /** Without a Feishu approval configured, reviewers approve a listing on a card (like a command review). */
-export function listingReviewCard(c: CommandRow, l: ListingRow, ownerOpenId: string | undefined, state: { approved: number; total: number; mine?: 'approve' | 'reject' }): object {
+export function listingReviewCard(c: CommandRow, l: ListingRow, ownerOpenId: string | undefined, state: { approved: number; total: number; mine?: 'approve' | 'reject'; policy?: 'all' | 'any' }): object {
   const els: unknown[] = [
-    { tag: 'markdown', content: `**申请上架到 Amber Store**：上架后其他人可以安装自己的一份（自己的配置项和密钥，以自己的身份执行），安装不再审批。需要 **全部 ${state.total} 位**审核人通过，目前已通过 ${state.approved} 位。\n请额外检查：代码里有没有写死只适用于某个群或某个人的内容，这些应该改成配置项。` },
+    { tag: 'markdown', content: `**申请上架到 Amber Store**：上架后其他人可以安装自己的一份（自己的配置项和密钥，以自己的身份执行），安装不再审批。需要 **${reviewRuleText(state.policy ?? 'all', state.total)}**通过，目前已通过 ${state.approved} 位。\n请额外检查：代码里有没有写死只适用于某个群或某个人的内容，这些应该改成配置项。` },
     { tag: 'markdown', content: specSummary(c) },
     ...codePanels(c),
     { tag: 'markdown', content: `**创建人**：${person(ownerOpenId)}　**spec**：\`${c.specHash.slice(0, 12)}\`` },
@@ -107,7 +107,7 @@ export class AppStore {
     }
     const ownerOpenId = await this.deps.openIdOf(c.ownerUnionId);
     for (const r of this.flow.reviewers) {
-      try { await this.flow.send({ unionId: r }, listingReviewCard(c, l, ownerOpenId, { approved: 0, total: this.flow.reviewers.length })); }
+      try { await this.flow.send({ unionId: r }, listingReviewCard(c, l, ownerOpenId, { approved: 0, total: this.flow.reviewers.length, policy: this.flow.policy })); }
       catch (e: any) { log('listing review card failed', r.slice(0, 8), e?.response?.data?.code ?? e?.message); }
     }
     return { listingId: l.id };
@@ -124,7 +124,7 @@ export class AppStore {
     const note = async (md: string) => { if (l.docId) await review.appendMarkdown(l.docId, md).catch(e => log('doc append failed', (e as Error).message)); };
     if (inst.status === 'APPROVED') {
       const approved = new Set(inst.tasks.filter(t => t.status === 'APPROVED').map(t => t.openId));
-      const all = this.flow.reviewerOpenIds.length > 0 && this.flow.reviewerOpenIds.every(o => approved.has(o));
+      const all = reviewPassed(this.flow.policy, this.flow.reviewerOpenIds, approved);
       if (!all) { log('listing approved but not by all reviewers', l.id); this.store.audit(null, 'app.listing_check_failed', { listingId: l.id, instance }); return true; }
       await this.approve(l, 'feishu_approval');
       await note(`**${new Date().toISOString().slice(0, 16).replace('T', ' ')} UTC：飞书审批通过，已上架到 Amber Store。**`);
@@ -148,13 +148,13 @@ export class AppStore {
       if (!reason.trim()) throw new AmberError('reason_required', '驳回请填写原因');
       this.store.audit(who.unionId, 'app.listing_reject', { listingId: l.id, reason: reason.trim() });
       await this.reject(l, `审核人驳回：${reason.trim()}`);
-      return listingReviewCard(c, l, ownerOpenId, { approved: l.approvedBy.length, total: this.flow.reviewers.length, mine: 'reject' });
+      return listingReviewCard(c, l, ownerOpenId, { approved: l.approvedBy.length, total: this.flow.reviewers.length, mine: 'reject', policy: this.flow.policy });
     }
     const approvedBy = [...new Set([...l.approvedBy, who.unionId])].filter(u => this.flow.reviewers.includes(u));
     this.store.updateListing(l.id, { approvedBy });
     this.store.audit(who.unionId, 'app.listing_approve', { listingId: l.id });
-    if (this.flow.reviewers.every(r => approvedBy.includes(r))) await this.approve(this.store.getListing(l.id)!, 'card_review');
-    return listingReviewCard(c, l, ownerOpenId, { approved: approvedBy.length, total: this.flow.reviewers.length, mine: 'approve' });
+    if (reviewPassed(this.flow.policy, this.flow.reviewers, approvedBy)) await this.approve(this.store.getListing(l.id)!, 'card_review');
+    return listingReviewCard(c, l, ownerOpenId, { approved: approvedBy.length, total: this.flow.reviewers.length, mine: 'approve', policy: this.flow.policy });
   }
 
   private async approve(l: ListingRow, via: string): Promise<void> {

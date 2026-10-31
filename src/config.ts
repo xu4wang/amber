@@ -10,6 +10,8 @@ export interface AmberConfig {
   dataDir: string;
   /** Reviewer emails (D19). Resolved to union_id at runtime. */
   reviewers: string[];
+  /** How many reviewers must approve: every one (default) or any one. A rejection from any reviewer always rejects. */
+  reviewPolicy: 'all' | 'any';
   /** Admins: emails (resolved to union_id at runtime) or union_ids ("on_..."). Admins change command scope by chatting with Amber. */
   admins: string[];
   /** Local services scripts may call with an execution identity token (D27). */
@@ -62,6 +64,7 @@ export function loadConfig(): AmberConfig {
     appSecret,
     dataDir,
     reviewers: Array.isArray(fileCfg.reviewers) ? fileCfg.reviewers : [],
+    reviewPolicy: reviewPolicyOf(fileCfg.reviewPolicy),
     admins: Array.isArray(fileCfg.admins) ? fileCfg.admins : [],
     services: fileCfg.services && typeof fileCfg.services === 'object' ? fileCfg.services : {},
     configDir,
@@ -75,4 +78,10 @@ export function loadConfig(): AmberConfig {
     ...(fileCfg.llm && typeof fileCfg.llm === 'object' && fileCfg.llm.command ? { llm: fileCfg.llm } : {}),
     ...(fileCfg.executorLinks ? { executorLinks: validateLinks(fileCfg.executorLinks) } : {}),
   };
+}
+
+function reviewPolicyOf(v: unknown): 'all' | 'any' {
+  if (v === undefined || v === null || v === 'all') return 'all';
+  if (v === 'any') return 'any';
+  throw new Error(`config.json: reviewPolicy must be "all" or "any" (got ${JSON.stringify(v)})`);
 }

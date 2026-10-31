@@ -163,9 +163,9 @@ export function claimCard(c: CommandRow, trial?: { by?: string; blocks?: Block[]
   return shell(prev ? `待认领（新版本）：${c.name}` : `待认领：${c.name}`, 'orange', els);
 }
 
-export function reviewCard(c: CommandRow, creatorOpenIdForReviewer: string | undefined, state: { approved: number; total: number; mine?: string }): object {
+export function reviewCard(c: CommandRow, creatorOpenIdForReviewer: string | undefined, state: { approved: number; total: number; mine?: string; policy?: 'all' | 'any' }): object {
   const els: unknown[] = [
-    { tag: 'markdown', content: `请审核这个应用。需要 **全部 ${state.total} 位**审核人通过才生效，目前已通过 ${state.approved} 位。` },
+    { tag: 'markdown', content: `请审核这个应用。需要 **${reviewRuleText(state.policy ?? 'all', state.total)}**通过才生效，目前已通过 ${state.approved} 位。` },
     { tag: 'markdown', content: specSummary(c) },
     ...codePanels(c),
     { tag: 'markdown', content: `**创建人**：${person(creatorOpenIdForReviewer)}　**spec**：\`${c.specHash.slice(0, 12)}\`` },
@@ -186,11 +186,24 @@ export function reviewCard(c: CommandRow, creatorOpenIdForReviewer: string | und
   return shell(`审核：${c.name}`, 'purple', els);
 }
 
+/** What it takes to pass review, in words: for cards and notices. */
+export function reviewRuleText(policy: 'all' | 'any', total: number): string {
+  return policy === 'any' && total > 1 ? `任意 1 位审核人（共 ${total} 位）` : `全部 ${total} 位审核人`;
+}
+
+/** Enough approvals under the policy: every reviewer, or any one of them. */
+export function reviewPassed(policy: 'all' | 'any', reviewers: string[], approved: Set<string> | string[]): boolean {
+  const has = (r: string) => (approved instanceof Set ? approved.has(r) : approved.includes(r));
+  return reviewers.length > 0 && (policy === 'any' ? reviewers.some(has) : reviewers.every(has));
+}
+
 export class Flow {
   private client: lark.Client;
   private store: Store;
   private reviewerEmails: string[];
   reviewers: string[] = [];
+  /** all: every reviewer must approve; any: one approval is enough. */
+  policy: 'all' | 'any' = 'all';
   isAdmin: (unionId: string) => boolean = () => false;
   signer?: import('./identity.ts').Signer;
   review?: FeishuReview;
@@ -363,17 +376,18 @@ export class Flow {
     const note = async (md: string) => { if (rv.docId) await this.review!.appendMarkdown(rv.docId, md).catch(e => log('doc append failed', (e as Error).message)); };
     if (inst.status === 'APPROVED') {
       const approved = new Set(inst.tasks.filter(t => t.status === 'APPROVED').map(t => t.openId));
-      const allReviewers = this.reviewerOpenIds.length > 0 && this.reviewerOpenIds.every(o => approved.has(o));
-      if (!allReviewers || computeSpecHash(c) !== c.specHash) {
-        log('approval APPROVED but checks failed', c.id, { allReviewers });
-        this.store.audit(null, 'review.feishu_check_failed', { id: c.id, instanceCode, allReviewers });
+      // Amber checks the approvers itself, whatever the approval definition says (all, or any one, by reviewPolicy).
+      const passed = reviewPassed(this.policy, this.reviewerOpenIds, approved);
+      if (!passed || computeSpecHash(c) !== c.specHash) {
+        log('approval APPROVED but checks failed', c.id, { passed, policy: this.policy });
+        this.store.audit(null, 'review.feishu_check_failed', { id: c.id, instanceCode, passed, policy: this.policy });
         return;
       }
       for (const o of approved) this.store.recordReview(c.id, c.specHash, o, 'approve', null);
       const replaced = await this.activate(c, { via: 'feishu_approval', instanceCode });
       const where = c.scopeType === 'p2p' ? '在你和 Amber 的私聊里' : '在本群 @Amber';
       if (meta.claimMessageId) await this.patch(meta.claimMessageId, shell(`已生效：${c.name}`, 'green', [
-        { tag: 'markdown', content: `✅ 飞书审批已通过（${approved.size} 位审核人全部同意），应用「${sanitizeMarkdown(c.name, 40)}」现已生效${replaced ? `，已替换旧版本（${replaced.specHash.slice(0, 8)}）` : ''}。${where}发「${sanitizeMarkdown(c.name, 40)}」即可使用。${rv.docUrl ? `\n\n[查看代码文档](${rv.docUrl})` : ''}` },
+        { tag: 'markdown', content: `✅ 飞书审批已通过（${approved.size} 位审核人同意），应用「${sanitizeMarkdown(c.name, 40)}」现已生效${replaced ? `，已替换旧版本（${replaced.specHash.slice(0, 8)}）` : ''}。${where}发「${sanitizeMarkdown(c.name, 40)}」即可使用。${rv.docUrl ? `\n\n[查看代码文档](${rv.docUrl})` : ''}` },
       ]));
       await note(`**${new Date().toISOString().slice(0, 16).replace('T', ' ')} UTC：飞书审批通过，应用已生效。**`);
     } else if (inst.status === 'REJECTED' || inst.status === 'CANCELED' || inst.status === 'DELETED') {
@@ -496,7 +510,7 @@ export class Flow {
           log('feishu review started', c.id, instance);
           emitEvent('app.review_started', appEvent(fresh, { newVersion: !!prevC }));
           return shell(`审核中：${c.name}`, 'yellow', [
-            { tag: 'markdown', content: `${person(caller.openId)} 已认领并提交审核。\n已发起飞书审批「Amber命令申请」，需要 ${this.reviewers.length} 位审核人全部同意后生效。\n\n**完整代码与试运行结果**：[查看文档](${doc.url})` },
+            { tag: 'markdown', content: `${person(caller.openId)} 已认领并提交审核。\n已发起飞书审批「Amber命令申请」，需要${reviewRuleText(this.policy, this.reviewers.length)}同意后生效。\n\n**完整代码与试运行结果**：[查看文档](${doc.url})` },
           ]);
         } catch (e) {
           // Roll back to draft so the claimer can retry.
@@ -506,12 +520,12 @@ export class Flow {
         }
       }
       for (const r of this.reviewers) {
-        try { await this.send({ unionId: r }, reviewCard(fresh, caller.openId, { approved: 0, total: this.reviewers.length })); }
+        try { await this.send({ unionId: r }, reviewCard(fresh, caller.openId, { approved: 0, total: this.reviewers.length, policy: this.policy })); }
         catch (e: any) { log('review card send failed', r.slice(0, 8), e?.response?.data?.code ?? e?.message); }
       }
       emitEvent('app.review_started', appEvent(fresh, { newVersion: !!this.prevOf(c.id) }));
       return shell(`审核中：${c.name}`, 'yellow', [
-        { tag: 'markdown', content: `${person(caller.openId)} 已认领并提交审核。需要 ${this.reviewers.length} 位审核人全部通过后生效。` },
+        { tag: 'markdown', content: `${person(caller.openId)} 已认领并提交审核。需要${reviewRuleText(this.policy, this.reviewers.length)}通过后生效。` },
       ]);
     }
     throw new AmberError('unknown', '未知操作');
@@ -536,15 +550,15 @@ export class Flow {
       emitEvent('app.rejected', appEvent(c, { reason: reason.trim() }));
       dropOrphanSettings(this.store, c.chatId, c.line, caller.unionId);
       if (meta.claimMessageId) await this.patch(meta.claimMessageId, shell(`已驳回：${c.name}`, 'red', [{ tag: 'markdown', content: `审核人驳回：${sanitizeMarkdown(reason.trim(), 300)}` }]));
-    } else if (approved >= this.reviewers.length) {
+    } else if (reviewPassed(this.policy, this.reviewers, reviews.filter(r => r.decision === 'approve').map(r => r.reviewer))) {
       await this.activate(c, { via: 'card_review' });
       const where = c.scopeType === 'p2p' ? '在你和 Amber 的私聊里' : '在本群 @Amber';
       if (meta.claimMessageId) await this.patch(meta.claimMessageId, shell(`已生效：${c.name}`, 'green', [
-        { tag: 'markdown', content: `✅ 应用「${sanitizeMarkdown(c.name, 40)}」已通过全部 ${this.reviewers.length} 位审核人的审核，现已生效。${where}发「${sanitizeMarkdown(c.name, 40)}」即可使用。` },
+        { tag: 'markdown', content: `✅ 应用「${sanitizeMarkdown(c.name, 40)}」已通过审核（${reviewRuleText(this.policy, this.reviewers.length)}），现已生效。${where}发「${sanitizeMarkdown(c.name, 40)}」即可使用。` },
       ]));
     } else if (meta.claimMessageId) {
-      await this.patch(meta.claimMessageId, shell(`审核中：${c.name}`, 'yellow', [{ tag: 'markdown', content: `已提交审核，**${approved} / ${this.reviewers.length}** 位审核人已通过。` }]));
+      await this.patch(meta.claimMessageId, shell(`审核中：${c.name}`, 'yellow', [{ tag: 'markdown', content: `已提交审核，**${approved} / ${this.reviewers.length}** 位审核人已通过（需要${reviewRuleText(this.policy, this.reviewers.length)}）。` }]));
     }
-    return reviewCard(c, meta.ownerOpenId, { approved, total: this.reviewers.length, mine: decision });
+    return reviewCard(c, meta.ownerOpenId, { approved, total: this.reviewers.length, mine: decision, policy: this.policy });
   }
 }
