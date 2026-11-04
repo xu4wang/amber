@@ -6,6 +6,7 @@ import { createServer } from 'node:http';
 import type { IncomingMessage } from 'node:http';
 import type { Flow, DraftInput } from './flow.ts';
 import type { AgentGate, AgentContext } from './agent.ts';
+import { gatewayClient } from './agent.ts';
 import { AmberError } from './engine.ts';
 import type { ExecutorHub } from './executors.ts';
 import type { PageService } from './pages.ts';
@@ -97,7 +98,8 @@ export function apiHandler(flow: Flow, agent: AgentGate, jwks: () => object, inf
         // People see the agent's name (they only know they asked their agent); the machine, taken
         // from the address, is kept for the audit log.
         const label = typeof input.submittedBy === 'string' && input.submittedBy.trim() ? input.submittedBy.trim().slice(0, 40) : '你的 agent';
-        return reply(200, { ok: true, ...(await flow.submitDraft({ ...input, submittedBy: label, machine })) });
+        const gw = gatewayClient(machine);
+        return reply(200, { ok: true, ...(await flow.submitDraft({ ...input, submittedBy: (gw ? `外网·${gw}｜` : '') + label, machine })) });
       }
       // A sealed secret, once, to the machine that asked for it (the request names no chat).
       // `amber read`: the sealed result, once, to the machine that asked.

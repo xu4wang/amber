@@ -321,6 +321,8 @@ function argLines(c: CommandRow, args: Record<string, string>): string {
 export function requestCard(o: {
   kind: 'run' | 'schedule' | 'schedule_resume' | 'schedule_delete' | 'retire' | 'scope_global' | 'scope_local' | 'secret_read' | 'agent_read'; reqId: string; cmd: CommandRow; args: Record<string, string>;
   requestedBy: string; targetOpenId?: string; ruleText?: string; nextText?: string; scheduleId?: string; schedules?: number; machine?: string; session?: string; chatId?: string;
+  /** The gateway client, when the request came from outside the company network (api-link.ts). */
+  outside?: string;
 }): object {
   const danger = o.cmd.options.confirm || o.kind === 'schedule_delete' || o.kind === 'retire' || o.kind === 'secret_read' || o.kind === 'agent_read';
   const who = o.targetOpenId ? person(o.targetOpenId) : '你';
@@ -328,6 +330,8 @@ export function requestCard(o: {
   const name = sanitizeMarkdown(o.cmd.name, 40);
   const els: unknown[] = [];
   let title: string, ok: string;
+  // Outside callers are told apart by something they cannot write themselves: a line of its own, before anything else.
+  if (o.outside) els.push({ tag: 'markdown', content: `<font color="red">⚠️ 这个请求来自**公司外网**（网关接入方 ${sanitizeMarkdown(o.outside, 40)}），不是公司内网里的机器人。不认识这个来源就不要确认。</font>` });
   if (o.kind === 'run') {
     title = `请确认执行：${o.cmd.name}`;
     ok = danger ? '确认执行' : '执行';
