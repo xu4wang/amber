@@ -47,6 +47,11 @@ export interface AgentContext {
   label?: string;
 }
 
+/** The gateway client a request came through (machine "gw:<link>:<client>", api-link.ts), or undefined. */
+export function gatewayClient(machine: string): string | undefined {
+  return /^gw:[^:]+:([a-z0-9][a-z0-9-]*)$/.exec(machine)?.[1];
+}
+
 interface Ctx { chatId: string; chatType: ScopeType; user?: { unionId: string; openId?: string; email: string }; replyTo?: string; inThread: boolean; requestedBy: string; machine: string }
 
 const REQUEST_TTL_MS = 24 * 3600_000;
@@ -101,7 +106,11 @@ export class AgentGate {
     if (raw.chatType === 'p2p' && !user) throw new AmberError('user_required', '私聊里需要用 --user 指明是谁（email）');
     const replyTo = raw.replyTo && /^om_[A-Za-z0-9]+$/.test(raw.replyTo) ? raw.replyTo : undefined;
     const label = typeof raw.label === 'string' && raw.label.trim() ? raw.label.trim().slice(0, 40) : '';
-    return { chatId: raw.chatId, chatType: raw.chatType, user, replyTo, inThread: !!(replyTo && raw.inThread), machine, requestedBy: label || '你的 agent' };
+    // The label is free text from the caller; through a gateway the trusted client name goes in front of it, so a card
+    // never lets an outside caller pass for an agent inside the company.
+    const gw = gatewayClient(machine);
+    const requestedBy = (gw ? `外网·${gw}｜` : '') + (label || '你的 agent');
+    return { chatId: raw.chatId, chatType: raw.chatType, user, replyTo, inThread: !!(replyTo && raw.inThread), machine, requestedBy };
   }
 
   /** An app this chat can use, as triggers name it: its line (what events carry as the name) and where it belongs
@@ -430,6 +439,7 @@ export class AgentGate {
       kind, reqId: req.id, cmd, args, requestedBy: ctx.requestedBy, targetOpenId: o.targetOpenId ?? ctx.user?.openId,
       ruleText: rule ? describeRule(rule) : undefined, nextText: rule ? formatAt(nextRun(rule, Date.now()), rule.tz) : undefined, scheduleId: o.scheduleId,
       schedules: o.schedules, machine: args.machine, session: kind === 'agent_read' ? args.session : undefined, chatId: ctx.chatId,
+      outside: gatewayClient(ctx.machine),
     });
     // p2p: Amber cannot post into the agent's private chat, so the card goes to the person's chat with Amber.
     const to = ctx.chatType === 'p2p' || o.toCreatorDm ? { unionId: target! } : ctx.replyTo ? { replyTo: ctx.replyTo, inThread: ctx.inThread } : { chatId: ctx.chatId };
