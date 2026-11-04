@@ -319,7 +319,7 @@ export class AgentGate {
     if (grant) {
       const req = this.store.insertRequest({
         kind: 'agent_read', commandId: cmd.id, specHash: cmd.specHash, chatId: ctx.chatId, chatType: ctx.chatType, targetUnionId: ctx.user.unionId,
-        args: extra, rule: null, scheduleId: null, requestedBy: ctx.requestedBy, replyTo: null, inThread: false,
+        args: extra, rule: null, scheduleId: null, requestedBy: ctx.requestedBy, replyTo: null, inThread: false, machine: ctx.machine,
       });
       this.store.transitionRequest(req.id, 'awaiting', 'running', { actorUnionId: ctx.user.unionId });
       this.store.audit(ctx.user.unionId, 'agentread.granted', { request: req.id, grant: grant.id, command: cmd.id, name: cmd.name, machine: ctx.machine, requestedBy: ctx.requestedBy });
@@ -423,7 +423,7 @@ export class AgentGate {
     const target = o.target ?? ctx.user?.unionId ?? null;
     const req = this.store.insertRequest({
       kind, commandId: cmd.id, specHash: cmd.specHash, chatId: ctx.chatId, chatType: ctx.chatType, targetUnionId: target,
-      args, rule: o.rule ?? null, scheduleId: o.scheduleId ?? null, requestedBy: ctx.requestedBy, replyTo: ctx.replyTo ?? null, inThread: ctx.inThread,
+      args, rule: o.rule ?? null, scheduleId: o.scheduleId ?? null, requestedBy: ctx.requestedBy, replyTo: ctx.replyTo ?? null, inThread: ctx.inThread, machine: ctx.machine,
     });
     const rule = o.rule ? validateRule(o.rule) : undefined;
     const card = requestCard({
@@ -488,13 +488,16 @@ export class AgentGate {
     }
   }
 
-  /** Status for `amber wait`; long-polls up to waitSec while the request is still open. */
-  async requestStatus(id: string, waitSec: number): Promise<object> {
+  /** Status for `amber wait`; long-polls up to waitSec while the request is still open. `machine`: only a request that
+   *  machine made (callers through an API link: request ids are printed on cards in chats, so knowing one proves
+   *  nothing); someone else's is answered exactly like an unknown id. */
+  async requestStatus(id: string, waitSec: number, machine?: string): Promise<object> {
     const deadline = Date.now() + Math.min(Math.max(waitSec, 0), 50) * 1000;
-    let r = this.store.getRequest(id);
+    const mine = (x: RequestRow | undefined) => x && (machine === undefined || x.machine === machine) ? x : undefined;
+    let r = mine(this.store.getRequest(id));
     while (r && (r.status === 'awaiting' || r.status === 'running') && Date.now() < deadline) {
       await new Promise(res => setTimeout(res, 1000));
-      r = this.store.getRequest(id);
+      r = mine(this.store.getRequest(id));
     }
     if (!r) {
       // Unknown ids are logged: repeated misses from one machine look like enumeration.

@@ -12,6 +12,7 @@
 // The transport is plain HTTPS long polling (no WebSocket, no dependencies on either side). `tlsFingerprint` pins
 // the executor's certificate (SHA-256), for a self-signed certificate or to bypass a CDN that would see the traffic;
 // `connectTo` connects to that address while still using the URL's host for TLS and the Host header.
+// API links (api-link.ts) use the same transport (LinkPoller) to reach amber-gateway services.
 import { request as httpsRequest } from 'node:https';
 import { request as httpRequest, type IncomingMessage } from 'node:http';
 import { connect as tlsConnect } from 'node:tls';
@@ -26,44 +27,57 @@ export const LINK_WAIT_MS = 25_000;
 const MAX_RESPONSE = 16 * 1024 * 1024;
 const log = (...a: unknown[]) => console.log(new Date().toISOString(), ...a);
 
-/** Checks the configured links; throws with a message for the admin. */
-export function validateLinks(x: unknown): LinkConfig[] {
+/** Checks the configured links; throws with a message for the admin. `key`: the configuration key, for messages
+ *  (API links, api-link.ts, share the format); `more`: checks and fields of its own for each entry. */
+export function validateLinks<T extends LinkConfig = LinkConfig>(x: unknown, key = 'executorLinks', more?: (l: any, name: string) => Omit<T, keyof LinkConfig>): T[] {
   if (x === undefined || x === null) return [];
-  if (!Array.isArray(x)) throw new Error('executorLinks 要写成数组');
+  if (!Array.isArray(x)) throw new Error(`${key} 要写成数组`);
   const seen = new Set<string>();
   return x.map((l: any) => {
     const name = String(l?.name ?? '');
-    if (!EXECUTOR_NAME.test(name)) throw new Error(`executorLinks 里的 name 不对：${name}`);
-    if (seen.has(name)) throw new Error(`executorLinks 里重复的 name：${name}`);
+    if (!EXECUTOR_NAME.test(name)) throw new Error(`${key} 里的 name 不对：${name}`);
+    if (seen.has(name)) throw new Error(`${key} 里重复的 name：${name}`);
     seen.add(name);
     let u: URL;
-    try { u = new URL(String(l?.url ?? '')); } catch { throw new Error(`executorLinks.${name}.url 不是合法的地址`); }
-    if (u.protocol !== 'https:' && !(u.protocol === 'http:' && ['127.0.0.1', 'localhost'].includes(u.hostname))) throw new Error(`executorLinks.${name}.url 要用 https（本机测试可以用 http://127.0.0.1）`);
+    try { u = new URL(String(l?.url ?? '')); } catch { throw new Error(`${key}.${name}.url 不是合法的地址`); }
+    if (u.protocol !== 'https:' && !(u.protocol === 'http:' && ['127.0.0.1', 'localhost'].includes(u.hostname))) throw new Error(`${key}.${name}.url 要用 https（本机测试可以用 http://127.0.0.1）`);
     const fp = l?.tlsFingerprint === undefined ? undefined : String(l.tlsFingerprint).replace(/:/g, '').toUpperCase();
-    if (fp !== undefined && !/^[0-9A-F]{64}$/.test(fp)) throw new Error(`executorLinks.${name}.tlsFingerprint 要是证书的 SHA-256（64 位十六进制）`);
+    if (fp !== undefined && !/^[0-9A-F]{64}$/.test(fp)) throw new Error(`${key}.${name}.tlsFingerprint 要是证书的 SHA-256（64 位十六进制）`);
     const parallel = l?.parallel === undefined ? 4 : Number(l.parallel);
-    if (!Number.isInteger(parallel) || parallel < 1 || parallel > 16) throw new Error(`executorLinks.${name}.parallel 要是 1–16 的整数`);
-    return { name, url: u.toString().replace(/\/+$/, ''), ...(fp ? { tlsFingerprint: fp } : {}), ...(l?.connectTo ? { connectTo: String(l.connectTo) } : {}), parallel };
+    if (!Number.isInteger(parallel) || parallel < 1 || parallel > 16) throw new Error(`${key}.${name}.parallel 要是 1–16 的整数`);
+    return { name, url: u.toString().replace(/\/+$/, ''), ...(fp ? { tlsFingerprint: fp } : {}), ...(l?.connectTo ? { connectTo: String(l.connectTo) } : {}), parallel, ...(more ? more(l, name) : {}) } as T;
   });
 }
 
-type Handle = (path: string, headers: Record<string, string | undefined>, raw: string, machine: string) => Promise<{ status: number; body: unknown }>;
+/** One request the far end queued for Amber, as /amber-link/next hands it out. */
+export interface LinkItem { id: string; path: string; method?: string; headers?: Record<string, unknown>; body?: string; client?: string }
 
-export class ExecutorLinks {
+/**
+ * The transport both kinds of link share: for each configured link, `parallel` long polls of <url>/amber-link/next,
+ * each request taken handled by the subclass (answer) and its answer posted to /amber-link/reply. Every request
+ * Amber makes is signed with its key for the link's name (signName), over HTTPS with an optional pinned certificate.
+ */
+export abstract class LinkPoller<L extends LinkConfig = LinkConfig> {
   private closed = false;
   private active = new Set<import('node:http').ClientRequest>();
   /** Per link: last error (logged once until it changes), and whether a request is getting through. */
   readonly state = new Map<string, { connected: boolean; error?: string; since: number }>();
 
-  private links: LinkConfig[];
-  private signer: Signer;
-  private handle: Handle;
+  protected links: L[];
+  protected signer: Signer;
+  /** For the log: which kind of link this is. */
+  protected abstract readonly kind: string;
 
-  constructor(links: LinkConfig[], signer: Signer, handle: Handle) {
+  constructor(links: L[], signer: Signer) {
     this.links = links;
     this.signer = signer;
-    this.handle = handle;
   }
+
+  /** What one taken request gets back. */
+  protected abstract answer(l: L, q: LinkItem): Promise<{ status: number; body: unknown }>;
+
+  /** The name Amber signs for: binds each signed request to one link (and, through a prefix, to one kind of link). */
+  protected signName(l: L): string { return l.name; }
 
   start(): void {
     for (const l of this.links) {
@@ -77,13 +91,13 @@ export class ExecutorLinks {
     for (const r of this.active) r.destroy();
   }
 
-  private mark(l: LinkConfig, connected: boolean, error?: string): void {
+  private mark(l: L, connected: boolean, error?: string): void {
     const prev = this.state.get(l.name);
-    if (prev?.connected !== connected || prev?.error !== error) log('executor link', l.name, connected ? 'connected' : `down: ${error}`);
+    if (prev?.connected !== connected || prev?.error !== error) log(this.kind, l.name, connected ? 'connected' : `down: ${error}`);
     this.state.set(l.name, { connected, ...(error ? { error } : {}), since: prev?.connected === connected ? prev.since : Date.now() });
   }
 
-  private async loop(l: LinkConfig): Promise<void> {
+  private async loop(l: L): Promise<void> {
     while (!this.closed) {
       try {
         const r = await this.post(l, '/amber-link/next', {}, LINK_WAIT_MS + 15_000);
@@ -98,27 +112,21 @@ export class ExecutorLinks {
     }
   }
 
-  /** One request the executor made: handled as if it came in over the API, the answer posted back. */
-  private async serve(l: LinkConfig, q: any): Promise<void> {
+  /** One request taken from the far end: answered by the subclass, the answer posted back. */
+  protected async serve(l: L, q: any): Promise<void> {
     const id = String(q?.id ?? '');
     if (!/^[0-9a-f]{24}$/.test(id)) return;
-    const path = String(q?.path ?? ''), raw = typeof q?.body === 'string' ? q.body : '';
-    const headers: Record<string, string | undefined> = {};
-    for (const [k, v] of Object.entries(q?.headers ?? {})) if (typeof v === 'string') headers[k.toLowerCase()] = v;
     let res: { status: number; body: unknown };
-    if (!path.startsWith('/v1/executor/')) res = { status: 404, body: { ok: false, error: 'not_found' } };
-    else if (path === '/v1/executor/register' && (() => { try { return JSON.parse(raw)?.name !== l.name; } catch { return true; } })()) {
-      res = { status: 403, body: { ok: false, error: 'forbidden', message: `这个链接只接受名为 ${l.name} 的执行端` } };
-    } else res = await this.handle(path, headers, raw, `link:${l.name}`);
+    try { res = await this.answer(l, q); } catch (e) { res = { status: 500, body: { ok: false, error: 'internal', message: (e as Error).message } }; }
     try {
       await this.post(l, '/amber-link/reply', { id, status: res.status, body: JSON.stringify(res.body) }, 30_000);
-    } catch (e) { log('executor link reply failed', l.name, (e as Error).message); }
+    } catch (e) { log(this.kind, 'reply failed', l.name, (e as Error).message); }
   }
 
-  private post(l: LinkConfig, path: string, body: unknown, timeoutMs: number): Promise<{ status: number; body: unknown }> {
+  protected post(l: L, path: string, body: unknown, timeoutMs: number): Promise<{ status: number; body: unknown }> {
     const u = new URL(l.url + path);
     const raw = JSON.stringify(body);
-    const headers = { 'content-type': 'application/json', 'content-length': String(Buffer.byteLength(raw)), host: u.host, ...this.signer.signLink(l.name, 'POST', path, raw) };
+    const headers = { 'content-type': 'application/json', 'content-length': String(Buffer.byteLength(raw)), host: u.host, ...this.signer.signLink(this.signName(l), 'POST', path, raw) };
     const https = u.protocol === 'https:';
     return new Promise((resolve, reject) => {
       const host = l.connectTo ?? u.hostname, port = Number(u.port || (https ? 443 : 80));
@@ -155,5 +163,29 @@ export class ExecutorLinks {
       req.on('error', reject);
       req.end(raw);
     });
+  }
+}
+
+type Handle = (path: string, headers: Record<string, string | undefined>, raw: string, machine: string) => Promise<{ status: number; body: unknown }>;
+
+/** Link-mode executors (D58): each request taken is one the executor would have sent Amber, signed by the executor. */
+export class ExecutorLinks extends LinkPoller {
+  protected readonly kind = 'executor link';
+  private handle: Handle;
+
+  constructor(links: LinkConfig[], signer: Signer, handle: Handle) {
+    super(links, signer);
+    this.handle = handle;
+  }
+
+  protected async answer(l: LinkConfig, q: LinkItem): Promise<{ status: number; body: unknown }> {
+    const path = String(q?.path ?? ''), raw = typeof q?.body === 'string' ? q.body : '';
+    const headers: Record<string, string | undefined> = {};
+    for (const [k, v] of Object.entries(q?.headers ?? {})) if (typeof v === 'string') headers[k.toLowerCase()] = v;
+    if (!path.startsWith('/v1/executor/')) return { status: 404, body: { ok: false, error: 'not_found' } };
+    if (path === '/v1/executor/register' && (() => { try { return JSON.parse(raw)?.name !== l.name; } catch { return true; } })()) {
+      return { status: 403, body: { ok: false, error: 'forbidden', message: `这个链接只接受名为 ${l.name} 的执行端` } };
+    }
+    return this.handle(path, headers, raw, `link:${l.name}`);
   }
 }

@@ -32,7 +32,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'node:child_process';
-import { newExecutorKeys, keyFromPem, pubB64, fingerprint, showFingerprint, signRequest, openJob, specHashOf, redact, verifyRelayResponse, verifyLinkRequest, REQUEST_SKEW_MS, EXECUTOR_NAME, ENV_NAME } from './lib/exec-proto.mjs';
+import { newExecutorKeys, keyFromPem, pubB64, fingerprint, showFingerprint, signRequest, openJob, specHashOf, redact, verifyRelayResponse, verifyLinkRequest, parseAmberKey, REQUEST_SKEW_MS, EXECUTOR_NAME, ENV_NAME } from './lib/exec-proto.mjs';
 import { createServer } from 'node:http';
 import { randomBytes, createHmac, createHash, timingSafeEqual } from 'node:crypto';
 import { setSandboxContext, validateEnvAccess, buildPolicy, compileToSeatbelt, compileToBwrap, sandboxPlatform, normalizePath, hardDenyRoots, credentialGrants, describeAccess } from './lib/sandbox-policy.mjs';
@@ -384,14 +384,9 @@ async function runLoop() {
 
 // ---------- setup
 
-/** Amber's public signing key given by hand (link mode: this machine may not reach Amber): the JSON from
- *  <amber>/v1/keys, a JWK, or just its "x". */
-function parseAmberKey(s) {
-  let jwk;
-  try { const j = JSON.parse(s); jwk = j?.keys?.[0] ?? j; } catch { jwk = { kty: 'OKP', crv: 'Ed25519', x: String(s).trim() }; }
-  if (jwk?.kty !== 'OKP' || jwk?.crv !== 'Ed25519' || !/^[A-Za-z0-9_-]{43}$/.test(String(jwk?.x ?? ''))) die('--amber-key 不对：要 Amber 的 /v1/keys 返回的 JSON，或其中的 x');
-  try { createPublicKey({ key: { kty: 'OKP', crv: 'Ed25519', x: jwk.x }, format: 'jwk' }); } catch { die('--amber-key 不是合法的 Ed25519 公钥'); }
-  return { kty: 'OKP', crv: 'Ed25519', x: jwk.x };
+/** Amber's public signing key given by hand (link mode: this machine may not reach Amber). */
+function amberKeyArg(s) {
+  try { return parseAmberKey(s); } catch (e) { die(e.message); }
 }
 
 async function initLink(args, name) {
@@ -399,7 +394,7 @@ async function initLink(args, name) {
   if (!key) die('链接模式要用 --amber-key 给出 Amber 的签名公钥（Amber 的 /v1/keys 返回的 JSON，或其中的 x；向 Amber 管理员要）');
   const listen = flag(args, '--listen') ?? '127.0.0.1:7350';
   if (!/^[\w.:[\]-]+:\d{2,5}$/.test(listen)) die('--listen 要写成 地址:端口，例如 127.0.0.1:7350');
-  const jwk = parseAmberKey(existsSync(key) ? readFileSync(key, 'utf8') : key);
+  const jwk = amberKeyArg(existsSync(key) ? readFileSync(key, 'utf8') : key);
   mkdirSync(DIR, { recursive: true, mode: 0o700 });
   chmodSync(DIR, 0o700);
   if (!existsSync(P.sign) || !existsSync(P.box)) { const k = newExecutorKeys(); writePrivate(P.sign, k.signKey); writePrivate(P.box, k.boxKey); }

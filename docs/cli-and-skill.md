@@ -52,6 +52,8 @@ amber info                                        # 检查：显示服务地址�
 
 也可以用环境变量 `AMBER_URL`，它的优先级高于配置文件。命令行依次读 `AMBER_URL`、`~/.config/amber-client.json`、`amber` 命令所在目录里的 `amber-client.json`。后一份是给跑在沙盒里的 agent 用的：沙盒常常不让读 `~/.config`，但一定能读它运行的命令所在的目录。所以要在沙盒外运行一次 `set-url`（两处都会写）；只是读不到时，命令行会提示「读不到配置文件（权限被拒）」，而不是「还没配置」。只有 Amber 配置里 `machines` 列出的 IP 能访问。网站地址由服务端的 `webBaseUrl` 决定，agent 通过 `amber info` 获取，不需要另外配置。
 
+公司网络外的 agent 经[外网网关](gateway.md)使用 Amber：地址设成网关的 https 地址，再用 `amber config set-token <令牌>`（或环境变量 `AMBER_TOKEN`）设上网关发的令牌，命令和接口都不变。
+
 ## 命令
 
 ```text

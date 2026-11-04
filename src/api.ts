@@ -21,12 +21,6 @@ function readRaw(req: IncomingMessage, limit: number): Promise<string> {
   });
 }
 
-async function readBody(req: IncomingMessage): Promise<any> {
-  const body = await readRaw(req, 256 * 1024);
-  if (!body) return {};
-  try { return JSON.parse(body); } catch { throw new AmberError('bad_json', '请求不是合法的 JSON'); }
-}
-
 /** One signed executor request (D50), however it arrived: over this API, or carried back by a link (D58, exec-link.ts). */
 export async function executorRequest(hub: ExecutorHub, path: string, h: Record<string, string | undefined>, raw: string, machine: string): Promise<{ status: number; body: unknown }> {
   try {
@@ -42,50 +36,62 @@ export async function executorRequest(hub: ExecutorHub, path: string, h: Record<
   }
 }
 
-export function startApi(port: number, machines: Record<string, string>, flow: Flow, agent: AgentGate, jwks: () => object, info: { webUrl: string }, hub?: ExecutorHub, pages?: PageService, triggers?: TriggerService): import('node:http').Server {
-  const server = createServer(async (req, res) => {
-    const reply = (status: number, body: unknown) => {
-      res.writeHead(status, { 'content-type': 'application/json; charset=utf-8' });
-      res.end(JSON.stringify(body));
-    };
-    const url = new URL(req.url ?? '/', 'http://amber');
-    const path = url.pathname;
+/** One API request, however it arrived: over HTTP (startApi), or carried in by an API link (api-link.ts). */
+export interface ApiRequest {
+  method: string;
+  /** Pathname only; the query string is `search`. */
+  path: string;
+  search: URLSearchParams;
+  headers: Record<string, string | undefined>;
+  /** The body as received (empty for GET). Size limits are the caller's: apiBodyLimit. */
+  raw: string;
+  machine: string;
+  /** Request status lookups only for requests this machine made (API links: outside callers never see others'). */
+  scoped?: boolean;
+}
+export type ApiHandler = (r: ApiRequest) => Promise<{ status: number; body: unknown }>;
+
+/** The largest body each path accepts: page files come inline (base64), executor requests carry run output. */
+export function apiBodyLimit(path: string): number {
+  if (path.startsWith('/v1/executor/')) return 1024 * 1024;
+  if (path === '/v1/pages') return 16 * 1024 * 1024;
+  return 256 * 1024;
+}
+
+function parseJson(raw: string): any {
+  if (!raw) return {};
+  try { return JSON.parse(raw); } catch { throw new AmberError('bad_json', '请求不是合法的 JSON'); }
+}
+
+export function apiHandler(flow: Flow, agent: AgentGate, jwks: () => object, info: { webUrl: string }, hub?: ExecutorHub, pages?: PageService, triggers?: TriggerService): ApiHandler {
+  return async ({ method, path, search, headers, raw, machine, scoped }) => {
+    const reply = (status: number, body: unknown) => ({ status, body });
     // Public: services verifying Amber's execution identity tokens fetch the key set here.
-    if (req.method === 'GET' && path === '/v1/keys') return reply(200, jwks());
-    // Behind nginx: the client address comes from X-Amber-Client-IP. Direct loopback calls are this machine.
-    const fwd = String(req.headers['x-amber-client-ip'] ?? '').trim();
-    const machine = fwd ? machines[fwd] : (machines['127.0.0.1'] ?? 'local');
-    if (!machine) return reply(403, { ok: false, error: 'forbidden', message: `IP ${fwd} 不在白名单里` });
+    if (method === 'GET' && path === '/v1/keys') return reply(200, jwks());
     try {
       let m: RegExpExecArray | null;
-      if (req.method === 'GET' && (m = /^\/v1\/requests\/([A-Za-z0-9-]{1,40})$/.exec(path))) {
-        return reply(200, { ok: true, ...(await agent.requestStatus(m[1], Number(url.searchParams.get('wait') ?? 0))) });
+      if (method === 'GET' && (m = /^\/v1\/requests\/([A-Za-z0-9-]{1,40})$/.exec(path))) {
+        return reply(200, { ok: true, ...(await agent.requestStatus(m[1], Number(search.get('wait') ?? 0), scoped ? machine : undefined)) });
       }
       // Deployment facts agents need but should not hard-code (the website address).
-      if (req.method === 'GET' && path === '/v1/info') return reply(200, { ok: true, service: 'amber', webUrl: info.webUrl, machine });
+      if (method === 'GET' && path === '/v1/info') return reply(200, { ok: true, service: 'amber', webUrl: info.webUrl, machine });
       // Environments agents can name in script.env (D51): approved only, no path lists.
-      if (req.method === 'GET' && path === '/v1/envs') return reply(200, { ok: true, executors: hub ? hub.agentList() : [] });
+      if (method === 'GET' && path === '/v1/envs') return reply(200, { ok: true, executors: hub ? hub.agentList() : [] });
       // Closed: run output is read in Feishu or on the website, never through this API.
-      if (req.method === 'GET' && /^\/v1\/runs\//.test(path)) {
+      if (method === 'GET' && /^\/v1\/runs\//.test(path)) {
         return reply(410, { ok: false, error: 'gone', message: '这个接口已关闭：运行结果只在飞书卡片和网站上查看' });
       }
-      if (req.method !== 'POST') return reply(404, { ok: false, error: 'not_found' });
+      if (method !== 'POST') return reply(404, { ok: false, error: 'not_found' });
       // Executors (D50): every request is signed with the executor's own key (see exec-proto.ts).
-      if (hub && path.startsWith('/v1/executor/')) {
-        const raw = await readRaw(req, 1024 * 1024);
-        const r = await executorRequest(hub, path, req.headers as Record<string, string | undefined>, raw, machine);
-        return reply(r.status, r.body);
-      }
+      if (hub && path.startsWith('/v1/executor/')) return await executorRequest(hub, path, headers, raw, machine);
       // Page apps: the files come with the request (up to 10MB, base64 in JSON).
       if (path === '/v1/pages' && pages) {
-        const raw = await readRaw(req, 16 * 1024 * 1024);
-        let body: any;
-        try { body = JSON.parse(raw || '{}'); } catch { throw new AmberError('bad_json', '请求不是合法的 JSON'); }
+        const body = parseJson(raw);
         const ctx = await agent.context(body as AgentContext, machine);
         if (!ctx.user) throw new AmberError('user_required', '发布页面要用 --user 指明页面属于谁（email）');
         return reply(200, { ok: true, ...(await pages.publish({ ...ctx, user: ctx.user }, String(body.name ?? ''), body.files)) });
       }
-      const body = await readBody(req);
+      const body = parseJson(raw);
       if (path === '/v1/drafts') {
         const input = body as DraftInput;
         // People see the agent's name (they only know they asked their agent); the machine, taken
@@ -132,6 +138,34 @@ export function startApi(port: number, machines: Record<string, string>, flow: F
       console.log(new Date().toISOString(), 'api error', path, (e as Error).message);
       return reply(500, { ok: false, error: 'internal', message: (e as Error).message });
     }
+  };
+}
+
+export function startApi(port: number, machines: Record<string, string>, handle: ApiHandler): import('node:http').Server {
+  const server = createServer(async (req, res) => {
+    const reply = (status: number, body: unknown) => {
+      res.writeHead(status, { 'content-type': 'application/json; charset=utf-8' });
+      res.end(JSON.stringify(body));
+    };
+    const url = new URL(req.url ?? '/', 'http://amber');
+    const path = url.pathname, method = req.method ?? 'GET';
+    const headers = req.headers as Record<string, string | undefined>;
+    if (method === 'GET' && path === '/v1/keys') return reply(200, (await handle({ method, path, search: url.searchParams, headers, raw: '', machine: '' })).body);
+    // Behind nginx: the client address comes from X-Amber-Client-IP. Direct loopback calls are this machine.
+    const fwd = String(req.headers['x-amber-client-ip'] ?? '').trim();
+    const machine = fwd ? machines[fwd] : (machines['127.0.0.1'] ?? 'local');
+    if (!machine) return reply(403, { ok: false, error: 'forbidden', message: `IP ${fwd} 不在白名单里` });
+    let raw = '';
+    // Only POST bodies are read, each up to its path's limit; a body over it is refused like any other bad request.
+    if (method === 'POST') {
+      try { raw = await readRaw(req, apiBodyLimit(path)); } catch (e) {
+        if (e instanceof AmberError) return reply(400, { ok: false, error: e.code, message: e.message });
+        console.log(new Date().toISOString(), 'api error', path, (e as Error).message);
+        return reply(500, { ok: false, error: 'internal', message: (e as Error).message });
+      }
+    }
+    const r = await handle({ method, path, search: url.searchParams, headers, raw, machine });
+    return reply(r.status, r.body);
   });
   server.listen(port, '127.0.0.1', () => console.log(new Date().toISOString(), `api listening on 127.0.0.1:${port}`));
   return server;

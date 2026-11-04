@@ -2,6 +2,7 @@ import { readFileSync, existsSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
 import { validateLinks, type LinkConfig } from './exec-link.ts';
+import { validateApiLinks, type ApiLinkConfig } from './api-link.ts';
 
 export interface AmberConfig {
   appId: string;
@@ -39,6 +40,8 @@ export interface AmberConfig {
   llm?: { command: string; models?: string[]; maxConcurrent?: number; timeoutMs?: number; configDir?: string };
   /** Link-mode executors Amber connects to (D58, exec-link.ts). */
   executorLinks?: LinkConfig[];
+  /** amber-gateway services Amber connects to, carrying outside callers' API requests (api-link.ts, docs/gateway.md). */
+  apiLinks?: ApiLinkConfig[];
 }
 
 function parseEnvFile(path: string): Record<string, string> {
@@ -82,6 +85,7 @@ export function loadConfig(): AmberConfig {
     ...(fileCfg.pageScreenshotChrome ? { pageScreenshotChrome: String(fileCfg.pageScreenshotChrome) } : {}),
     ...(fileCfg.llm && typeof fileCfg.llm === 'object' && fileCfg.llm.command ? { llm: fileCfg.llm } : {}),
     ...(fileCfg.executorLinks ? { executorLinks: validateLinks(fileCfg.executorLinks) } : {}),
+    ...(fileCfg.apiLinks ? { apiLinks: validateApiLinks(fileCfg.apiLinks) } : {}),
   };
 }
 
