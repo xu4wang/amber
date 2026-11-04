@@ -83,6 +83,16 @@ export function verifyLinkRequest(amberPub: KeyObject, name: string, h: Record<s
   return nonce;
 }
 
+/** Amber's public signing key given by hand (to a machine that may not reach Amber: a link-mode executor, a gateway):
+ *  the JSON from <amber>/v1/keys, a JWK, or just its "x". Throws with a message naming --amber-key. */
+export function parseAmberKey(s: string): { kty: 'OKP'; crv: 'Ed25519'; x: string } {
+  let jwk: any;
+  try { const j = JSON.parse(s); jwk = j?.keys?.[0] ?? j; } catch { jwk = { kty: 'OKP', crv: 'Ed25519', x: String(s).trim() }; }
+  if (jwk?.kty !== 'OKP' || jwk?.crv !== 'Ed25519' || !/^[A-Za-z0-9_-]{43}$/.test(String(jwk?.x ?? ''))) throw new Error('--amber-key 不对：要 Amber 的 /v1/keys 返回的 JSON，或其中的 x');
+  try { createPublicKey({ key: { kty: 'OKP', crv: 'Ed25519', x: jwk.x }, format: 'jwk' }); } catch { throw new Error('--amber-key 不是合法的 Ed25519 公钥'); }
+  return { kty: 'OKP', crv: 'Ed25519', x: jwk.x };
+}
+
 // ---------- job envelopes (Amber → executor)
 
 export interface JobEnvelope { v: 1; jobId: string; executor: string; exp: number; epk: string; iv: string; ct: string; tag: string; sig: string }

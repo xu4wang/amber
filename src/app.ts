@@ -5,7 +5,7 @@ import { Store } from './db.ts';
 import { AmberBot } from './bot.ts';
 import { setServices, validateScript } from './runner.ts';
 import { setSandboxContext } from './sandbox-policy.ts';
-import { startApi, executorRequest } from './api.ts';
+import { startApi, apiHandler, executorRequest, type ApiHandler } from './api.ts';
 import { startWeb } from './web.ts';
 import { setTimezones } from './schedule-rule.ts';
 import { SecretVault } from './secrets.ts';
@@ -13,12 +13,13 @@ import { setSecretVault, setExecutorHub, setWebUrl, setLarkUser } from './engine
 import { LarkUserVault, feishuOAuth, type LarkOAuth } from './lark-user.ts';
 import { ExecutorHub } from './executors.ts';
 import { ExecutorLinks } from './exec-link.ts';
+import { ApiLinks } from './api-link.ts';
 import { seedAllowHosts, FEISHU_HOSTS } from './limits.ts';
 import { makePageShooter } from './page-shot.ts';
 import { LlmService, LLM_SERVICE } from './llm.ts';
 import { Assistant } from './assist.ts';
 
-export interface Amber { bot: AmberBot; store: Store; api: Server; web: Server; hub: ExecutorHub; close(): Promise<void> }
+export interface Amber { bot: AmberBot; store: Store; api: Server; web: Server; hub: ExecutorHub; handleApi: ApiHandler; apiLinks: ApiLinks; close(): Promise<void> }
 
 export async function startAmber(cfg: AmberConfig, opts: { apiPort: number; webPort: number; client?: unknown; ws?: unknown; timers?: boolean; larkOAuth?: LarkOAuth }): Promise<Amber> {
   // The large-model service is Amber's own: scripts declare it like any service; Amber answers it (src/llm.ts).
@@ -47,10 +48,14 @@ export async function startAmber(cfg: AmberConfig, opts: { apiPort: number; webP
   hub.llm = llm;
   if (llm) bot.assistant = new Assistant(store, llm);
   setExecutorHub(hub);
-  const api = startApi(opts.apiPort, cfg.machines, bot.flow, bot.agent, () => bot.signer.jwks(), { webUrl: cfg.webBaseUrl }, hub, bot.pages, bot.triggers);
+  const handleApi = apiHandler(bot.flow, bot.agent, () => bot.signer.jwks(), { webUrl: cfg.webBaseUrl }, hub, bot.pages, bot.triggers);
+  const api = startApi(opts.apiPort, cfg.machines, handleApi);
   // Link-mode executors (D58): Amber connects to them and carries their requests to the same handlers as the API.
   const links = new ExecutorLinks(cfg.executorLinks ?? [], bot.signer, (path, h, raw, machine) => executorRequest(hub, path, h, raw, machine));
   links.start();
+  // API links: amber-gateway services carrying outside callers' API requests to the same handler, under their policy.
+  const apiLinks = new ApiLinks(cfg.apiLinks ?? [], bot.signer, handleApi, d => store.audit(null, 'gateway.request', d));
+  apiLinks.start();
   const web = startWeb(opts.webPort, store, {
     isMember: (c, u) => bot.isMember(c, u),
     chatName: c => bot.chatName(c),
@@ -80,5 +85,5 @@ export async function startAmber(cfg: AmberConfig, opts: { apiPort: number; webP
   });
   if (cfg.pagesBaseUrl && cfg.pageScreenshotChrome) bot.pages.shoot = makePageShooter(cfg.pageScreenshotChrome, cfg.pagesBaseUrl, opts.webPort);
   const closeServer = (s: Server) => new Promise<void>(r => { s.close(() => r()); s.closeAllConnections(); });
-  return { bot, store, api, web, hub, close: async () => { links.close(); hub.close(); bot.triggers.close(); await Promise.all([closeServer(api), closeServer(web)]); } };
+  return { bot, store, api, web, hub, handleApi, apiLinks, close: async () => { links.close(); apiLinks.close(); hub.close(); bot.triggers.close(); await Promise.all([closeServer(api), closeServer(web)]); } };
 }

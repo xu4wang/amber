@@ -47,6 +47,8 @@ usage:
                                                --mine: only those exported from this bot ($BOTMUX_LARK_APP_ID)
   amber info                                   the Amber service this machine uses, and its website
   amber config set-url <url>                   set the Amber service address for this machine
+  amber config set-token <token>               outside the company network: the token an amber-gateway issued
+                                               (sent as Authorization: Bearer, only over https or to this machine)
 
 context options (defaults come from botmux environment variables):
   --chat oc_...        chat id                ($BOTMUX_CHAT_ID)
@@ -59,14 +61,34 @@ context options (defaults come from botmux environment variables):
 
 exit codes: 0 done, 1 error, 2 usage, 3 still waiting for a person
 service address: $AMBER_URL, else ~/.config/amber-client.json, else amber-client.json next to this command
-{"url": "..."} (both written by
-`amber config set-url`). Each installation sets its own; nothing is built in.
+{"url": "...", "token": "..."} (both written by
+`amber config set-url` / `set-token`). Each installation sets its own; nothing is built in.
+gateway token: $AMBER_TOKEN, else "token" in that file. Inside the company network no token is needed.
 """
-import base64, hashlib, hmac, json, os, sys, time, urllib.request, urllib.error
+import base64, hashlib, hmac, json, os, sys, time, urllib.parse, urllib.request, urllib.error
 
 CONFIG = os.path.expanduser("~/.config/amber-client.json")
 # A copy next to this command: an agent in a sandbox that hides ~/.config can still read the directory it runs amber from.
 LOCAL_CONFIG = os.path.join(os.path.dirname(os.path.realpath(__file__)), "amber-client.json")
+
+
+def read_config(path):
+    with open(path, encoding="utf-8") as f:
+        c = json.load(f)
+    return c if isinstance(c, dict) else {}
+
+
+def service_token():
+    """The amber-gateway token for callers outside the company network; None inside it."""
+    token = os.environ.get("AMBER_TOKEN", "").strip()
+    for path in (CONFIG, LOCAL_CONFIG):
+        if token:
+            break
+        try:
+            token = str(read_config(path).get("token", "")).strip()
+        except (OSError, ValueError):
+            pass
+    return token or None
 
 
 def service_url():
@@ -76,8 +98,7 @@ def service_url():
         if url:
             break
         try:
-            with open(path, encoding="utf-8") as f:
-                url = str(json.load(f).get("url", "")).strip()
+            url = str(read_config(path).get("url", "")).strip()
         except PermissionError:
             denied.append(path)
         except (OSError, ValueError):
@@ -100,11 +121,22 @@ class Usage(Exception):
     pass
 
 
+def auth_headers(base):
+    token = service_token()
+    if not token:
+        return {}
+    # The token is a password: never in clear text over a network (a gateway sits behind HTTPS).
+    host = urllib.parse.urlsplit(base).hostname or ""
+    if not base.startswith("https://") and host not in ("127.0.0.1", "localhost", "::1"):
+        raise SystemExit("amber: 设置了网关令牌，但服务地址 %s 不是 https。令牌只通过 https 发送（本机测试可以用 http://127.0.0.1）" % base)
+    return {"authorization": "Bearer " + token}
+
+
 def call(method, path, body=None, timeout=150):
     global BASE
     BASE = BASE or service_url()
     data = json.dumps(body, ensure_ascii=False).encode("utf-8") if body is not None else None
-    req = urllib.request.Request(BASE + path, data=data, method=method, headers={"content-type": "application/json"})
+    req = urllib.request.Request(BASE + path, data=data, method=method, headers={"content-type": "application/json", **auth_headers(BASE)})
     try:
         with urllib.request.urlopen(req, timeout=timeout) as r:
             return json.loads(r.read().decode("utf-8"))
@@ -393,21 +425,36 @@ def main(argv):
         raise Usage()
     cmd = pos[0]
     if cmd == "config":
-        if len(pos) < 3 or pos[1] != "set-url" or not pos[2].startswith(("http://", "https://")):
+        if len(pos) < 3 or pos[1] not in ("set-url", "set-token"):
             raise Usage()
+        if pos[1] == "set-url" and not pos[2].startswith(("http://", "https://")):
+            raise Usage()
+        key, value = ("url", pos[2].rstrip("/")) if pos[1] == "set-url" else ("token", pos[2].strip())
         written = []
         # Both places: ~/.config for people, next to the command for agents in a sandbox that hides ~/.config.
+        # The other setting in the file is kept (an address and a token are set one at a time).
         for path in (CONFIG, LOCAL_CONFIG):
             try:
+                try:
+                    c = read_config(path)
+                except (OSError, ValueError):
+                    c = {}
+                c[key] = value
                 os.makedirs(os.path.dirname(path), exist_ok=True)
-                with open(path, "w", encoding="utf-8") as f:
-                    json.dump({"url": pos[2].rstrip("/")}, f)
+                # 600: the file may hold a token.
+                fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+                os.fchmod(fd, 0o600)
+                with os.fdopen(fd, "w", encoding="utf-8") as f:
+                    json.dump(c, f)
                 written.append(path)
             except OSError:
                 pass
         if not written:
-            raise SystemExit("amber: 写不了配置文件（%s、%s）。请在沙盒外运行，或者设置环境变量 AMBER_URL" % (CONFIG, LOCAL_CONFIG))
-        print("已设置 Amber 服务地址：%s（写入 %s）" % (pos[2].rstrip("/"), "、".join(written)))
+            raise SystemExit("amber: 写不了配置文件（%s、%s）。请在沙盒外运行，或者设置环境变量 %s" % (CONFIG, LOCAL_CONFIG, "AMBER_URL" if key == "url" else "AMBER_TOKEN"))
+        if key == "url":
+            print("已设置 Amber 服务地址：%s（写入 %s）" % (value, "、".join(written)))
+        else:
+            print("已设置网关令牌（写入 %s，权限 600）" % "、".join(written))
         return 0
     if cmd == "info":
         r = call("GET", "/v1/info")

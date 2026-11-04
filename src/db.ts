@@ -149,6 +149,8 @@ export interface RequestRow {
   args: Record<string, string>; rule: unknown | null; scheduleId: string | null;
   requestedBy: string; replyTo: string | null; inThread: boolean; messageId: string | null; status: RequestStatus;
   runId: string | null; actorUnionId: string | null; error: string | null; createdAt: number; finishedAt: number | null;
+  /** The API caller (machine name) that made it; unset for requests Amber made itself. */
+  machine?: string | null;
 }
 
 export type ScheduleStatus = 'active' | 'paused' | 'deleted';
@@ -450,6 +452,9 @@ export class Store {
     // Where a login link lands (a page app it was sent for); fixed server side, never taken from the URL.
     const loginCols = (this.db.prepare(`PRAGMA table_info(web_logins)`).all() as { name: string }[]).map(c => c.name);
     if (!loginCols.includes('next')) this.db.exec('ALTER TABLE web_logins ADD COLUMN next TEXT');
+    // Which API caller made a request: status lookups through an API link only see their own (api-link.ts).
+    const reqCols = (this.db.prepare(`PRAGMA table_info(requests)`).all() as { name: string }[]).map(c => c.name);
+    if (!reqCols.includes('machine')) this.db.exec('ALTER TABLE requests ADD COLUMN machine TEXT');
   }
 
   /** D28: commands used to hold a list of steps. One-step commands become a single script (same code,
@@ -723,9 +728,9 @@ export class Store {
 
   insertRequest(r: Omit<RequestRow, 'id' | 'status' | 'createdAt' | 'messageId' | 'runId' | 'actorUnionId' | 'error' | 'finishedAt'>): RequestRow {
     const row: RequestRow = { ...r, id: randomUUID(), status: 'awaiting', createdAt: Date.now(), messageId: null, runId: null, actorUnionId: null, error: null, finishedAt: null };
-    this.db.prepare(`INSERT INTO requests (id, kind, command_id, spec_hash, chat_id, chat_type, target_union_id, args_json, rule_json, schedule_id, requested_by, reply_to, in_thread, status, created_at)
-      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(row.id, row.kind, row.commandId, row.specHash, row.chatId, row.chatType, row.targetUnionId,
-      JSON.stringify(row.args), row.rule ? JSON.stringify(row.rule) : null, row.scheduleId, row.requestedBy, row.replyTo, row.inThread ? 1 : 0, row.status, row.createdAt);
+    this.db.prepare(`INSERT INTO requests (id, kind, command_id, spec_hash, chat_id, chat_type, target_union_id, args_json, rule_json, schedule_id, requested_by, reply_to, in_thread, status, created_at, machine)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(row.id, row.kind, row.commandId, row.specHash, row.chatId, row.chatType, row.targetUnionId,
+      JSON.stringify(row.args), row.rule ? JSON.stringify(row.rule) : null, row.scheduleId, row.requestedBy, row.replyTo, row.inThread ? 1 : 0, row.status, row.createdAt, row.machine ?? null);
     return row;
   }
 
@@ -749,6 +754,7 @@ export class Store {
       requestedBy: String(r.requested_by), replyTo: (r.reply_to as string) ?? null, inThread: Number(r.in_thread) === 1,
       messageId: (r.message_id as string) ?? null, status: r.status as RequestStatus, runId: (r.run_id as string) ?? null,
       actorUnionId: (r.actor_union_id as string) ?? null, error: (r.error as string) ?? null, createdAt: Number(r.created_at), finishedAt: r.finished_at ? Number(r.finished_at) : null,
+      machine: (r.machine as string) ?? null,
     };
   }
 

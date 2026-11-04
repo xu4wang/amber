@@ -92,6 +92,7 @@ Amber 是**琥珀**。琥珀把一瞬间的东西封存起来，过很多年取�
 | [安装与部署](docs/install.md) | 环境要求、配置文件、launchd 常驻、nginx、运维 |
 | [飞书应用配置](docs/feishu-setup.md) | 权限清单、长连接事件、审批定义、知识库、发布检查 |
 | [执行端](docs/executor.md) | 在数据所在的机器上执行：装执行端、登记运行环境 |
+| [外网网关](docs/gateway.md) | 公司网络外的调用方（豆包 skill、外网 agent）经网关使用 Amber，Amber 主动连出去，内网不开入站端口 |
 | [概念模型](docs/concepts.md) · [脚本约定](docs/script.md) | 给开发人员：对象之间的关系、脚本的输入输出与沙箱 |
 | [agent 接入：命令行、skill 与接口](docs/cli-and-skill.md) | 安装、命令、三档行为、定时任务、触发器、接口、读取密钥、读取个人数据 |
 | [可信身份](docs/identity.md) · [完整示例](docs/identity-example.md) | 身份从哪来、网站登录、执行身份凭证与服务方验证 |
