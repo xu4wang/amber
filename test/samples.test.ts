@@ -62,6 +62,17 @@ if os.environ.get("FAKE_ERR") == "other":
 if k == "api GET" and a[2] == "/open-apis/authen/v1/user_info":
     print(json.dumps({"code": 0, "data": {"open_id": "ou_me"}}))
     sys.exit(0)
+if k == "api POST":
+    # 汇报：只有这一个 POST（查询接口），两页
+    assert a[2] == "/open-apis/report/v1/tasks/query", a
+    body = json.loads(a[a.index("--data") + 1])
+    assert body["commit_end_time"] - body["commit_start_time"] == int(os.environ.get("FAKE_HOURS", "24")) * 3600, body
+    rep = lambda i, rule, who, uid, t, fields: {"task_id": "r%d" % i, "rule_name": rule, "from_user_name": who, "from_user_id": uid, "department_name": "China Sales", "commit_time": t, "to_user_names": ["朱总"], "form_contents": [{"field_id": str(n), "field_name": k, "field_value": v} for n, (k, v) in enumerate(fields)]}
+    if body["page_token"] == "":
+        print(json.dumps({"code": 0, "data": {"items": [rep(1, "销售日报", "张三", "ou_zs", 1793000000, [("需求描述", "客户要 THB 实时到账"), ("协调帮助", ""), ("市场情报", "竞品降费")]), rep(2, "工作周报", "我", "ou_me", 1793100000, [("本周", "写周报")])], "has_more": True, "page_token": "p2"}}))
+    else:
+        print(json.dumps({"code": 0, "data": {"items": [rep(3, "销售日报", "李四", "ou_ls", 1793200000, [("需求描述", "x" * 5000)]), rep(1, "销售日报", "张三", "ou_zs", 1793000000, [])], "has_more": False}}))
+    sys.exit(0)
 if k == "api GET" and a[2].startswith("/open-apis/task/v2/tasklists/"):
     print(json.dumps({"code": 0, "data": {"tasklist": {"name": "清单" + a[2].rsplit("/", 1)[1][:3]}}}))
     sys.exit(0)
@@ -160,9 +171,17 @@ print(json.dumps({"ok": True, "data": data}))
   assert.match(t2, /共 2 个/); assert.doesNotMatch(t2, /跟进合同/);
   assert.match(run({ op: '搜任务', q: '合同' }), /合同审批（未完成；相关；截止 2026-11-01 18:00）  https:\/\/x\/t9/);
   assert.throws(() => run({ op: '搜任务' }), 'a keyword is required');
-  // Read-only: every command it ran is a read.
+  // Reports: the person's own and received ones (both pages, once each), filtered by rule name, newest first, every field.
+  const r1 = run({ op: '汇报', q: '销售日报', hours: '336' }, { FAKE_HOURS: '336' });
+  assert.match(r1, /飞书汇报「销售日报」（最近 336 小时提交的，共 2 份：我提交的 0，我收到的 2）/);
+  assert.doesNotMatch(r1, /工作周报/); assert.ok(r1.indexOf('李四') < r1.indexOf('张三'), 'newest first');
+  assert.match(r1, /销售日报 · 张三（China Sales） · .* 提交 · 汇报给 朱总  `r1`\n  需求描述：客户要 THB 实时到账\n  协调帮助：（空，或是附件 \/ 图片）\n  市场情报：竞品降费/);
+  assert.match(r1, /需求描述：x{2000}…/, 'one field is capped');
+  const r2 = run({ op: '汇报' });
+  assert.match(r2, /共 3 份：我提交的 1，我收到的 2/); assert.match(r2, /按规则：销售日报 2，工作周报 1/);
+  // Read-only: every command it ran is a read (the one POST is the report query).
   const used = new Set(readFileSync(log, 'utf8').trim().split('\n').map(l => JSON.parse(l).slice(0, 2).join(' ')));
-  assert.deepEqual([...used].sort(), ['api GET', 'docs +fetch', 'im +chat-messages-list', 'im +chat-search', 'im +messages-search', 'im +threads-messages-list', 'mail +message', 'mail +triage', 'minutes +detail', 'minutes +search', 'task +get-related-tasks', 'task +search']);
+  assert.deepEqual([...used].sort(), ['api GET', 'api POST', 'docs +fetch', 'im +chat-messages-list', 'im +chat-search', 'im +messages-search', 'im +threads-messages-list', 'mail +message', 'mail +triage', 'minutes +detail', 'minutes +search', 'task +get-related-tasks', 'task +search']);
 });
 
 test('samples: amber submit takes app.json as it is in the repo (code file, this chat, --user)', async () => {
