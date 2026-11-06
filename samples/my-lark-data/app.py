@@ -214,6 +214,15 @@ def task_roles(t, me):
 TASKLIST_NAMES = {}
 
 
+def my_open_id():
+    """本人的 open_id（分角色、分「我提交的」用）；取不到返回 None，不影响其余结果。"""
+    try:
+        r = subprocess.run([CLI, "api", "GET", "/open-apis/authen/v1/user_info", "--as", "user"], env=ENV, capture_output=True, text=True, timeout=30)
+        return ((parse_json(r.stdout) or {}).get("data") or {}).get("open_id")
+    except Exception:
+        return None
+
+
 def tasklist_name(guid):
     if guid in TASKLIST_NAMES:
         return TASKLIST_NAMES[guid]
@@ -368,12 +377,7 @@ elif OP == "读妙记":
         if os.path.exists(name):
             os.remove(name)
 elif OP in ("我的任务", "搜任务"):
-    me = None
-    try:
-        r = subprocess.run([CLI, "api", "GET", "/open-apis/authen/v1/user_info", "--as", "user"], env=ENV, capture_output=True, text=True, timeout=30)
-        me = ((parse_json(r.stdout) or {}).get("data") or {}).get("open_id")
-    except Exception:
-        pass
+    me = my_open_id()
     if OP == "搜任务":
         if not Q:
             sys.exit("搜任务要在「内容」里写关键词")
@@ -418,6 +422,47 @@ elif OP in ("我的任务", "搜任务"):
         lines += [task_line(t, me) for t in pick[:LIMIT]]
         if not me:
             lines.append("\n（没取到你的飞书 open_id，角色显示为「相关」）")
+elif OP == "汇报":
+    # 飞书汇报：用个人身份时，接口只返回本人提交的和本人收到的汇报（看不到别人之间的）。q 是汇报规则名（写一部分也行），不写就是全部规则。
+    me = my_open_id()
+    t_end, t_start = int(now.timestamp()), int(start.timestamp())
+    reports, seen, token = [], set(), ""
+    for _ in range(50):
+        d = lark(["api", "POST", "/open-apis/report/v1/tasks/query", "--data", json.dumps(
+            {"commit_start_time": t_start, "commit_end_time": t_end, "page_size": 20, "page_token": token})])
+        for t in items(d):
+            if isinstance(t, dict) and t.get("task_id") not in seen:
+                seen.add(t.get("task_id"))
+                reports.append(t)
+        token = d.get("page_token") if isinstance(d, dict) and d.get("has_more") else ""
+        if not token:
+            break
+    if Q:
+        reports = [t for t in reports if Q in str(t.get("rule_name") or "")]
+    reports.sort(key=lambda t: -int(t.get("commit_time") or 0))
+    mine = [t for t in reports if me and t.get("from_user_id") == me]
+    rules, people = {}, {}
+    for t in reports:
+        rules[t.get("rule_name") or "?"] = rules.get(t.get("rule_name") or "?", 0) + 1
+        people[t.get("from_user_name") or "?"] = people.get(t.get("from_user_name") or "?", 0) + 1
+    lines.append("# 飞书汇报%s（最近 %d 小时提交的，共 %d 份%s）" % (
+        "「%s」" % Q if Q else "", HOURS, len(reports), "：我提交的 %d，我收到的 %d" % (len(mine), len(reports) - len(mine)) if me else ""))
+    lines.append("只包括你本人提交的和你收到的汇报。")
+    if reports:
+        lines.append("- 按规则：" + "，".join("%s %d" % kv for kv in sorted(rules.items(), key=lambda kv: -kv[1])))
+        lines.append("- 按提交人：" + "，".join("%s %d" % kv for kv in sorted(people.items(), key=lambda kv: -kv[1])))
+    lines.append("\n## 明细（%d 份%s，新的在前）" % (len(reports), "，只列前 %d 份" % LIMIT if len(reports) > LIMIT else ""))
+    for t in reports[:LIMIT]:
+        when = datetime.fromtimestamp(int(t.get("commit_time") or 0), TZ).strftime("%Y-%m-%d %H:%M")
+        to = "、".join(t.get("to_user_names") or []) or "?"
+        lines.append("- %s · %s（%s） · %s 提交 · 汇报给 %s  `%s`" % (
+            t.get("rule_name") or "?", t.get("from_user_name") or "?", t.get("department_name") or "?", when, to, t.get("task_id") or ""))
+        for f in t.get("form_contents") or []:
+            if isinstance(f, dict):
+                v = clean(f.get("field_value") or "")
+                lines.append("  %s：%s" % (f.get("field_name") or "?", v or "（空，或是附件 / 图片）"))
+    if not me:
+        lines.append("\n（没取到你的飞书 open_id，分不出哪些是你提交的）")
 elif OP == "读文档":
     if not Q:
         sys.exit("读文档要在「内容」里写文档链接或 token")
@@ -429,7 +474,7 @@ elif OP == "读文档":
     lines.append(text if isinstance(text, str) else json.dumps(text, ensure_ascii=False))
 
 out = "\n".join(lines)
-if OP in ("搜消息", "会话记录", "找会话", "搜邮件", "搜妙记", "我的任务", "搜任务") and len(out) > LIST_MAX:
+if OP in ("搜消息", "会话记录", "找会话", "搜邮件", "搜妙记", "我的任务", "搜任务", "汇报") and len(out) > LIST_MAX:
     # 按整行截，并说清还剩几条，不让 agent 以为看到的就是全部。
     n, size = 0, 0
     while n < len(lines) and size + len(lines[n]) + 1 <= LIST_MAX:
