@@ -154,6 +154,12 @@ export function person(openId: string | undefined): string {
   return `<at id=${openId}></at>`;
 }
 
+/** Shows a person's name by open_id without notifying them (card 2.0 <person> tag). */
+export function personName(openId: string | undefined): string {
+  if (!openId || !/^ou_[A-Za-z0-9]+$/.test(openId)) return '（未知用户）';
+  return `<person id='${openId}' show_name=true show_avatar=false style='normal'></person>`;
+}
+
 /** Splits ```vega-lite fences out of markdown and turns simple bar/line specs into card charts. */
 export function markdownWithCharts(md: string, mentions?: Mentions): unknown[] {
   const els: unknown[] = [];
@@ -502,7 +508,7 @@ export function scheduleListCard(items: ScheduleView[], scopeLabel: string): obj
 export function scheduleResultCard(name: string, creatorOpenId: string | undefined, blocks: Block[], runId: string, elapsedMs: number, scheduleId: string, ruleText: string, mentions?: Mentions): object {
   return shell(`⏰ 定时：${name}`, 'green', [
     ...renderBlocks(blocks, mentions),
-    { tag: 'markdown', content: `${sanitizeMarkdown(ruleText, 60)} · 以 ${person(creatorOpenId)} 的身份执行 · ${(elapsedMs / 1000).toFixed(1)} 秒 · run ${runId} · 任务 ${scheduleId}`, text_size: 'notation' },
+    { tag: 'markdown', content: `${sanitizeMarkdown(ruleText, 60)} · 以 ${personName(creatorOpenId)} 的身份执行 · ${(elapsedMs / 1000).toFixed(1)} 秒 · run ${runId} · 任务 ${scheduleId}`, text_size: 'notation' },
   ]);
 }
 
