@@ -124,6 +124,8 @@ test('a new version shows the diff, only the owner may claim it, and it replaces
       creator: { unionId: env.alice.unionId, openId: env.alice.openId, chatId: GROUP, chatType: 'group', channel: 'web' },
       args: {}, rule: { kind: 'daily', time: '09:00', tz: 'Asia/Shanghai' }, requestedBy: 'test', via: {},
     });
+    // A due run that waits for a slot holds the row as it was then (still naming v1).
+    const queued = env.amber.store.getSchedule(sch.id)!;
     const v2code = script('import json,sys\nprint("您好（第 2 版）")');
     const r = await env.submit({ chatId: GROUP, chatType: 'group', name: '问候', params: [], script: v2code, options: { schedulable: true } });
     assert.equal(r.ok, true);
@@ -156,6 +158,18 @@ test('a new version shows the diff, only the owner may claim it, and it replaces
     assert.equal(s.status, 'active');
     assert.equal(s.commandId, r.id);
     assert.equal(env.amber.store.versionsOf(r.id).length, 1);
+    // That queued run gets its slot only now: it runs the rebound version instead of pausing the schedule as retired.
+    await env.amber.bot.scheduler.runOnce(queued, false);
+    const ran = env.amber.store.getSchedule(sch.id)!;
+    assert.equal(ran.status, 'active', ran.pauseReason ?? '');
+    assert.equal(ran.lastStatus, 'ok');
+    // Paused or deleted while it waited: it does not run.
+    env.amber.bot.scheduler.pauseBy(ran, env.alice.unionId, '手动暂停');
+    await env.amber.bot.scheduler.runOnce(ran, false);
+    assert.equal(env.amber.store.getSchedule(sch.id)!.lastRunId, ran.lastRunId);
+    env.amber.bot.scheduler.remove(env.amber.store.getSchedule(sch.id)!, env.alice.unionId);
+    await env.amber.bot.scheduler.runOnce(ran, false);
+    assert.equal(env.amber.store.getSchedule(sch.id), undefined);
   } finally { await env.close(); }
 });
 
