@@ -89,7 +89,12 @@ export class Scheduler {
   }
 
   /** One execution. `manual` = 「立即运行」 from the list card (same rules, same identity). */
-  async runOnce(s: ScheduleRow, manual: boolean): Promise<void> {
+  async runOnce(queued: ScheduleRow, manual: boolean): Promise<void> {
+    // The row as it is now: a due run can wait for a slot, and meanwhile the creator may have rebound the schedule to a
+    // new version (11-09/11-10: the stale row still named the retired version and got paused as 「应用已下线」), or it
+    // was paused or deleted. Only an active schedule runs on its own; 「立即运行」 keeps its rules.
+    const s = this.store.getSchedule(queued.id);
+    if (!s || (!manual && s.status !== 'active')) return;
     this.running.add(s.id);
     try {
       const cmd = this.store.getCommand(s.commandId);
