@@ -82,7 +82,9 @@ export interface ScriptInput {
 }
 
 /** envProven: the executor checked the job's envProof (self-use without review) and it held. */
-export interface ScriptResult { ok: boolean; content: string; error?: string; envProven?: boolean }
+/** `unreachable`: the job never reached the executor (offline, not picked up, or full): the script did not run, so a
+ *  schedule does not count it as the command failing (scheduler.ts). */
+export interface ScriptResult { ok: boolean; content: string; error?: string; envProven?: boolean; unreachable?: boolean }
 
 export function validateScript(s: unknown): Script {
   const x = s as Record<string, unknown>;

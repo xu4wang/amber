@@ -404,8 +404,8 @@ export class ExecutorHub {
     const e = this.store.approvedExecutor(p.executor);
     if (!e) return { ok: false, content: '', error: `执行端 ${p.executor} 还没有登记或没有被管理员批准` };
     if (!e.envs[p.env]) return { ok: false, content: '', error: `执行端 ${p.executor} 没有环境「${p.env}」` };
-    if (!this.online(e)) return { ok: false, content: '', error: `执行端 ${p.executor} 离线（最后在线：${e.lastSeen ? new Date(e.lastSeen).toISOString() : '从未'}），这次没有执行` };
-    if ([...this.jobs.values()].filter(j => j.executorId === e.id).length >= this.maxJobs) return { ok: false, content: '', error: `执行端 ${p.executor} 正在处理的任务太多，这次没有执行，请稍后再试` };
+    if (!this.online(e)) return { ok: false, unreachable: true, content: '', error: `执行端 ${p.executor} 离线（最后在线：${e.lastSeen ? new Date(e.lastSeen).toISOString() : '从未'}），这次没有执行` };
+    if ([...this.jobs.values()].filter(j => j.executorId === e.id).length >= this.maxJobs) return { ok: false, unreachable: true, content: '', error: `执行端 ${p.executor} 正在处理的任务太多，这次没有执行，请稍后再试` };
     const jobId = randomUUID();
     // script.timeoutMs is already the effective limit for this run (engine.ts); the executor is told it too.
     const timeoutMs = (script.timeoutMs ?? 60000) + RESULT_GRACE_MS;
@@ -415,9 +415,9 @@ export class ExecutorHub {
     return await new Promise<ScriptResult>(resolve => {
       const calls = Object.fromEntries(Object.entries(script.services ?? {}).map(([n, u]) => [n, u.calls]));
       const job: PendingJob = { runId: input.runId, executorId: e.id, picked: false, resolve, timer: setTimeout(() => {}, 0), calls, ...(opts.grant ? { grant: opts.grant } : {}) };
-      const fail = (msg: string) => this.finish(jobId, { ok: false, content: '', error: msg });
+      const fail = (msg: string, unreachable = false) => this.finish(jobId, { ok: false, content: '', error: msg, ...(unreachable ? { unreachable } : {}) });
       job.timer = setTimeout(() => {
-        if (!job.picked) return fail(`执行端 ${p.executor} 没有取走任务（可能刚刚离线），这次没有执行`);
+        if (!job.picked) return fail(`执行端 ${p.executor} 没有取走任务（可能刚刚离线），这次没有执行`, true);
         job.timer = setTimeout(() => fail(`执行端 ${p.executor} 没有在时限内返回结果`), timeoutMs);
       }, this.pickupMs);
       this.jobs.set(jobId, job);

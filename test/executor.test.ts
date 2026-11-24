@@ -235,6 +235,7 @@ test('executor: offline fails the run at once; a changed environment needs appro
     const busy = five.filter(r => !r.ok);
     assert.equal(busy.length, 1, JSON.stringify(five));
     assert.match(busy[0].error!, /繁忙/);
+    assert.equal(busy[0].unreachable, undefined, 'a busy script is not an unreachable executor');
     assert.ok(busy[0].at < 2500, `refused at once, not after the timeout (${busy[0].at}ms)`);
     assert.equal(five.filter(r => r.ok && /slow/.test(r.content)).length, 4);
     // Offline: killed, and not seen for longer than onlineMs.
@@ -244,8 +245,12 @@ test('executor: offline fails the run at once; a changed environment needs appro
     const waiting = [hub.run(slow.script as any, slow, specHashOf(slow), input), hub.run(slow.script as any, slow, specHashOf(slow), input)];
     const over = await hub.run(slow.script as any, slow, specHashOf(slow), input);
     assert.match(over.error!, /任务太多/);
+    assert.equal(over.unreachable, true);
     void waiting;
     await new Promise(r => setTimeout(r, 2200));
+    const off = await hub.run(slow.script as any, slow, specHashOf(slow), input);
+    assert.match(off.error!, /离线/);
+    assert.equal(off.unreachable, true);
     const t0 = Date.now();
     await env.say(alice, GROUP, '远程');
     await env.waitFor(() => fake.sent.some(s => /离线/.test(FakeFeishu.text(fake.cardOf(s.id)))));

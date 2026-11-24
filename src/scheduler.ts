@@ -19,6 +19,10 @@ const TICK_MS = 30_000;
 const LATE_MS = 2 * 60_000;
 const MAX_CONCURRENT = 2;
 const MAX_FAILS = 3;
+/** An executor that is briefly unreachable (its machine overloaded for a minute) is not news: a schedule hears about it
+ *  only once it lasts this long, or at once when its next run is further away than this (11-24: KOL哨兵, every 5–15
+ *  minutes, raised a card per run each time dev-prem stalled for a few minutes). */
+export const UNREACHABLE_NOTIFY_MS = 30 * 60_000;
 export const MAX_PER_CHAT = 20;
 
 export const CREATOR_LEFT = '创建人已不在群里';
@@ -27,6 +31,8 @@ export class Scheduler {
   private store: Store;
   private deps: Deps;
   private running = new Set<string>();
+  /** Schedule id → when its runs started finding the executor unreachable (in memory: a restart only restarts the wait). */
+  private unreachableSince = new Map<string, number>();
   private active = 0;
   private queue: (() => void)[] = [];
 
@@ -139,6 +145,23 @@ export class Scheduler {
         return;
       }
       if (r.runId) this.store.setRunSchedule(r.runId, s.id);
+      // The job never reached the executor: the app did not run, so it is not the app failing (no fail count, no pause).
+      // Quiet while it is short and the next run comes soon; one notice once it is not, then nothing until a run gets through.
+      if (!r.ok && r.unreachable) {
+        const now = Date.now();
+        const since = this.unreachableSince.get(s.id) ?? now;
+        this.unreachableSince.set(s.id, since);
+        const told = s.lastStatus === 'unreachable_notified';
+        const next = this.store.getSchedule(s.id)?.nextRunAt ?? 0;
+        const due = now - since >= UNREACHABLE_NOTIFY_MS || next - now > UNREACHABLE_NOTIFY_MS;
+        this.store.updateSchedule(s.id, { lastRunId: r.runId || null, lastRunAt: now, lastStatus: told || due ? 'unreachable_notified' : 'unreachable' });
+        log('schedule executor unreachable', s.id, r.error);
+        if (manual || (due && !told)) {
+          await this.notifyCreator(s, `定时任务这次没有执行：${name}`, `定时任务 ${s.id}（${ruleText}）这次没有执行：${r.error}\n\n执行端暂时连不上，不算这个任务失败，不会因此暂停；恢复后照常运行，期间不再重复通知。`);
+        }
+        return;
+      }
+      this.unreachableSince.delete(s.id);
       if (!r.ok) {
         const fails = s.failCount + 1;
         this.store.updateSchedule(s.id, { lastRunId: r.runId || null, lastRunAt: Date.now(), lastStatus: 'failed', failCount: fails });
@@ -256,7 +279,7 @@ export class Scheduler {
 
   view(s: ScheduleRow, viewer?: string): ScheduleView & { command: string; args: Record<string, string>; rule: Rule; nextRunAt: number; lastStatus: string | null; lastRunId: string | null } {
     const cmd = this.store.getCommand(s.commandId);
-    const last = s.lastRunAt ? `上次 ${formatAt(s.lastRunAt, s.rule.tz)} ${({ ok: '成功', ok_silent: '成功（无输出）', failed: '失败', missed: '错过（Amber 未运行）', skipped_overlap: '跳过（上次未结束）', delivery_failed: '结果发送失败', server_error: '未执行（Amber 服务端问题）' } as Record<string, string>)[s.lastStatus ?? ''] ?? ''}` : '还没运行过';
+    const last = s.lastRunAt ? `上次 ${formatAt(s.lastRunAt, s.rule.tz)} ${({ ok: '成功', ok_silent: '成功（无输出）', failed: '失败', missed: '错过（Amber 未运行）', skipped_overlap: '跳过（上次未结束）', delivery_failed: '结果发送失败', server_error: '未执行（Amber 服务端问题）', unreachable: '未执行（执行端暂时连不上）', unreachable_notified: '未执行（执行端连不上）' } as Record<string, string>)[s.lastStatus ?? ''] ?? ''}` : '还没运行过';
     return {
       id: s.id, name: cmd?.name ?? s.commandId, command: cmd?.name ?? s.commandId, ruleText: describeRule(s.rule), nextText: formatAt(s.nextRunAt, s.rule.tz),
       status: s.status, pauseReason: s.pauseReason, creatorOpenId: s.creatorOpenId, lastText: last, canManage: viewer ? this.canManage(s, viewer) : false, mine: !!viewer && viewer === s.creatorUnionId,
