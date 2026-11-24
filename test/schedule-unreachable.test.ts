@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import { makeEnv, activate, script, GROUP } from './env.ts';
 import { FakeFeishu } from './fake-feishu.ts';
 import { executorHub } from '../src/engine.ts';
-import { UNREACHABLE_NOTIFY_MS } from '../src/scheduler.ts';
+import { UNREACHABLE_NOTIFY_MS, UNREACHABLE_PAUSE_MS, UNREACHABLE_PAUSED } from '../src/scheduler.ts';
 
 const HELLO = script('print("你好")');
 
@@ -51,7 +51,9 @@ test('an unreachable executor: no failure, no pause; a frequent schedule hears o
     assert.equal(notices(every5.id).length, 1);
 
     // A daily schedule would not try again for a day: it hears at once.
-    const daily = await mk({ kind: 'daily', time: '09:00', tz: 'Asia/Shanghai' });
+    // Its time is two hours ago, so the next run is a day away whenever the test runs (a fixed 09:00 failed at 08:30–09:00).
+    const twoHoursAgo = new Date(Date.now() - 2 * 3600_000).toLocaleTimeString('en-GB', { timeZone: 'Asia/Shanghai', hour: '2-digit', minute: '2-digit', hour12: false });
+    const daily = await mk({ kind: 'daily', time: twoHoursAgo, tz: 'Asia/Shanghai' });
     const d = await run(daily.id);
     assert.equal(d.status, 'active');
     assert.equal(d.failCount, 0);
@@ -66,5 +68,15 @@ test('an unreachable executor: no failure, no pause; a frequent schedule hears o
     assert.equal(f.lastStatus, 'failed');
     assert.equal(f.failCount, 1);
     assert.equal(notices(every5.id).length, 3);
+
+    // Unreachable for a day: most likely gone for good, so the schedule pauses and its creator hears why.
+    (hub as any).runLocal = () => Promise.resolve({ ok: false, unreachable: true, content: '', error: '执行端 box 离线（最后在线：…），这次没有执行' });
+    const gone = await mk({ kind: 'minutely', every: 5, tz: 'Asia/Shanghai' });
+    assert.equal((await run(gone.id)).status, 'active');
+    (sch as any).unreachableSince.set(gone.id, Date.now() - UNREACHABLE_PAUSE_MS - 1000);
+    const g = await run(gone.id);
+    assert.equal(g.status, 'paused');
+    assert.equal(g.pauseReason, UNREACHABLE_PAUSED);
+    assert.match(FakeFeishu.text(notices(gone.id).at(-1)!.card), /超过 24 小时连不上，任务已暂停/);
   } finally { await env.close(); }
 });

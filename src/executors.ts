@@ -402,7 +402,11 @@ export class ExecutorHub {
     const p = parseEnv(script.env ?? '');
     if (!p) return { ok: false, content: '', error: '执行位置（env）写得不对' };
     const e = this.store.approvedExecutor(p.executor);
-    if (!e) return { ok: false, content: '', error: `执行端 ${p.executor} 还没有登记或没有被管理员批准` };
+    if (!e) {
+      // Waiting for an admin (11-23: an environment was added and moved, the approval lapsed for 3 minutes): temporary.
+      if (this.store.listExecutors().some(x => x.name === p.executor && x.status === 'pending')) return { ok: false, unreachable: true, content: '', error: `执行端 ${p.executor} 还没有被管理员批准（正在等批准，比如登记的环境刚有变化），这次没有执行` };
+      return { ok: false, content: '', error: `执行端 ${p.executor} 还没有登记或没有被管理员批准` };
+    }
     if (!e.envs[p.env]) return { ok: false, content: '', error: `执行端 ${p.executor} 没有环境「${p.env}」` };
     if (!this.online(e)) return { ok: false, unreachable: true, content: '', error: `执行端 ${p.executor} 离线（最后在线：${e.lastSeen ? new Date(e.lastSeen).toISOString() : '从未'}），这次没有执行` };
     if ([...this.jobs.values()].filter(j => j.executorId === e.id).length >= this.maxJobs) return { ok: false, unreachable: true, content: '', error: `执行端 ${p.executor} 正在处理的任务太多，这次没有执行，请稍后再试` };

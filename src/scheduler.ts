@@ -23,6 +23,9 @@ const MAX_FAILS = 3;
  *  only once it lasts this long, or at once when its next run is further away than this (11-24: KOL哨兵, every 5–15
  *  minutes, raised a card per run each time dev-prem stalled for a few minutes). */
 export const UNREACHABLE_NOTIFY_MS = 30 * 60_000;
+/** Unreachable this long (counted in memory, so from Amber's last restart at most): the schedule pauses. */
+export const UNREACHABLE_PAUSE_MS = 24 * 3600_000;
+export const UNREACHABLE_PAUSED = '执行端超过 24 小时连不上';
 export const MAX_PER_CHAT = 20;
 
 export const CREATOR_LEFT = '创建人已不在群里';
@@ -151,6 +154,14 @@ export class Scheduler {
         const now = Date.now();
         const since = this.unreachableSince.get(s.id) ?? now;
         this.unreachableSince.set(s.id, since);
+        // Gone for a day: most likely not coming back (machine retired, key revoked). Stop instead of failing every run.
+        if (now - since >= UNREACHABLE_PAUSE_MS) {
+          this.unreachableSince.delete(s.id);
+          this.store.updateSchedule(s.id, { lastRunId: r.runId || null, lastRunAt: now, lastStatus: 'unreachable_notified' });
+          this.pause(s, UNREACHABLE_PAUSED);
+          await this.notifyCreator(s, `定时任务已暂停：${name}`, `定时任务 ${s.id}（${ruleText}）的执行端已经超过 24 小时连不上，任务已暂停：${r.error}\n\n执行端恢复后，可以在定时任务列表里恢复这个任务。`);
+          return;
+        }
         const told = s.lastStatus === 'unreachable_notified';
         const next = this.store.getSchedule(s.id)?.nextRunAt ?? 0;
         const due = now - since >= UNREACHABLE_NOTIFY_MS || next - now > UNREACHABLE_NOTIFY_MS;

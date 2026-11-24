@@ -260,6 +260,14 @@ test('executor: offline fails the run at once; a changed environment needs appro
     start();
     await env.waitFor(() => cards().length === 2);
     assert.equal(env.amber.store.approvedExecutor('box2'), undefined);
+    // Waiting for an admin to approve the new list is temporary: unreachable, not the app failing.
+    const waitApproval = await hub.run(slow.script as any, slow, specHashOf(slow), input);
+    assert.match(waitApproval.error!, /正在等批准/);
+    assert.equal(waitApproval.unreachable, true);
+    // An executor nobody ever registered under that name is a real failure.
+    const none = await hub.run({ ...slow.script, env: 'nobox/e' } as any, slow, specHashOf(slow), input);
+    assert.match(none.error!, /还没有登记/);
+    assert.equal(none.unreachable, undefined);
     assert.ok(id);
   } finally {
     child?.kill('SIGKILL');
