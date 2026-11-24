@@ -66,6 +66,8 @@ const RETIRE_CONFIRM_MS = 5 * 60_000;
 /** Feishu stops updating a card 14 days after it was sent; an hour of margin for clocks and slow clicks. */
 export const STALE_CARD_MS = 14 * 24 * 3600_000 - 3600_000;
 const CARD_TIME_WAIT_MS = 1500;
+/** Key on a card action's answer naming the card a background step will update (onCardAction). */
+const STALE_PLACEHOLDER = Symbol('staleCard');
 
 export class AmberBot {
   private client: lark.Client;
@@ -1074,21 +1076,24 @@ export class AmberBot {
     // Where later updates of this card go (a run's result, a trial's): this card, or the new one sent for it.
     let settle!: (id: string | undefined) => void;
     const target = new Promise<string | undefined>(r => { settle = r; });
-    let to = messageId;
+    let settled = false;
     try {
       const [res, old] = await Promise.all([this.handleCardAction(d, target), messageId ? this.cardTooOld(messageId) : Promise.resolve(false)]);
-      const card = (res as any)?.card?.data;
+      // A step that finishes in the background (提交审核) answers with a toast only; on an old card its later update
+      // needs a card of its own to land on, so it names one here (never sent to Feishu as part of the answer).
+      const later = (res as any)?.[STALE_PLACEHOLDER];
+      if (later) delete (res as any)[STALE_PLACEHOLDER];
+      const card = (res as any)?.card?.data ?? later;
       if (!old || !card || !messageId) return res;
-      try {
-        const r = await this.client.im.v1.message.reply({ path: { message_id: messageId }, data: { msg_type: 'interactive', content: JSON.stringify(card), reply_in_thread: false } }) as any;
-        to = r?.data?.message_id;
-      } catch (e: any) {
-        to = undefined;
-        log('stale card reply failed', messageId, e?.response?.data?.code ?? e?.message);
-        return { toast: { type: 'error', content: '这张卡片发出已超过 14 天，飞书不再允许更新，请重新呼出 Amber 菜单' } };
-      }
-      return { toast: { type: 'info', content: '这张卡片发出已超过 14 天，飞书不再允许更新，已在下面发了一张新的' } };
-    } finally { settle(to); }
+      // Sent in the background: the callback has to be answered within about 3 seconds, and the step itself may
+      // already have used most of them.
+      settled = true;
+      void this.client.im.v1.message.reply({ path: { message_id: messageId }, data: { msg_type: 'interactive', content: JSON.stringify(card), reply_in_thread: false } }).then(
+        (r: any) => settle(r?.data?.message_id),
+        (e: any) => { log('stale card reply failed', messageId, e?.response?.data?.code ?? e?.message); settle(undefined); },
+      );
+      return { toast: { type: 'info', content: '这张卡片发出已超过 14 天，飞书不再允许更新，新的卡片会发在下面' } };
+    } finally { if (!settled) settle(messageId); }
   }
 
   /** Sent more than STALE_CARD_MS ago. Looked up once per message (the time never changes), within a short wait:
@@ -1154,9 +1159,15 @@ export class AmberBot {
         void work.then(
           async card => { const to = await target; if (to) await this.patch(to, card); },
           // The command is back to draft, so the claim card stays usable: leave it and reply instead.
-          async e => { if (messageId) await this.replyCard(messageId, false, errorCard('提交审核失败', e instanceof AmberError ? e.message : '出错了')).catch(() => {}); },
+          async e => {
+            const card = errorCard('提交审核失败', e instanceof AmberError ? e.message : '出错了');
+            // On an old card the placeholder sent for it says 正在发起审批: it is the one to correct.
+            const to = await target;
+            if (to && to !== messageId) await this.patch(to, card);
+            else if (messageId) await this.replyCard(messageId, false, card).catch(() => {});
+          },
         );
-        return { toast: { type: 'info', content: '正在发起审批，结果会更新在这张卡片上' } };
+        return { toast: { type: 'info', content: '正在发起审批，结果会更新在这张卡片上' }, [STALE_PLACEHOLDER]: this.footed(infoCard('提交审核', '正在发起审批，结果会更新在这张卡片上。')) };
       }
       if (typeof value.a === 'string' && value.a.startsWith('claim_')) {
         if (value.a === 'claim_self' && this.trialsRunning.has(String(value.c))) return { toast: { type: 'info', content: '试运行还在进行中，等结果出来后再操作' } };

@@ -50,3 +50,38 @@ test('a click on a card older than 14 days gets a new card instead of updating t
     assert.match(JSON.stringify(unknown), /"a":"run"/);
   } finally { await env.close(); }
 });
+
+test('提交审核 that finishes in the background on an old claim card: its result lands on the new card', async () => {
+  const env = await makeEnv();
+  const { fake, alice } = env;
+  try {
+    (env.amber.bot as any).claimSubmitWaitMs = 100;
+    const r = await env.submit({ chatId: GROUP, chatType: 'group', name: '问候', params: [], script: script('print("hi")') });
+    await env.click(alice, r.claimMessageId, { a: 'claim_try', c: r.id });
+    await env.waitFor(() => /claim_submit/.test(JSON.stringify(fake.cardOf(r.claimMessageId))));
+    const claim = fake.sent.find(s => s.id === r.claimMessageId)!;
+    fake.sent.push({ ...claim, id: 'om_oldclaim', at: Date.now() - STALE_CARD_MS - 3600_000 });
+    fake.approvalDelayMs = 400;
+    // Failing after the window: the placeholder says so instead of 正在发起审批 for ever.
+    fake.approvalFails = true;
+    const m = fake.sent.length;
+    await env.click(alice, 'om_oldclaim', { a: 'claim_submit', c: r.id });
+    await env.waitFor(() => fake.sent.slice(m).find(s => s.to.replyTo === 'om_oldclaim'));
+    const failed = fake.sent.slice(m).find(s => s.to.replyTo === 'om_oldclaim')!;
+    await env.waitFor(() => /提交审核失败/.test(FakeFeishu.text(fake.cardOf(failed.id))));
+    assert.equal(env.amber.store.getCommand(r.id)!.status, 'draft');
+    fake.approvalFails = false;
+    const n = fake.sent.length;
+    const t0 = Date.now();
+    const res = await env.click(alice, 'om_oldclaim', { a: 'claim_submit', c: r.id });
+    assert.ok(Date.now() - t0 < 1000, 'answered at once, the new card goes out in the background');
+    assert.equal(res.card, undefined);
+    assert.match(res.toast.content, /超过 14 天/);
+    await env.waitFor(() => fake.sent.slice(n).find(s => s.to.replyTo === 'om_oldclaim'));
+    const placeholder = fake.sent.slice(n).find(s => s.to.replyTo === 'om_oldclaim')!;
+    assert.match(FakeFeishu.text(placeholder.card), /正在发起审批/);
+    await env.waitFor(() => /审核中/.test(FakeFeishu.text(fake.cardOf(placeholder.id))));
+    assert.equal(fake.patches.filter(p => p.id === 'om_oldclaim').length, 0, 'nothing patched onto the old card');
+    assert.equal(env.amber.store.getCommand(r.id)!.status, 'pending');
+  } finally { await env.close(); }
+});
