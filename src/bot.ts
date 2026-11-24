@@ -63,6 +63,9 @@ const REASSIGN_TTL_MS = 7 * 24 * 3600_000;
 
 /** D44: how long a Feishu retire confirmation stays usable. */
 const RETIRE_CONFIRM_MS = 5 * 60_000;
+/** Feishu stops updating a card 14 days after it was sent; an hour of margin for clocks and slow clicks. */
+export const STALE_CARD_MS = 14 * 24 * 3600_000 - 3600_000;
+const CARD_TIME_WAIT_MS = 1500;
 
 export class AmberBot {
   private client: lark.Client;
@@ -1034,6 +1037,8 @@ export class AmberBot {
   }
 
   private cityCache = new Map<string, { city?: string; at: number }>();
+  /** message id → when Feishu says it was sent (cardTooOld). */
+  private cardSentAt = new Map<string, number>();
 
   /** Office city from the Feishu directory, via Amber's own app. Needs the contact permission for city/work_station. */
   async cityOf(unionId: string): Promise<string | undefined> {
@@ -1062,7 +1067,46 @@ export class AmberBot {
     }
   }
 
+  /** Feishu updates a card only within 14 days of sending it (a click on an older card answered with a new card leaves
+   *  it as it was: 11-24, 「Simba额度与负载」 from 11-07 never showed its form). The next step then goes out as a new card. */
   private async onCardAction(d: any): Promise<object | undefined> {
+    const messageId: string | undefined = d.context?.open_message_id;
+    // Where later updates of this card go (a run's result, a trial's): this card, or the new one sent for it.
+    let settle!: (id: string | undefined) => void;
+    const target = new Promise<string | undefined>(r => { settle = r; });
+    let to = messageId;
+    try {
+      const [res, old] = await Promise.all([this.handleCardAction(d, target), messageId ? this.cardTooOld(messageId) : Promise.resolve(false)]);
+      const card = (res as any)?.card?.data;
+      if (!old || !card || !messageId) return res;
+      try {
+        const r = await this.client.im.v1.message.reply({ path: { message_id: messageId }, data: { msg_type: 'interactive', content: JSON.stringify(card), reply_in_thread: false } }) as any;
+        to = r?.data?.message_id;
+      } catch (e: any) {
+        to = undefined;
+        log('stale card reply failed', messageId, e?.response?.data?.code ?? e?.message);
+        return { toast: { type: 'error', content: '这张卡片发出已超过 14 天，飞书不再允许更新，请重新呼出 Amber 菜单' } };
+      }
+      return { toast: { type: 'info', content: '这张卡片发出已超过 14 天，飞书不再允许更新，已在下面发了一张新的' } };
+    } finally { settle(to); }
+  }
+
+  /** Sent more than STALE_CARD_MS ago. Looked up once per message (the time never changes), within a short wait:
+   *  unknown counts as recent, which is how every card was treated before. */
+  private async cardTooOld(messageId: string): Promise<boolean> {
+    let sentAt = this.cardSentAt.get(messageId);
+    if (sentAt === undefined) {
+      const get = this.client.im.v1.message.get({ path: { message_id: messageId } }).then((r: any) => Number(r?.data?.items?.[0]?.create_time) || undefined, (e: any) => { log('card time lookup failed', messageId, e?.response?.data?.code ?? e?.message); return undefined; });
+      let timer: NodeJS.Timeout | undefined;
+      sentAt = await Promise.race([get, new Promise<undefined>(r => { timer = setTimeout(() => r(undefined), CARD_TIME_WAIT_MS); })]).finally(() => clearTimeout(timer));
+      if (sentAt === undefined) return false;
+      if (this.cardSentAt.size >= 10_000) this.cardSentAt.clear();
+      this.cardSentAt.set(messageId, sentAt);
+    }
+    return Date.now() - sentAt > STALE_CARD_MS;
+  }
+
+  private async handleCardAction(d: any, target: Promise<string | undefined>): Promise<object | undefined> {
     const op = d.operator ?? {};
     const value = d.action?.value ?? {};
     const chatId: string | undefined = d.context?.open_chat_id;
@@ -1089,7 +1133,8 @@ export class AmberBot {
           finally { this.trialsRunning.delete(id); }
           // If Feishu refuses the result card, the card would stay on "running" with no buttons and the
           // draft could be neither submitted nor dropped: put the buttons back without the results.
-          if (messageId && !(await this.patch(messageId, card))) await this.patch(messageId, this.flow.trialUnshownCard(id, caller));
+          const to = await target;
+          if (to && !(await this.patch(to, card))) await this.patch(to, this.flow.trialUnshownCard(id, caller));
         }, 300);
         return {
           toast: { type: 'info', content: '试运行已开始，结果会更新在这张卡片上' },
@@ -1107,7 +1152,7 @@ export class AmberBot {
         const first = await Promise.race([work, late]).finally(() => clearTimeout(timer));
         if (first !== 'late') return raw(first);
         void work.then(
-          async card => { if (messageId) await this.patch(messageId, card); },
+          async card => { const to = await target; if (to) await this.patch(to, card); },
           // The command is back to draft, so the claim card stays usable: leave it and reply instead.
           async e => { if (messageId) await this.replyCard(messageId, false, errorCard('提交审核失败', e instanceof AmberError ? e.message : '出错了')).catch(() => {}); },
         );
@@ -1196,7 +1241,8 @@ export class AmberBot {
         // Respond within the callback window, then patch the card when execution finishes.
         setTimeout(async () => {
           const final = await this.execute(cmd, form, caller, true);
-          if (messageId) await this.patch(messageId, final);
+          const to = await target;
+          if (to) await this.patch(to, final);
         }, 300);
         return raw(runningCard(cmd.name, caller.openId));
       }

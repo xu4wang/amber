@@ -64,6 +64,11 @@ export class FakeFeishu {
     v1: {
       message: {
         reply: async ({ path, data }: any) => this.record({ replyTo: path.message_id }, data.content, data.reply_in_thread),
+        get: async ({ path }: any) => {
+          const m = this.sent.find(x => x.id === path.message_id);
+          if (!m) this.fail(230001, 'message not found');
+          return { data: { items: [{ message_id: m!.id, msg_type: 'interactive', create_time: String(m!.at) }] } };
+        },
         create: async ({ params, data }: any) => this.record(params.receive_id_type === 'union_id' ? { unionId: data.receive_id } : { chatId: data.receive_id }, data.content),
         patch: async ({ path, data }: any) => {
           const card = JSON.parse(data.content);
