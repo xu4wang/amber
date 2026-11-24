@@ -194,7 +194,7 @@ export class ExecutorHub {
     }
     if (this.store.listExecutors().filter(x => x.status === 'pending').length >= MAX_PENDING) throw new AmberError('busy', '等待批准的执行端太多，请先让管理员处理');
     // A changed environment list loses the approval until an admin approves the new one.
-    if (prev) this.dropQueue(id);
+    if (prev) this.dropQueue(id, true);
     this.store.putExecutor({ id, name, fingerprint: fp, signPub, boxPub, envs, machine, version });
     this.store.touchExecutor(id);
     this.store.audit(null, 'executor.register', { id, name, machine, envs: Object.keys(envs), fingerprint: fp, replaces: prev ? prev.status : null });
@@ -242,10 +242,15 @@ export class ExecutorHub {
     if (w) { clearTimeout(w.timer); this.waiters.delete(id); w.resolve([]); }
   }
 
-  private dropQueue(id: string): void {
+  /** `waiting`: its registration changed and waits for an admin; a job it had not picked up yet never ran (unreachable). */
+  private dropQueue(id: string, waiting = false): void {
     this.wake(id);
     this.queues.delete(id);
-    for (const [jobId, j] of this.jobs) if (j.executorId === id) this.finish(jobId, { ok: false, content: '', error: '执行端已被撤销' });
+    for (const [jobId, j] of this.jobs) if (j.executorId === id) {
+      this.finish(jobId, waiting && !j.picked
+        ? { ok: false, unreachable: true, content: '', error: '执行端的登记有变化，正在等管理员批准，这次没有执行' }
+        : { ok: false, content: '', error: waiting ? '执行端的登记有变化，任务已中断' : '执行端已被撤销' });
+    }
   }
 
   online(e: ExecutorRow): boolean { return this.waiters.has(e.id) || (e.lastSeen !== null && Date.now() - e.lastSeen < this.onlineMs); }
@@ -402,10 +407,14 @@ export class ExecutorHub {
     const p = parseEnv(script.env ?? '');
     if (!p) return { ok: false, content: '', error: '执行位置（env）写得不对' };
     const e = this.store.approvedExecutor(p.executor);
-    if (!e) return { ok: false, content: '', error: `执行端 ${p.executor} 还没有登记或没有被管理员批准` };
+    if (!e) {
+      // Waiting for an admin (11-23: an environment was added and moved, the approval lapsed for 3 minutes): temporary.
+      if (this.store.listExecutors().some(x => x.name === p.executor && x.status === 'pending')) return { ok: false, unreachable: true, content: '', error: `执行端 ${p.executor} 还没有被管理员批准（正在等批准，比如登记的环境刚有变化），这次没有执行` };
+      return { ok: false, content: '', error: `执行端 ${p.executor} 还没有登记或没有被管理员批准` };
+    }
     if (!e.envs[p.env]) return { ok: false, content: '', error: `执行端 ${p.executor} 没有环境「${p.env}」` };
-    if (!this.online(e)) return { ok: false, content: '', error: `执行端 ${p.executor} 离线（最后在线：${e.lastSeen ? new Date(e.lastSeen).toISOString() : '从未'}），这次没有执行` };
-    if ([...this.jobs.values()].filter(j => j.executorId === e.id).length >= this.maxJobs) return { ok: false, content: '', error: `执行端 ${p.executor} 正在处理的任务太多，这次没有执行，请稍后再试` };
+    if (!this.online(e)) return { ok: false, unreachable: true, content: '', error: `执行端 ${p.executor} 离线（最后在线：${e.lastSeen ? new Date(e.lastSeen).toISOString() : '从未'}），这次没有执行` };
+    if ([...this.jobs.values()].filter(j => j.executorId === e.id).length >= this.maxJobs) return { ok: false, unreachable: true, content: '', error: `执行端 ${p.executor} 正在处理的任务太多，这次没有执行，请稍后再试` };
     const jobId = randomUUID();
     // script.timeoutMs is already the effective limit for this run (engine.ts); the executor is told it too.
     const timeoutMs = (script.timeoutMs ?? 60000) + RESULT_GRACE_MS;
@@ -415,9 +424,9 @@ export class ExecutorHub {
     return await new Promise<ScriptResult>(resolve => {
       const calls = Object.fromEntries(Object.entries(script.services ?? {}).map(([n, u]) => [n, u.calls]));
       const job: PendingJob = { runId: input.runId, executorId: e.id, picked: false, resolve, timer: setTimeout(() => {}, 0), calls, ...(opts.grant ? { grant: opts.grant } : {}) };
-      const fail = (msg: string) => this.finish(jobId, { ok: false, content: '', error: msg });
+      const fail = (msg: string, unreachable = false) => this.finish(jobId, { ok: false, content: '', error: msg, ...(unreachable ? { unreachable } : {}) });
       job.timer = setTimeout(() => {
-        if (!job.picked) return fail(`执行端 ${p.executor} 没有取走任务（可能刚刚离线），这次没有执行`);
+        if (!job.picked) return fail(`执行端 ${p.executor} 没有取走任务（可能刚刚离线），这次没有执行`, true);
         job.timer = setTimeout(() => fail(`执行端 ${p.executor} 没有在时限内返回结果`), timeoutMs);
       }, this.pickupMs);
       this.jobs.set(jobId, job);

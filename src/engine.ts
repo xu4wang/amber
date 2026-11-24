@@ -187,7 +187,7 @@ export async function validateArgs(params: ParamDef[], raw: Record<string, strin
 }
 
 export type Block = { kind: 'markdown'; text: string };
-export interface RunOutcome { runId: string; ok: boolean; blocks: Block[]; markdown: string; error?: string; elapsedMs: number; args: Record<string, string>; envProven?: boolean }
+export interface RunOutcome { runId: string; ok: boolean; blocks: Block[]; markdown: string; error?: string; elapsedMs: number; args: Record<string, string>; envProven?: boolean; unreachable?: boolean }
 
 export async function runCommand(store: Store, cmd: CommandRow, rawArgs: Record<string, string | undefined>, caller: Caller, facts: CallerFacts = {}, opts: { trial?: boolean; viaForm?: boolean; asPerson?: boolean; envProof?: string } = {}): Promise<RunOutcome> {
   if (cmd.status !== 'active' && !(opts.trial && cmd.status === 'draft')) throw new AmberError('not_active', '应用未生效');
@@ -303,7 +303,7 @@ export async function runCommand(store: Store, cmd: CommandRow, rawArgs: Record<
       store.finishRun(runId, 'failed', null, r.error ?? 'failed');
       store.audit(caller.unionId, 'run.failed', { runId, error: r.error });
       emitEvent('run.failed', { runId, commandId: cmd.id, name: cmd.line ?? cmd.name, appChatId: cmd.chatId, chatId: caller.chatId, chatType: caller.chatType, callerUnionId: caller.unionId, channel: opts.trial ? `${caller.channel}.trial` : caller.channel, error: (r.error ?? '').slice(0, 300) });
-      return { runId, ok: false, blocks: [], markdown: '', error: r.error, elapsedMs: Date.now() - started, args };
+      return { runId, ok: false, blocks: [], markdown: '', error: r.error, elapsedMs: Date.now() - started, args, ...(r.unreachable ? { unreachable: true } : {}) };
     }
     const blocks: Block[] = [{ kind: 'markdown', text: r.content.trim() }];
     const markdown = blocks.map(b => b.text).join('\n\n');
