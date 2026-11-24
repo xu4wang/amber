@@ -194,7 +194,7 @@ export class ExecutorHub {
     }
     if (this.store.listExecutors().filter(x => x.status === 'pending').length >= MAX_PENDING) throw new AmberError('busy', '等待批准的执行端太多，请先让管理员处理');
     // A changed environment list loses the approval until an admin approves the new one.
-    if (prev) this.dropQueue(id);
+    if (prev) this.dropQueue(id, true);
     this.store.putExecutor({ id, name, fingerprint: fp, signPub, boxPub, envs, machine, version });
     this.store.touchExecutor(id);
     this.store.audit(null, 'executor.register', { id, name, machine, envs: Object.keys(envs), fingerprint: fp, replaces: prev ? prev.status : null });
@@ -242,10 +242,15 @@ export class ExecutorHub {
     if (w) { clearTimeout(w.timer); this.waiters.delete(id); w.resolve([]); }
   }
 
-  private dropQueue(id: string): void {
+  /** `waiting`: its registration changed and waits for an admin; a job it had not picked up yet never ran (unreachable). */
+  private dropQueue(id: string, waiting = false): void {
     this.wake(id);
     this.queues.delete(id);
-    for (const [jobId, j] of this.jobs) if (j.executorId === id) this.finish(jobId, { ok: false, content: '', error: '执行端已被撤销' });
+    for (const [jobId, j] of this.jobs) if (j.executorId === id) {
+      this.finish(jobId, waiting && !j.picked
+        ? { ok: false, unreachable: true, content: '', error: '执行端的登记有变化，正在等管理员批准，这次没有执行' }
+        : { ok: false, content: '', error: waiting ? '执行端的登记有变化，任务已中断' : '执行端已被撤销' });
+    }
   }
 
   online(e: ExecutorRow): boolean { return this.waiters.has(e.id) || (e.lastSeen !== null && Date.now() - e.lastSeen < this.onlineMs); }

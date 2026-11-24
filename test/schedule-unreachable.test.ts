@@ -78,5 +78,11 @@ test('an unreachable executor: no failure, no pause; a frequent schedule hears o
     assert.equal(g.status, 'paused');
     assert.equal(g.pauseReason, UNREACHABLE_PAUSED);
     assert.match(FakeFeishu.text(notices(gone.id).at(-1)!.card), /超过 24 小时连不上，任务已暂停/);
+    // Paused for any reason (here by hand while unreachable): resumed or rebound later, it waits afresh.
+    const other = await mk({ kind: 'minutely', every: 5, tz: 'Asia/Shanghai' });
+    await run(other.id);
+    assert.ok((sch as any).unreachableSince.has(other.id));
+    (sch as any).pause(env.amber.store.getSchedule(other.id)!, '手动暂停');
+    assert.equal((sch as any).unreachableSince.has(other.id), false);
   } finally { await env.close(); }
 });

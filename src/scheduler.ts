@@ -80,6 +80,8 @@ export class Scheduler {
   }
 
   private pause(s: ScheduleRow, reason: string): void {
+    // A paused schedule starts its unreachable wait afresh when it runs again (resumed, or rebound elsewhere).
+    this.unreachableSince.delete(s.id);
     this.store.updateSchedule(s.id, { status: 'paused', pauseReason: reason });
     this.store.audit(null, 'schedule.pause', { id: s.id, reason });
     this.pausedEvent(s, reason);
@@ -260,6 +262,7 @@ export class Scheduler {
     // The creator must still be allowed to use it where the schedule lives.
     findVisible(this.store, { unionId: s.creatorUnionId, chatId: s.chatId, chatType: s.chatType, channel: 'schedule' }, next.id);
     this.store.rebindSchedule(s.id, next.id, next.specHash);
+    this.unreachableSince.delete(s.id);
     this.store.updateSchedule(s.id, { status: 'active', pauseReason: null, failCount: 0, nextRunAt: nextRun(s.rule, Date.now()) });
     this.store.audit(actor.unionId, 'schedule.rebind', { id: s.id, from: s.commandId, to: next.id, specHash: next.specHash });
     const n = this.store.getSchedule(s.id)!;
@@ -273,6 +276,7 @@ export class Scheduler {
   resume(s: ScheduleRow, actor: string): ScheduleRow {
     const cmd = this.store.getCommand(s.commandId);
     if (!cmd || cmd.status !== 'active' || cmd.specHash !== s.specHash) throw new AmberError('changed', '应用已下线或已更新，不能恢复；请让 agent 用新版本重新创建');
+    this.unreachableSince.delete(s.id);
     this.store.updateSchedule(s.id, { status: 'active', pauseReason: null, failCount: 0, nextRunAt: nextRun(s.rule, Date.now()) });
     this.store.audit(actor, 'schedule.resume', { id: s.id });
     return this.store.getSchedule(s.id)!;
