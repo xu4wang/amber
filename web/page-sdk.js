@@ -19,6 +19,9 @@
 //   Amber.onFilter(fn)                      fn(filter) from the host (only the fields this page declared in "receive")
 //   Amber.emit({ region: '泰国' })           a click here filters the host and its other embeds (fields declared in "emit")
 //   Amber.onExport(fn)                      fn() → { name, columns, rows } or { sheets: [...] } for the host's 导出 Excel (default: the page's tables)
+// Report modules (charts, tables, KPI groups; not the filter bar): clicking a blank spot shows the same icons at the left.
+//   const m = Amber.module(element, { title, export: () => data, link: true, onLink(on) })   or <div data-amber-module="标题">
+//   m.link / m.filter() / m.emit({ region })   click filtering for the module, honouring its 点击联动 switch
 // Anywhere: Amber.exportExcel('文件名', { columns: [{ name, label }], rows }) downloads an .xlsx file.
 // Calls go through Amber (the window around the page); the page itself cannot reach the network.
 (function () {
@@ -120,17 +123,26 @@
     if (document.getElementById('amber-embed-css')) return;
     const st = document.createElement('style');
     st.id = 'amber-embed-css';
-    st.textContent = `.amber-embed{position:relative;border:1px dashed transparent;border-radius:6px;min-width:0;transition:border-color .15s}
-.amber-embed:hover,.amber-embed.tools-on{border-color:#f0b45e}
+    st.textContent = `.amber-mod{position:relative}
+.amber-mod.tools-on{outline:1px dashed #f0b45e;outline-offset:2px;border-radius:6px}
+.amber-embed{border-radius:6px;min-width:0}
 .amber-embed iframe{border:0;width:100%;display:block;min-height:120px;background:transparent}
-.amber-embed-tools{position:absolute;right:100%;margin-right:6px;top:50%;transform:translateY(-50%);z-index:3;display:none;flex-direction:column;gap:2px;padding:3px;background:#fff;border:1px solid #e5e6eb;border-radius:8px;box-shadow:0 4px 16px rgba(31,35,41,.12)}
-.amber-embed.tools-on .amber-embed-tools{display:flex}
-.amber-embed-tools button{all:unset;box-sizing:border-box;position:relative;width:30px;height:32px;display:flex;align-items:center;justify-content:center;border-radius:8px;cursor:pointer;color:#4e5969;transition:background .12s,color .12s}
-.amber-embed-tools button:hover{background:#f2f3f5;color:#1f2329}
-.amber-embed-tools button.on{background:#e8efff;color:#3370ff}
-.amber-embed-tools button.on:hover{background:#d9e5ff}
-.amber-embed-tools button svg{width:18px;height:18px;display:block}
-.amber-embed-tools button[data-tip]:hover::after{content:attr(data-tip);position:absolute;right:38px;top:50%;transform:translateY(-50%);white-space:nowrap;background:#1f2329;color:#fff;font:12px/1.5 -apple-system,"PingFang SC",system-ui,sans-serif;padding:4px 8px;border-radius:4px;pointer-events:none;z-index:4}
+.amber-tools{position:absolute;right:100%;margin-right:6px;top:50%;transform:translateY(-50%);z-index:3;display:none;flex-direction:column;gap:2px;padding:3px;background:#fff;border:1px solid #e5e6eb;border-radius:8px;box-shadow:0 4px 16px rgba(31,35,41,.12)}
+.amber-tools.inside{right:auto;left:4px;margin-right:0}
+.amber-mod.tools-on>.amber-tools{display:flex}
+.amber-tools button{all:unset;box-sizing:border-box;position:relative;width:30px;height:32px;display:flex;align-items:center;justify-content:center;border-radius:8px;cursor:pointer;color:#4e5969;transition:background .12s,color .12s}
+.amber-tools button:hover{background:#f2f3f5;color:#1f2329}
+.amber-tools button.on{background:#e8efff;color:#3370ff}
+.amber-tools button.on:hover{background:#d9e5ff}
+.amber-tools button svg{width:18px;height:18px;display:block}
+.amber-tools button[data-tip]:hover::after{content:attr(data-tip);position:absolute;right:38px;top:50%;transform:translateY(-50%);white-space:nowrap;background:#1f2329;color:#fff;font:12px/1.5 -apple-system,"PingFang SC",system-ui,sans-serif;padding:4px 8px;border-radius:4px;pointer-events:none;z-index:4}
+.amber-tools.inside button[data-tip]:hover::after{right:auto;left:38px}
+.amber-focus{position:fixed;inset:0;z-index:1000;background:#f5f6f8;overflow:auto}
+.amber-focus-back{height:36px;display:flex;align-items:center;padding:0 16px;font:13px -apple-system,"PingFang SC",system-ui,sans-serif}
+.amber-focus-back a{color:#646a73;text-decoration:none;cursor:pointer;display:flex;align-items:center;gap:4px;white-space:nowrap}.amber-focus-back svg{width:14px;height:14px;flex:none;display:block}.amber-focus-back a:hover{color:#1f2329}
+.amber-focus-body{max-width:1200px;margin:0 auto;padding:8px 56px 32px}
+.amber-focus-sheet{background:#fff;border:1px solid #e5e6eb;border-radius:8px;padding:16px 20px}
+.amber-focus-sheet>h2{margin:0 0 12px;font:600 17px/1.5 -apple-system,"PingFang SC",system-ui,sans-serif;color:#1f2329}
 .amber-embed-deny{padding:40px 16px;text-align:center;color:#646a73;font:13px/1.7 -apple-system,"PingFang SC",system-ui,sans-serif;background:#fafbfc;border-radius:6px}
 .amber-embed-deny::before{content:"🔒";display:block;font-size:22px;margin-bottom:4px}
 .amber-filter{display:none;align-items:center;gap:8px;flex-wrap:wrap;font:13px/1.6 -apple-system,"PingFang SC",system-ui,sans-serif;color:#3370ff}
@@ -245,7 +257,85 @@
     setTimeout(() => URL.revokeObjectURL(a.href), 30000);
   };
 
-  document.addEventListener('click', () => embeds.forEach(o => o.toggleTools && o.toggleTools(false)));
+  // ---------- the tool column: icons at a report module's left, shown when the viewer clicks a blank spot of it
+  const mods = [];
+  const hideTools = except => mods.forEach(m => m !== except && m.show(false));
+  const INTERACTIVE = 'a,button,input,select,textarea,label,summary,[role=button],[data-amber-action],.bar,tr.click';
+  const isControl = (t, stop) => { for (let n = t; n && n !== stop && n !== document; n = n.parentNode) if (n.onclick || (n.matches && n.matches(INTERACTIVE))) return true; return false; };
+  /** Tools for one module: add({ tip, title, icon, on, when, onClick(button) }); the column is put back if the page redraws the box. */
+  const toolKit = box => {
+    css();
+    box.classList.add('amber-mod');
+    const col = document.createElement('div');
+    col.className = 'amber-tools';
+    const items = [];
+    const m = {
+      box,
+      add(t) {
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.setAttribute('aria-label', t.title || t.tip);
+        b.setAttribute('data-tip', t.tip || t.title);
+        b.innerHTML = t.icon;
+        if (t.on !== undefined) b.classList.toggle('on', !!t.on);
+        b.onclick = ev => { ev.stopPropagation(); t.onClick(b); };
+        col.appendChild(b);
+        items.push([b, t]);
+        return b;
+      },
+      show(on) {
+        const want = on === undefined ? !box.classList.contains('tools-on') : on;
+        if (want) {
+          hideTools(m);
+          for (const [b, t] of items) b.style.display = t.when && !t.when() ? 'none' : '';
+          box.classList.add('amber-mod');
+          if (col.parentNode !== box) box.appendChild(col);
+          // Too close to the window's edge for the column to fit outside: put it just inside.
+          col.classList.toggle('inside', box.getBoundingClientRect().left < 46);
+        }
+        box.classList.toggle('tools-on', want && items.some(([b]) => b.style.display !== 'none'));
+      },
+    };
+    // A page that redraws the box with innerHTML takes the column with it: put it back while it is showing.
+    if (window.MutationObserver) new MutationObserver(() => { if (col.parentNode !== box && box.classList.contains('tools-on')) box.appendChild(col); }).observe(box, { childList: true });
+    mods.push(m);
+    return m;
+  };
+  if (!EMBEDDED) document.addEventListener('click', ev => {
+    let m = null;
+    for (let n = ev.target; n && n !== document && !m; n = n.parentNode) m = mods.find(x => x.box === n) || null;
+    if (!m) return hideTools();
+    if (ev.defaultPrevented || isControl(ev.target, m.box)) return;
+    m.show();
+  });
+  // A module on its own: the page is covered by it, with 返回 at the top left (Esc also goes back).
+  let focused = null;
+  const unfocus = () => {
+    if (!focused) return;
+    const f = focused; focused = null;
+    if (f.ph.parentNode) f.ph.parentNode.replaceChild(f.el, f.ph);
+    f.ov.remove();
+    document.documentElement.style.overflow = f.overflow;
+    window.dispatchEvent(new Event('resize'));
+  };
+  const focusOn = (el, title) => {
+    unfocus();
+    hideTools();
+    const ph = document.createComment('amber-module');
+    el.parentNode.insertBefore(ph, el);
+    const ov = document.createElement('div');
+    ov.className = 'amber-focus';
+    ov.innerHTML = '<div class="amber-focus-back"><a href="#"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 6l-6 6 6 6"/></svg>返回</a></div><div class="amber-focus-body"><div class="amber-focus-sheet"></div></div>';
+    const body = ov.querySelector('.amber-focus-sheet');
+    if (title && !el.querySelector('h1,h2,h3,h4')) { const h = document.createElement('h2'); h.textContent = title; body.appendChild(h); }
+    body.appendChild(el);
+    ov.querySelector('a').onclick = ev => { ev.preventDefault(); unfocus(); };
+    document.body.appendChild(ov);
+    focused = { el, ph, ov, overflow: document.documentElement.style.overflow };
+    document.documentElement.style.overflow = 'hidden';
+    window.dispatchEvent(new Event('resize'));
+  };
+  document.addEventListener('keydown', ev => { if (ev.key === 'Escape') unfocus(); });
   // 20px line icons: link (two chain links), open (box with an arrow out), download (arrow into a tray).
   const ICON = {
     link: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13.5a4.5 4.5 0 006.4.4l2.6-2.6a4.5 4.5 0 00-6.4-6.4l-1.4 1.4"/><path d="M14 10.5a4.5 4.5 0 00-6.4-.4l-2.6 2.6a4.5 4.5 0 006.4 6.4l1.4-1.4"/></svg>',
@@ -278,30 +368,18 @@
     const canLink = !e.denied && ((e.receive || []).length + (e.emit || []).length) > 0;
     // Parameters follow the host's as amber.json says (no switch for viewers); filtering can be switched off per viewer.
     const x = { e, follow: canFollow && e.follow !== false, link: canLink && (saved.link !== undefined ? saved.link : true), fixed: !!opts.height };
-    // Tools: a column of icons at the report's left, shown when the viewer clicks a blank spot of it (or the notice).
-    const tools = document.createElement('div');
-    tools.className = 'amber-embed-tools';
-    const tool = (t) => {
-      const b = document.createElement('button');
-      b.type = 'button';
-      b.setAttribute('aria-label', t.title);
-      b.setAttribute('data-tip', t.tip || t.title);
-      b.innerHTML = t.icon;
-      b.onclick = ev => { ev.stopPropagation(); t.onClick(b); };
-      tools.appendChild(b);
-      return b;
-    };
+    const kit = toolKit(box);
+    const tool = t => kit.add(t);
     if (canLink) {
       const fields = [(e.receive || []).length ? '接收：' + e.receive.join('、') : '', (e.emit || []).length ? '发出：' + e.emit.join('、') : ''].filter(Boolean).join('；');
       const tip = () => `点击联动：${x.link ? '已打开' : '已关闭'}（${fields}），点一下${x.link ? '关闭' : '打开'}`;
       const short = () => x.link ? '点击联动：开' : '点击联动：关';
-      const b = tool({ title: tip(), tip: short(), icon: ICON.link, onClick: b => {
+      tool({ title: tip(), tip: short(), icon: ICON.link, on: x.link, onClick: b => {
         x.link = !x.link;
         store(`amber-embed:${PAGE_ID}:${key}`, { link: x.link });
         b.classList.toggle('on', x.link); b.setAttribute('aria-label', tip()); b.setAttribute('data-tip', short());
         push(x);
       } });
-      b.classList.toggle('on', x.link);
     }
     if (e.page) tool({ tip: e.owner ? `打开原页面 · ${e.owner} 维护` : '打开原页面', title: `打开原页面：${opts.title || e.title}${e.name ? `（${e.name}${e.owner ? '，' + e.owner + ' 维护' : ''}）` : ''}`, icon: ICON.open, onClick: () => ask({ type: 'openEmbed', key, state: { params: stateFor(x).params, filter: stateFor(x).filter } }) });
     if (e.src) tool({ tip: '导出 Excel', title: '导出 Excel：这个报表当前的数据', icon: ICON.excel, onClick: async () => {
@@ -314,12 +392,7 @@
       } catch (err) { alert('导出失败：' + (err && err.message || err)); }
     } });
     for (const t of opts.tools || []) tool({ title: String(t.title || ''), icon: t.icon || esc(String(t.title || '?').slice(0, 1)), onClick: () => t.onClick && t.onClick(handle) });
-    if (tools.children.length) box.appendChild(tools);
-    x.toggleTools = on => {
-      const want = on === undefined ? !box.classList.contains('tools-on') : on;
-      if (want) embeds.forEach(o => o !== x && o.toggleTools && o.toggleTools(false));
-      box.classList.toggle('tools-on', want && tools.children.length > 0);
-    };
+    x.toggleTools = on => kit.show(on);
     if (e.src) {
       const f = document.createElement('iframe');
       f.setAttribute('sandbox', 'allow-scripts allow-same-origin allow-forms allow-downloads allow-modals');
@@ -332,7 +405,6 @@
       const d = document.createElement('div');
       d.className = 'amber-embed-deny';
       d.textContent = e.message || '无法显示这个页面';
-      d.onclick = ev => { ev.stopPropagation(); x.toggleTools(); };
       box.appendChild(d);
     }
     el.innerHTML = '';
@@ -346,12 +418,57 @@
   let lastParams = null, lastFilter = '{}', got = false, follow = false;
   let exportFn = null;
   /** The tables on the page, for export when it registered nothing: header from <th>, numbers kept as numbers. */
-  const scrapeTables = () => [...document.querySelectorAll('table')].map((t, i) => {
+  const scrapeTables = (root) => [...(root || document).querySelectorAll('table')].map((t, i) => {
     const rows = [...t.rows].map(r => [...r.cells].map(c => { const v = c.innerText.trim(); return /^-?[\d,]+(\.\d+)?$/.test(v) ? Number(v.replace(/,/g, '')) : v; }));
     const head = t.tHead && t.tHead.rows.length ? rows.shift() : null;
     return { name: (t.caption && t.caption.innerText) || `表${i + 1}`, columns: head ? head.map((h, j) => ({ name: j, label: String(h) })) : undefined, rows };
   }).filter(sh => sh.rows.length);
   Amber.onExport = fn => { exportFn = fn; };
+  /** A report module of this page gets the same tools as an embedded report: 点击联动 (when opts.link), on its own, 导出 Excel. */
+  Amber.module = (el, opts) => {
+    opts = opts || {};
+    el = typeof el === 'string' ? document.querySelector(el) : el;
+    if (!el) throw new Error('Amber.module：找不到这个元素');
+    if (el.__amberModule) return el.__amberModule;
+    const title = opts.title || el.getAttribute('data-amber-module') || ((el.querySelector('h1,h2,h3,h4') || {}).textContent || '').trim() || document.title || '报表';
+    const st = { link: true };
+    let kit = null;
+    const h = {
+      element: el, title,
+      get link() { return st.link; },
+      filter: () => st.link ? Object.assign({}, filter) : {},
+      emit: f => { if (!st.link) return false; if (EMBEDDED) return Amber.emit(f); setFilter(f); return true; },
+      showTools: on => kit && kit.show(on !== false),
+    };
+    el.__amberModule = h;
+    // Inside another page the host shows the tools for the whole page.
+    if (EMBEDDED) return h;
+    kit = toolKit(el);
+    if (opts.link) {
+      const k = `amber-module:${PAGE_ID}:${opts.key || title}`;
+      const saved = store(k);
+      if (saved && saved.link === false) st.link = false;
+      const short = () => st.link ? '点击联动：开' : '点击联动：关';
+      kit.add({ tip: short(), title: '点击联动', icon: ICON.link, on: st.link, onClick: b => {
+        st.link = !st.link;
+        store(k, { link: st.link });
+        b.classList.toggle('on', st.link); b.setAttribute('data-tip', short());
+        if (opts.onLink) try { opts.onLink(st.link); } catch (e) { console.error(e); }
+      } });
+    }
+    kit.add({ tip: '单独查看', title: `单独查看：${title}`, icon: ICON.open, onClick: () => focusOn(el, title) });
+    kit.add({ tip: '导出 Excel', title: `导出 Excel：${title}`, icon: ICON.excel, when: () => !!opts.export || !!el.querySelector('table'), onClick: async () => {
+      try {
+        const data = opts.export ? await opts.export() : { sheets: scrapeTables(el) };
+        if (!data || !sheetsOf(data).some(sh => sh.rows.length)) return alert('这个报表没有可导出的数据');
+        if (Array.isArray(data.sheets) && data.sheets.length === 1 && /^表\d+$/.test(data.sheets[0].name || '')) data.sheets[0].name = title;
+        Amber.exportExcel(data.name || title, data);
+      } catch (err) { alert('导出失败：' + (err && err.message || err)); }
+    } });
+    return h;
+  };
+  const autoModules = () => document.querySelectorAll('[data-amber-module]').forEach(el => { try { Amber.module(el); } catch (e) { console.error(e); } });
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', autoModules); else setTimeout(autoModules, 0);
   async function embeddedAsk(m) {
     let data;
     try { data = m.what === 'export' ? (exportFn ? await exportFn() : { sheets: scrapeTables() }) : undefined; } catch (e) { console.error(e); }
@@ -386,10 +503,7 @@
     window.addEventListener('load', size);
     // A click on a blank spot (not a link, control or something the page handles) shows the host's tools for this report.
     document.addEventListener('click', ev => {
-      if (ev.defaultPrevented) return;
-      for (let n = ev.target; n && n !== document; n = n.parentNode) {
-        if (n.onclick || (n.matches && n.matches('a,button,input,select,textarea,label,summary,[role=button],[data-amber-action],.bar,tr.click'))) return;
-      }
+      if (ev.defaultPrevented || isControl(ev.target)) return;
       window.parent.postMessage({ amberEmbed: 1, type: 'tap' }, ME);
     });
   }
