@@ -24,6 +24,7 @@ import type { Store, PageRow, PageApp, PageAccess, CommandRow, ScopeType } from 
 import { AmberError, findVisible, runCommand, type Caller, type CallerFacts, type RunOutcome } from './engine.ts';
 import { sanitizeMarkdown, person, closedCard } from './cards.ts';
 import { emitEvent } from './events.ts';
+import { normFolder, pageFolderKey } from './folder.ts';
 
 export const MAX_PAGE_FILES = 200;
 export const MAX_PAGE_BYTES = 10 * 1024 * 1024;
@@ -209,9 +210,11 @@ export class PageService {
   url(p: PageRow): string { return `${this.deps.webUrl()}/p/${p.id}/`; }
 
   /** The agent publishes or updates a page for `ctx.user`. Returns what happened, for the agent to tell the person. */
-  async publish(ctx: PublishCtx, rawName: string, rawFiles: unknown): Promise<object> {
+  /** rawFolder: where to file the page on the website ("财务/上账", '' = top level); undefined keeps it where it is. */
+  async publish(ctx: PublishCtx, rawName: string, rawFiles: unknown, rawFolder?: unknown): Promise<object> {
     const name = String(rawName ?? '').trim();
     if (!NAME.test(name)) throw new AmberError('bad_page', '页面名只能用小写字母、数字和 -，以字母或数字开头，最多 40 个字符');
+    const folder = rawFolder === undefined ? undefined : normFolder(rawFolder);
     const files = checkFiles(rawFiles);
     const apps = appsOf(files);
     const embeds = embedsOf(files);
@@ -224,6 +227,7 @@ export class PageService {
       const version = existing.version + 1;
       this.writeVersion(existing.id, version, files);
       this.store.updatePage(existing.id, { version });
+      if (folder !== undefined) this.store.setFolder(existing.chatId, pageFolderKey(existing.id), folder);
       this.prune({ ...existing, version });
       this.store.audit(null, 'page.update', { id: existing.id, name, version, files: files.length, bytes, requestedBy: ctx.requestedBy, machine: ctx.machine, claimedUser: ctx.user.email });
       return { status: 'updated', pageId: existing.id, url: this.url(existing), version, message: `页面已更新（第 ${version} 版），刷新页面就能看到：${this.url(existing)}` };
@@ -240,6 +244,7 @@ export class PageService {
     const pending = { version, apps, ...(embeds.length ? { embeds: embeds.map(e => e.key) } : {}), requestedBy: ctx.requestedBy, machine: ctx.machine, at: Date.now() };
     if (existing) this.store.updatePage(id, { pending });
     else this.store.insertPage({ id, name, chatId: ctx.chatId, chatType: ctx.chatType, ownerUnionId: ctx.user.unionId, ownerOpenId: ctx.user.openId ?? null, pending });
+    if (folder !== undefined) this.store.setFolder(ctx.chatId, pageFolderKey(id), folder);
     const imageKey = await this.preview(id, version);
     const embedNames = embeds.map(e => this.store.getPage(e.page)?.name ?? this.store.pageByName(ctx.chatId, e.page)?.name ?? e.page);
     const card = publishCard({ id, version, imageKey, name, apps, embeds: embedNames, requestedBy: ctx.requestedBy, ownerOpenId: ctx.user.openId, files: files.length, bytes, update: !!existing });
@@ -410,11 +415,23 @@ export class PageService {
     return this.store.getPage(id)!;
   }
 
+  /** Files the page under a folder on the website (display only). */
+  setFolder(id: string, actor: string, isAdmin: boolean, raw: unknown): string {
+    const p = this.store.getPage(id);
+    if (!p || p.status === 'deleted') throw new AmberError('not_found', '页面不存在');
+    if (actor !== p.ownerUnionId && !isAdmin) throw new AmberError('forbidden', '只有页面的创建人或管理员可以修改目录');
+    const folder = normFolder(raw);
+    this.store.setFolder(p.chatId, pageFolderKey(id), folder);
+    this.store.audit(actor, 'page.folder', { id, name: p.name, folder });
+    return folder;
+  }
+
   remove(id: string, actor: string, isAdmin: boolean): void {
     const p = this.store.getPage(id);
     if (!p || p.status === 'deleted') throw new AmberError('not_found', '页面不存在');
     if (actor !== p.ownerUnionId && !isAdmin) throw new AmberError('forbidden', '只有页面的创建人或管理员可以删除');
     this.store.updatePage(id, { status: 'deleted', pending: null });
+    this.store.setFolder(p.chatId, pageFolderKey(id), '');
     rmSync(join(this.root, id), { recursive: true, force: true });
     this.store.audit(actor, 'page.delete', { id, name: p.name });
   }

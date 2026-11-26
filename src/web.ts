@@ -24,6 +24,7 @@ import { showFingerprint } from './exec-proto.ts';
 import { describeRule, formatAt, defaultTz, timezones } from './schedule-rule.ts';
 import { CARD_FOOTER_KEY, CARD_FOOTER_MAX, DEFAULT_CARD_FOOTER, cleanFooter } from './cards.ts';
 import { getLimits, saveLimits, timeoutLabel, DEFAULT_LIMITS, TIMEOUT_BOUNDS, CONCURRENCY_BOUNDS, getLocalAllowHosts, getGlobalAllowHosts, saveAllowHosts, checkAllowHosts, FEISHU_HOSTS, SLOTS } from './limits.ts';
+import { normFolder, appFolderKey, pageFolderKey } from './folder.ts';
 
 export const LOGIN_TTL_MS = 5 * 60_000;
 const SESSION_TTL_MS = 7 * 24 * 3600_000;
@@ -522,10 +523,11 @@ export function startWeb(port: number, store: Store, deps: WebDeps): import('nod
           deps.triggers.change(m[1], who.unionId, m[2] as 'pause' | 'resume' | 'delete');
           return json(res, 200, { ok: true });
         }
-        if (deps.pages && (m = /^\/web\/api\/pages\/([0-9a-f]{8})\/(run|access|delete)$/.exec(url.pathname))) {
+        if (deps.pages && (m = /^\/web\/api\/pages\/([0-9a-f]{8})\/(run|access|delete|folder)$/.exec(url.pathname))) {
           const id = m[1];
           if (m[2] === 'access') { const p = deps.pages.setAccess(id, who.unionId, body.access, body.members); return json(res, 200, { ok: true, access: p.access, members: p.members }); }
           if (m[2] === 'delete') { deps.pages.remove(id, who.unionId, deps.isAdmin(who.unionId)); return json(res, 200, { ok: true }); }
+          if (m[2] === 'folder') return json(res, 200, { ok: true, folder: deps.pages.setFolder(id, who.unionId, deps.isAdmin(who.unionId), body.folder) });
           rateLimit(who.unionId);
           const args: Record<string, string> = {};
           for (const [k, v] of Object.entries(body.args ?? {})) if (v !== null && v !== undefined) args[k] = String(v).slice(0, 2000);
@@ -551,6 +553,15 @@ export function startWeb(port: number, store: Store, deps: WebDeps): import('nod
           const sch = await deps.scheduler.create({ cmd: t.cmd, chatId: t.chatId, chatType: t.chatType, replyTo: null, inThread: false, creator: { ...person, chatId: t.chatId, chatType: t.chatType },
             args, rule: parseRule(String(body.at ?? ''), String(body.tz || defaultTz())), requestedBy: 'web', via: { via: 'web' } });
           return json(res, 200, { ok: true, scheduleId: sch.id, rule: describeRule(sch.rule), next: formatAt(sch.nextRunAt, sch.rule.tz) });
+        }
+        if ((m = /^\/web\/api\/commands\/([A-Za-z0-9-]{1,40})\/folder$/.exec(url.pathname))) {
+          const t = await target(store, deps, who.unionId, String(body.scope ?? ''), m[1], true);
+          const c = t.cmd;
+          if (c.ownerUnionId !== who.unionId && !deps.isAdmin(who.unionId)) throw new AmberError('forbidden', '只有应用的创建人或管理员可以修改目录');
+          const folder = normFolder(body.folder);
+          store.setFolder(c.chatId, appFolderKey(c), folder);
+          store.audit(who.unionId, 'command.folder', { id: c.id, name: c.name, folder });
+          return json(res, 200, { ok: true, folder });
         }
         if ((m = /^\/web\/api\/commands\/([A-Za-z0-9-]{1,40})\/secrets$/.exec(url.pathname))) {
           const t = await target(store, deps, who.unionId, String(body.scope ?? ''), m[1], true);
@@ -761,6 +772,7 @@ function cmdView(c: CommandRow, viewer?: string, isAdmin?: (u: string) => boolea
     secrets,
     version: store ? store.versionsOf(c.id).length + 1 : 1,
     id: c.id, name: c.name, description: c.description, global: c.global, options: c.options,
+    folder: store ? store.folderOf(c.chatId, appFolderKey(c)) : '',
     // Runs as the person running it, with their Feishu authorization (D54).
     larkUser: !!c.script.larkUser,
     params: runParams(c.params).map(p => ({ name: p.name, label: p.label ?? p.name, type: p.type, required: !!p.required, default: p.default, fromCity: p.defaultFrom === 'caller.city' })),
@@ -860,6 +872,7 @@ function pageView(store: Store, deps: WebDeps, p: PageRow, viewer: string) {
   const mine = p.ownerUnionId === viewer, admin = deps.isAdmin(viewer);
   return {
     id: p.id, name: p.name, version: p.version, updatedAt: p.updatedAt, mine, canDelete: mine || admin, url: `/p/${p.id}/`,
+    folder: store.folderOf(p.chatId, pageFolderKey(p.id)),
     ...(mine || admin ? { access: p.access, members: p.members, usage: usageOf(store).get(p.id) ?? null } : {}),
     apps: p.apps.map(a => {
       try {

@@ -74,7 +74,8 @@ amber retire <应用>                          下线应用，需要创建人或
 amber global <应用>                          设为全局，需要管理员在卡片上确认
 amber local <应用>                           取消全局，需要管理员在卡片上确认
 amber envs [--mine]                          已批准的运行环境（草稿里 env 写第一列）；--mine 只看从本机器人导出的
-amber page publish <目录> [--name 名字]      发布或更新页面应用，必须带 --user；见下面「页面应用」
+amber page publish <目录> [--name 名字] [--folder 财务/上账]
+                                             发布或更新页面应用，必须带 --user；--folder 放到网站上的这个目录；见下面「页面应用」
 amber trigger add --on 事件 [--app 应用] [--to me|here] [--mention 机器人]
                                              某件事发生时通知 --user；见下面「触发器」
 amber trigger list                           --user 的触发器

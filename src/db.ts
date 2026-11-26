@@ -378,6 +378,8 @@ export class Store {
       last_seen INTEGER
     )`);
     // Page apps: a directory of static files an agent publishes; it calls the apps bound to it (apps_json).
+    // Where a page or an app is filed on the website, per chat: key = page:<id> or line:<line> (folder.ts).
+    this.db.exec(`CREATE TABLE IF NOT EXISTS folders (chat_id TEXT NOT NULL, key TEXT NOT NULL, folder TEXT NOT NULL, PRIMARY KEY (chat_id, key))`);
     this.db.exec(`CREATE TABLE IF NOT EXISTS pages (
       id TEXT PRIMARY KEY,
       name TEXT NOT NULL,
@@ -1058,6 +1060,12 @@ export class Store {
       access: r.access as PageAccess, members: JSON.parse(String(r.members_json)), apps: JSON.parse(String(r.apps_json)), version: Number(r.version), status: r.status as PageRow['status'],
       pending: r.pending_json ? JSON.parse(String(r.pending_json)) : null, createdAt: Number(r.created_at), updatedAt: Number(r.updated_at),
     };
+  }
+  folderOf(chatId: string, key: string): string { return ((this.db.prepare('SELECT folder FROM folders WHERE chat_id = ? AND key = ?').get(chatId, key) as { folder?: string } | undefined)?.folder) ?? ''; }
+  /** '' removes the entry (back to the top level). */
+  setFolder(chatId: string, key: string, folder: string): void {
+    if (folder) this.db.prepare('INSERT INTO folders (chat_id, key, folder) VALUES (?, ?, ?) ON CONFLICT(chat_id, key) DO UPDATE SET folder = excluded.folder').run(chatId, key, folder);
+    else this.db.prepare('DELETE FROM folders WHERE chat_id = ? AND key = ?').run(chatId, key);
   }
   getPage(id: string): PageRow | undefined { return this.pageRow(this.db.prepare('SELECT * FROM pages WHERE id = ?').get(id) as Record<string, unknown> | undefined); }
   pageByName(chatId: string, name: string): PageRow | undefined { return this.pageRow(this.db.prepare(`SELECT * FROM pages WHERE chat_id = ? AND name = ? AND status != 'deleted'`).get(chatId, name) as Record<string, unknown> | undefined); }

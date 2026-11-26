@@ -15,15 +15,17 @@ usage:
   amber schedule list
   amber schedule pause <id>                    stops it at once
   amber schedule resume <id> | delete <id>     the creator confirms on a card
-  amber submit draft.json                      submit a new command for review (same name = new version);
+  amber submit draft.json [--folder 财务/上账]  submit a new command for review (same name = new version);
                                                the file may leave out chatId/claimer (this chat and --user are
                                                used) and keep its code in a file ("codeFile": "app.py"), e.g.
                                                amber submit samples/weather/app.json --user me@example.com
   amber retire <command>                       take a command offline; its creator or an admin confirms on a card
   amber global <command> | local <command>     make a command usable everywhere / only where it was made;
                                                an admin confirms on a card
-  amber page publish <dir> [--name NAME]       publish a page app (a directory with index.html) for --user;
-                                               a new page, or new apps in its amber.json, needs their confirmation
+  amber page publish <dir> [--name NAME] [--folder 财务/上账]
+                                               publish a page app (a directory with index.html) for --user;
+                                               a new page, or new apps in its amber.json, needs their confirmation;
+                                               --folder files it on the website (up to 3 levels, "" = top level)
   amber trigger add --on EVENT [--app NAME] [--to me|here] [--mention BOT[,BOT]] [--name NAME]
                                                when EVENT happens in Amber, notify --user privately, or in this
                                                chat/topic (--to here), @-ing bots there; --user confirms on a card.
@@ -154,7 +156,7 @@ def call(method, path, body=None, timeout=150):
 
 def parse(argv):
     opts, pos, args = {}, [], {}
-    flags = {"--chat", "--chat-type", "--user", "--reply-to", "--label", "--at", "--tz", "--timeout", "--name", "--on", "--app", "--to", "--mention", "--out", "--session"}
+    flags = {"--chat", "--chat-type", "--user", "--reply-to", "--label", "--at", "--tz", "--timeout", "--name", "--on", "--app", "--to", "--mention", "--out", "--session", "--folder"}
     i = 0
     while i < len(argv):
         a = argv[i]
@@ -511,6 +513,8 @@ def main(argv):
         proof = env_proof(sc)
         if proof:
             draft["envProof"] = proof
+        if opts.get("folder") is not None:
+            draft["folder"] = opts["folder"]
         r = call("POST", "/v1/drafts", draft)
         return out(r, opts, "已提交草稿 %s，Amber 已发出认领卡。" % r.get("id"))
     if cmd == "wait":
@@ -559,7 +563,10 @@ def main(argv):
                 files.append({"path": os.path.relpath(full, root).replace(os.sep, "/"), "data": base64.b64encode(data).decode()})
         if total > 10 * 1024 * 1024:
             raise SystemExit("页面目录超过 10MB")
-        r = call("POST", "/v1/pages", dict(ctx, name=name, files=files), timeout=120)
+        body = dict(ctx, name=name, files=files)
+        if opts.get("folder") is not None:
+            body["folder"] = opts["folder"]
+        r = call("POST", "/v1/pages", body, timeout=120)
         if not r.get("ok"):
             return out(r, opts)
         return out(r, opts, r.get("message") or r.get("status"))

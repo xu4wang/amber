@@ -17,6 +17,7 @@ import type { Caller, CallerFacts, Block } from './engine.ts';
 import { runCommand, AmberError, dropOrphanSettings, executorHub, selfUseBlockers } from './engine.ts';
 import { sanitizeMarkdown, person, renderBlocks, buttonRow, cardFooter, withFooter } from './cards.ts';
 import { lineDiff } from './diff.ts';
+import { normFolder, appFolderKey } from './folder.ts';
 
 function log(...a: unknown[]): void { console.log(new Date().toISOString(), ...a); }
 
@@ -41,6 +42,9 @@ export interface DraftInput {
   /** Drafts with script.env: HMAC (hex) of the environment and the code with the environment's key, which only
    *  something inside the environment can read (amber submit adds it). Checked by the executor on the trial run. */
   envProof?: string;
+  /** Where to file a new app on the website ("财务/上账"). Display only; ignored for a new version of an app
+   *  (that one stays where its owner filed it). */
+  folder?: string;
 }
 
 function shell(title: string, template: string, elements: unknown[]): object {
@@ -299,6 +303,7 @@ export class Flow {
     const lim = getLimits(this.store);
     if (d.script.timeoutMs !== undefined && d.script.timeoutMs > lim.maxTimeoutSec * 1000) throw new AmberError('bad_script', `timeoutMs 最多 ${lim.maxTimeoutSec * 1000}（管理员设置的最长运行时间是 ${fmtDuration(lim.maxTimeoutSec)}）`);
     checkParams(d.params ?? []);
+    const folder = normFolder(d.folder);
     // Who the agent is working for, if it says so: it decides which same-named app this is a new version of.
     let claimerId: string | undefined;
     if (d.claimer) {
@@ -348,6 +353,8 @@ export class Flow {
     });
     if (d.envProof !== undefined && (typeof d.envProof !== 'string' || !/^[0-9a-f]{64}$/.test(d.envProof))) throw new AmberError('bad_env_proof', 'envProof 格式不对');
     if (d.script.env && d.envProof) this.store.setMeta(row.id, { envProof: d.envProof });
+    // A brand-new app has a line of its own: filing it moves nobody else's app.
+    if (folder && !prev) this.store.setFolder(d.chatId, appFolderKey(row), folder);
     this.store.setMeta(row.id, { expectedClaimer: expectedClaimer ?? null, originMessageId: d.originMessageId ?? null, submittedBy: d.submittedBy ?? null, replaces: prev?.id ?? null });
     this.store.audit(null, 'draft.submit', { id: row.id, name: row.name, chatId: row.chatId, chatType: d.chatType, submittedBy: d.submittedBy, machine: d.machine ?? null, specHash: row.specHash, replaces: prev?.id ?? null });
     // Group: claim card in the group (only members can click). p2p: Amber can't enter the agent's DM, so the claim card goes to the claimer's DM with Amber.

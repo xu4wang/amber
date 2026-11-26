@@ -136,6 +136,8 @@ amber global 天气 --user user@example.com          # 设为全局 / amber loca
 amber submit draft.json --label <你的 bot 名>
 ```
 
+用户说了放在哪个目录（「放到财务/上账下面」），加 `--folder 财务/上账`：只决定在网站上放在哪里（最多 3 层，用 / 分隔），谁能使用不变。只对新应用生效；已有应用的新版本留在原来的目录，要挪就让用户在网站上改。
+
 之后由人完成：认领人在认领卡上试运行、提交审核；审核人在飞书审批里同意后生效。你不能认领或审核。部署方开了「仅自己用」免审时，没有扩权的应用（不用 `larkUser`、密钥、`network`，服务只用允许的那几个，比如 data-mcp；`env` 只能是你自己的环境——`amber envs --mine` 里标「你自己的环境」的那个，`amber submit` 会自动用环境里的密钥证明草稿出自你的环境）在试运行成功后卡片上会多一个「直接生效（仅自己用）」：点了马上生效，但只有创建人本人能执行，不能全局、上架、复制或转人。用户要给别人用时，用同一个名字再提交一次，认领时选「提交审核」。
 
 ## 触发器：某件事发生时被叫醒
@@ -175,7 +177,7 @@ text = json.load(urllib.request.build_opener(urllib.request.ProxyHandler({})).op
 1. 写一个目录：`index.html` 加样式、脚本、图片，样式自己定。页面里用 `<script src="/sdk/amber-page.js"></script>` 加载 Amber 接口
 2. 数据一律通过已审核的 Amber 应用拿：`const r = await Amber.run('应用名', {参数: '值'})`，返回 `{markdown, blocks, json}`；`await Amber.render(元素, r)` 画成和卡片一样的显示；打开飞书链接用 `Amber.open(url)`；`Amber.me()` 拿访问者名字。需要的应用还没有，就按上面「提交成新应用」写一个（给页面用的数据，表格用 ```table，复杂结构多输出一个 ```json 块）
 3. 目录里放 `amber.json`：`{"apps": ["应用名", ...]}`，写明页面会调用哪些应用（只能是这个人自己在这个会话里的应用，或全局应用）
-4. 发布：`amber page publish ./目录 --name <小写字母数字和->` 加 `--user <邮箱>`。第一次发布、或者 amber.json 里的应用变了，用户要在飞书卡片上点「确认发布」；只改页面内容就直接生效，告诉用户刷新页面。确认卡片上会附页面首屏截图（截图时不会调用应用），所以让首屏不用操作就能看出这个页面是做什么的
+4. 发布：`amber page publish ./目录 --name <小写字母数字和->` 加 `--user <邮箱>`；用户指定了目录就加 `--folder 财务/上账`（再次发布时带上会移过去，不带就留在原处）。第一次发布、或者 amber.json 里的应用变了，用户要在飞书卡片上点「确认发布」；只改页面内容就直接生效，告诉用户刷新页面。确认卡片上会附页面首屏截图（截图时不会调用应用），所以让首屏不用操作就能看出这个页面是做什么的
 5. 嵌入别的页面：被嵌页面在它的 amber.json 写 `"embeddable": {"params": [...], "receive": [...], "emit": [...]}`；嵌入方写 `"embeds": [{"key", "page": "<页面 id 或同会话页面名>", "params": {"被嵌参数": "本页参数"}, "receive": true, "emit": true}]`，页面里用 `Amber.embed(元素, key)` 画出来，`Amber.setParams` / `Amber.setFilter` / `Amber.filterBar` 管共享参数和联动；被嵌页面用 `Amber.onParams` / `Amber.onFilter` / `Amber.emit`。详见文档「页面应用」的「嵌入其他页面」。页面自己的每个报表模块（图表、表格、指标卡组，筛选栏除外）都用 `Amber.module(元素, { title, link: true, onLink, export })` 接上同一套工具图标，联动用 `m.filter()` / `m.emit()`
 6. 设计规范：页面干净整洁，该有的功能有就行。做报表类看板（数据看板、经营报表、从 FineBI 迁移的报表）时**必须先读并严格执行 amber-dashboard skill**（`skills/amber-dashboard/SKILL.md`）：页面结构、每个报表模块的工具图标、禁止出现的东西、分页、发布前自查都在里面。其他页面也照「页面应用」文档的「页面设计规范」做
 7. 限制：页面不能联网、不能从 CDN 加载库（要用的库放进目录，或用 Amber 提供的 `/vendor/vega*.min.js`、`/vendor/marked.min.js`、`/vendor/purify.min.js`），最多 200 个文件、10MB。谁能打开由用户在网站上设置（默认只有他自己）

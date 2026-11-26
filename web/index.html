@@ -80,6 +80,9 @@ details.node > summary:hover { background: var(--hover); }
 details.node > summary .count { color: var(--muted); font-weight: 400; font-size: 12px; margin-left: auto; }
 details.node details.node { margin-left: 14px; }
 details.node details.node > summary { font-weight: 500; color: var(--muted); }
+/* A folder people filed apps under: a small folder outline before the name. */
+summary .fold { display: inline-flex; align-items: center; gap: 6px; font-weight: 500; }
+summary .fold::before { content: ''; width: 14px; height: 11px; flex: none; border: 1.5px solid currentColor; border-radius: 2px; border-top-left-radius: 0; box-sizing: border-box; clip-path: polygon(0 0, 40% 0, 50% 18%, 100% 18%, 100% 100%, 0 100%); opacity: .7; }
 .leaf { display: flex; gap: 6px; align-items: center; padding: 4px 6px 4px 22px; border-radius: 6px; cursor: pointer; font-size: 14px; overflow: hidden; }
 .leaf .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .leaf .sub { color: var(--muted); font-size: 12px; margin-left: auto; white-space: nowrap; }
@@ -460,7 +463,7 @@ function scopeName(scope) {
 function cmdLeaf(c, scope) {
   const key = 'c:' + scope + ':' + c.id;
   ITEMS.set(key, { kind: 'cmd', c, scope });
-  return `<div class="leaf" data-key="${esc(key)}" data-search="${esc((c.name + ' ' + (c.description || '')).toLowerCase())}">
+  return `<div class="leaf" data-key="${esc(key)}" data-search="${esc((c.name + ' ' + (c.description || '') + ' ' + (c.folder || '')).toLowerCase())}">
     <span class="name">${esc(c.name)}</span>${c.listed ? '<span class="chip accent">已上架</span>' : ''}${c.installed ? '<span class="chip">来自 Store</span>' : ''}${c.orphan ? '<span class="chip warn">创建人已离群</span>' : ''}${c.options.confirm ? '<span class="chip warn">需确认</span>' : ''}</div>`;
 }
 
@@ -483,15 +486,45 @@ const node = (id, summary, inner) => `<details class="node" data-node="${esc(id)
 function pageLeaf(pg, scope) {
   const key = 'pg:' + pg.id;
   ITEMS.set(key, { kind: 'page', pg, scope });
-  return `<div class="leaf" data-key="${esc(key)}" data-search="${esc(pg.name)} 页面"><span class="name">${esc(pg.name)}</span><span class="chip">页面</span>${pg.mine ? '' : '<span class="sub">别人分享</span>'}</div>`;
+  return `<div class="leaf" data-key="${esc(key)}" data-search="${esc((pg.name + ' ' + (pg.folder || '')).toLowerCase())} 页面"><span class="name">${esc(pg.name)}</span><span class="chip">页面</span>${pg.mine ? '' : '<span class="sub">别人分享</span>'}</div>`;
+}
+
+// The folders people filed apps and pages under ("财务/上账"), inside a chat's node: sub-folders first, then the rest.
+function filed(scope, entries) {
+  const root = { subs: new Map(), items: [], n: 0 };
+  for (const e of entries) {
+    let at = root;
+    root.n++;
+    for (const part of (e.folder || '').split('/').filter(Boolean)) {
+      if (!at.subs.has(part)) at.subs.set(part, { subs: new Map(), items: [], n: 0 });
+      at = at.subs.get(part);
+      at.n++;
+    }
+    at.items.push(e.html);
+  }
+  const draw = (at, path) => [...at.subs.entries()].sort((a, b) => a[0].localeCompare(b[0], 'zh'))
+    .map(([name, sub]) => node(scope + '/' + path + name, `<span class="fold">${esc(name)}</span><span class="count">${sub.n}</span>`, draw(sub, path + name + '/'))).join('') + at.items.join('');
+  return draw(root, '');
 }
 
 function folder(title, scope, cmds, schs, pages = []) {
   const ids = new Set(cmds.map(c => c.id));
   const orphans = schs.filter(s => !ids.has(s.commandId));   // e.g. the command was retired; the schedule is paused
-  const inner = (cmds.length || pages.length ? cmds.map(c => cmdLeaf(c, scope) + schs.filter(s => s.commandId === c.id).map(s => schLeaf(s, scope, false)).join('')).join('') : '<div class="empty-leaf">还没有应用</div>')
-    + orphans.map(s => schLeaf(s, scope, true)).join('') + pages.map(pg => pageLeaf(pg, scope)).join('');
+  const inner = (cmds.length || pages.length ? filed(scope, [
+    ...cmds.map(c => ({ folder: c.folder, html: cmdLeaf(c, scope) + schs.filter(s => s.commandId === c.id).map(s => schLeaf(s, scope, false)).join('') })),
+    ...pages.map(pg => ({ folder: pg.folder, html: pageLeaf(pg, scope) })),
+  ]) : '<div class="empty-leaf">还没有应用</div>') + orphans.map(s => schLeaf(s, scope, true)).join('');
   return node(scope, `${esc(title)}<span class="count">${cmds.length + pages.length}</span>`, inner);
+}
+
+// Where an app or a page is filed: shown to everyone, changed by its creator (or an admin). Display only.
+function folderBox(kind, cur, can, scope) {
+  const all = new Set();
+  const g = scope === 'p2p' ? DATA.p2p : scope === 'global' ? { commands: DATA.global, pages: [] } : DATA.groups.find(x => 'group:' + x.chatId === scope) || { commands: [], pages: [] };
+  for (const x of [...(g.commands || []), ...(g.pages || [])]) { const parts = (x.folder || '').split('/').filter(Boolean); for (let i = 1; i <= parts.length; i++) all.add(parts.slice(0, i).join('/')); }
+  return `<div class="box"><h3>目录</h3>${can ? `<div class="field"><span class="examples"><input data-folder-input list="folder-list" value="${esc(cur || '')}" placeholder="比如：财务/上账（不填放在最外层）" style="max-width:280px">
+    <datalist id="folder-list">${[...all].sort().map(f => `<option value="${esc(f)}">`).join('')}</datalist> <button type="button" class="btn small" data-folder="${kind}">保存</button></span></div>
+    <p class="note">只影响在网站上放在哪里，最多 3 层，用 / 分隔。谁能使用不变。</p>` : `<p>${cur ? esc(cur) : '最外层'}</p>`}</div>`;
 }
 
 function renderTree() {
@@ -624,7 +657,7 @@ function cmdPane(key, { c, scope }) {
   pane.innerHTML = `${backBtn}
     <div class="pane-head"><h1>${esc(c.name)}</h1>
       ${c.global ? '<span class="chip accent">全局</span>' : ''}${c.options.confirm ? '<span class="chip warn">执行前需确认</span>' : ''}${c.options.schedulable ? '<span class="chip">可定时</span>' : ''}</div>
-    <div class="where">${esc(scopeName(scope))} · 应用 ${esc(c.id)}</div>
+    <div class="where">${esc(scopeName(scope))}${c.folder ? ' / ' + esc(c.folder) : ''} · 应用 ${esc(c.id)}</div>
     ${c.description ? `<div class="desc">${esc(c.description)}</div>` : '<div class="desc"></div>'}
     <div class="box">
       ${c.canRun ? '' : `<p class="note">这是别人的应用：管理员可以查看代码、设置和下线，不能执行。</p>`}
@@ -669,6 +702,7 @@ function cmdPane(key, { c, scope }) {
     ${c.canScope ? `<div class="manage"><h3 class="note">全局应用</h3>
       <p class="note">${c.global ? '这是<b>全局应用</b>：Amber 所在的任何群和私聊都能使用，每个人以自己的身份执行。改回后只在创建它的群（或私聊）里可用。' : '现在只在创建它的群（或私聊）里可用。设为全局后，Amber 所在的任何群和私聊都能使用，每个人以自己的身份执行。'}只有管理员可以修改。</p>
       <button class="btn" data-global="${c.global ? 'off' : 'on'}">${c.global ? '改回只在创建处可用' : '设为全局应用'}</button></div>` : ''}
+    ${folderBox('cmd', c.folder, c.canManage, scope)}
     ${c.canManage ? `<div class="manage"><h3 class="note">管理</h3>
       <p class="note">要修改这个应用，跟你的 agent 说改什么，它会提交新版本，审核通过后自动替换。不再需要时可以下线：下线后不能再执行，它的定时任务会暂停。</p>
       <button class="btn" data-retire="1">下线这个应用</button></div>` : ''}`;
@@ -935,7 +969,7 @@ function pagePane({ pg, scope }) {
   const group = scope.startsWith('group:');
   document.getElementById('pane').innerHTML = `${backBtn}
     <div class="pane-head"><h1>${esc(pg.name)}</h1><span class="chip">页面</span></div>
-    <div class="where">${esc(scope === 'p2p' && !pg.mine ? `私聊（创建人 ${pg.owner || '未知'}）` : scopeName(scope))} · 第 ${esc(pg.version)} 版 · 更新于 ${fmtTime(pg.updatedAt)}${pg.mine ? '' : pg.owner ? ` · 创建人 ${esc(pg.owner)}` : ' · 别人分享给你的'}</div>
+    <div class="where">${esc(scope === 'p2p' && !pg.mine ? `私聊（创建人 ${pg.owner || '未知'}）` : scopeName(scope))}${pg.folder ? ' / ' + esc(pg.folder) : ''} · 第 ${esc(pg.version)} 版 · 更新于 ${fmtTime(pg.updatedAt)}${pg.mine ? '' : pg.owner ? ` · 创建人 ${esc(pg.owner)}` : ' · 别人分享给你的'}</div>
     <p class="desc">页面由 agent 发布，在新标签页打开。页面里查数、写飞书都通过下面这些应用，每次都以打开页面的人自己的身份执行。</p>
     <div class="actions" style="margin-bottom:24px"><a class="btn primary" href="${esc(pg.url)}" target="_blank" rel="noopener">打开页面</a></div>
     <div class="box"><h3>页面会调用的应用</h3>${pg.apps.length ? `<ul class="pg-apps">${pg.apps.map(appLine).join('')}</ul>` : '<p class="note">这个页面不调用任何应用。</p>'}</div>
@@ -948,6 +982,7 @@ function pagePane({ pg, scope }) {
       <div class="pg-foot"><p class="note" style="margin:0">每次打开和调用都会检查：在名单里，并且现在还在这个群里。退群的人自动失去访问权限。</p>
         <button class="btn primary" data-pg="access">保存</button></div>` : '<p class="note">私聊里的页面只有你自己能访问。</p>'}`
       : `<p>${ACC[pg.access]}${pg.access === 'members' ? `（${pg.members.length} 人）` : ''}</p>`}</div>` : ''}
+    ${folderBox('page', pg.folder, pg.canDelete, scope)}
     ${pg.usage !== undefined ? `<div class="box"><h3>使用情况</h3>${pageUsageLine(pg.usage)}<div id="pg-usage"><p class="note">加载调用记录……</p></div></div>` : ''}
     ${pg.canDelete ? `<div class="manage"><h3>删除页面</h3><p class="note">删除后链接立即失效，页面文件一起删除。应用不受影响。</p><button class="btn danger" data-pg="delete">删除这个页面</button></div>` : ''}`;
   if (pg.usage !== undefined) loadPageUsage(pg);
@@ -1515,6 +1550,23 @@ document.addEventListener('click', async ev => {
     const r = await post(`/web/api/commands/${encodeURIComponent(c.id)}/reassign`, { scope, to: sel.value });
     ra.disabled = false;
     alert(r.ok ? '已私聊发出确认卡，对方接收后生效。' : (r.message || r.error));
+    return;
+  }
+  const fb = ev.target.closest('[data-folder]');
+  if (fb) {
+    const it = ITEMS.get(SEL);
+    if (!it) return;
+    const folder = document.querySelector('[data-folder-input]').value;
+    fb.disabled = true;
+    const r = fb.dataset.folder === 'page'
+      ? await post(`/web/api/pages/${it.pg.id}/folder`, { folder })
+      : await post(`/web/api/commands/${encodeURIComponent(it.c.id)}/folder`, { scope: it.scope, folder });
+    if (!r.ok) { alert(r.message || r.error); fb.disabled = false; return; }
+    // Open the folders on the way to it, so it stays in sight in the tree.
+    let path = it.scope + '/';
+    OPEN.add(it.scope); if (it.scope.startsWith('group:')) OPEN.add('groups');
+    for (const part of r.folder.split('/').filter(Boolean)) { path += part; OPEN.add(path); path += '/'; }
+    await reload(SEL);
     return;
   }
   const cfg = ev.target.closest('[data-config]');

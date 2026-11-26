@@ -90,7 +90,7 @@ export function apiHandler(flow: Flow, agent: AgentGate, jwks: () => object, inf
         const body = parseJson(raw);
         const ctx = await agent.context(body as AgentContext, machine);
         if (!ctx.user) throw new AmberError('user_required', '发布页面要用 --user 指明页面属于谁（email）');
-        return reply(200, { ok: true, ...(await pages.publish({ ...ctx, user: ctx.user }, String(body.name ?? ''), body.files)) });
+        return reply(200, { ok: true, ...(await pages.publish({ ...ctx, user: ctx.user }, String(body.name ?? ''), body.files, body.folder)) });
       }
       const body = parseJson(raw);
       if (path === '/v1/drafts') {
