@@ -123,12 +123,14 @@
     st.textContent = `.amber-embed{position:relative;border:1px dashed transparent;border-radius:6px;min-width:0;transition:border-color .15s}
 .amber-embed:hover,.amber-embed.tools-on{border-color:#f0b45e}
 .amber-embed iframe{border:0;width:100%;display:block;min-height:120px;background:transparent}
-.amber-embed-tools{position:absolute;left:6px;top:6px;z-index:3;display:none;flex-direction:column;gap:2px;padding:3px;background:#fff;border:1px solid #e5e6eb;border-radius:6px;box-shadow:0 4px 14px rgba(0,0,0,.12)}
+.amber-embed-tools{position:absolute;left:8px;top:8px;z-index:3;display:none;flex-direction:column;gap:4px;padding:5px;background:#fff;border:1px solid #e5e6eb;border-radius:10px;box-shadow:0 6px 20px rgba(31,35,41,.14)}
 .amber-embed.tools-on .amber-embed-tools{display:flex}
-.amber-embed-tools button{all:unset;box-sizing:border-box;width:26px;height:26px;display:flex;align-items:center;justify-content:center;border-radius:4px;cursor:pointer;color:#646a73}
+.amber-embed-tools button{all:unset;box-sizing:border-box;position:relative;width:36px;height:36px;display:flex;align-items:center;justify-content:center;border-radius:8px;cursor:pointer;color:#4e5969;transition:background .12s,color .12s}
 .amber-embed-tools button:hover{background:#f2f3f5;color:#1f2329}
-.amber-embed-tools button.on{background:#3370ff;color:#fff}
-.amber-embed-tools button svg{width:15px;height:15px;display:block}
+.amber-embed-tools button.on{background:#e8efff;color:#3370ff}
+.amber-embed-tools button.on:hover{background:#d9e5ff}
+.amber-embed-tools button svg{width:20px;height:20px;display:block}
+.amber-embed-tools button[data-tip]:hover::after{content:attr(data-tip);position:absolute;left:44px;top:50%;transform:translateY(-50%);white-space:nowrap;background:#1f2329;color:#fff;font:12px/1.5 -apple-system,"PingFang SC",system-ui,sans-serif;padding:4px 8px;border-radius:4px;pointer-events:none;z-index:4}
 .amber-embed-deny{padding:40px 16px;text-align:center;color:#646a73;font:13px/1.7 -apple-system,"PingFang SC",system-ui,sans-serif;background:#fafbfc;border-radius:6px}
 .amber-embed-deny::before{content:"🔒";display:block;font-size:22px;margin-bottom:4px}
 .amber-filter{display:none;align-items:center;gap:8px;flex-wrap:wrap;font:13px/1.6 -apple-system,"PingFang SC",system-ui,sans-serif;color:#3370ff}
@@ -244,10 +246,11 @@
   };
 
   document.addEventListener('click', () => embeds.forEach(o => o.toggleTools && o.toggleTools(false)));
+  // 20px line icons: link (two chain links), open (box with an arrow out), download (arrow into a tray).
   const ICON = {
-    link: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M6.5 9.5l3-3"/><path d="M7.2 4.6l1.1-1.1a2.8 2.8 0 014 4l-1.1 1.1"/><path d="M8.8 11.4l-1.1 1.1a2.8 2.8 0 01-4-4l1.1-1.1"/></svg>',
-    excel: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"><rect x="2.5" y="2" width="11" height="12" rx="1"/><path d="M5.5 5.5l5 5M10.5 5.5l-5 5" stroke-linecap="round"/></svg>',
-    open: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M9.5 2.5h4v4"/><path d="M13.5 2.5L7.5 8.5"/><path d="M12 9.5v3a1 1 0 01-1 1H3.5a1 1 0 01-1-1V5a1 1 0 011-1h3"/></svg>',
+    link: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13.5a4.5 4.5 0 006.4.4l2.6-2.6a4.5 4.5 0 00-6.4-6.4l-1.4 1.4"/><path d="M14 10.5a4.5 4.5 0 00-6.4-.4l-2.6 2.6a4.5 4.5 0 006.4 6.4l1.4-1.4"/></svg>',
+    open: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 4h6v6"/><path d="M20 4l-9 9"/><path d="M18 14v4.5A1.5 1.5 0 0116.5 20h-11A1.5 1.5 0 014 18.5v-11A1.5 1.5 0 015.5 6H10"/></svg>',
+    excel: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v11"/><path d="M7.5 10.5L12 15l4.5-4.5"/><path d="M4 15.5v3A1.5 1.5 0 005.5 20h13a1.5 1.5 0 001.5-1.5v-3"/></svg>',
   };
   Amber.setParams = p => { shared = Object.assign({}, shared, p || {}); pushAll(); };
   Amber.setFilter = f => setFilter(f);
@@ -281,7 +284,8 @@
     const tool = (t) => {
       const b = document.createElement('button');
       b.type = 'button';
-      b.title = t.title;
+      b.setAttribute('aria-label', t.title);
+      b.setAttribute('data-tip', t.tip || t.title);
       b.innerHTML = t.icon;
       b.onclick = ev => { ev.stopPropagation(); t.onClick(b); };
       tools.appendChild(b);
@@ -290,16 +294,17 @@
     if (canLink) {
       const fields = [(e.receive || []).length ? '接收：' + e.receive.join('、') : '', (e.emit || []).length ? '发出：' + e.emit.join('、') : ''].filter(Boolean).join('；');
       const tip = () => `点击联动：${x.link ? '已打开' : '已关闭'}（${fields}），点一下${x.link ? '关闭' : '打开'}`;
-      const b = tool({ title: tip(), icon: ICON.link, onClick: b => {
+      const short = () => x.link ? '点击联动：开' : '点击联动：关';
+      const b = tool({ title: tip(), tip: short(), icon: ICON.link, onClick: b => {
         x.link = !x.link;
         store(`amber-embed:${PAGE_ID}:${key}`, { link: x.link });
-        b.classList.toggle('on', x.link); b.title = tip();
+        b.classList.toggle('on', x.link); b.setAttribute('aria-label', tip()); b.setAttribute('data-tip', short());
         push(x);
       } });
       b.classList.toggle('on', x.link);
     }
-    if (e.page) tool({ title: `打开原页面：${opts.title || e.title}${e.name ? `（${e.name}${e.owner ? '，' + e.owner + ' 维护' : ''}）` : ''}`, icon: ICON.open, onClick: () => ask({ type: 'openEmbed', key }) });
-    if (e.src) tool({ title: '导出 Excel：这个报表的数据', icon: ICON.excel, onClick: async () => {
+    if (e.page) tool({ tip: e.owner ? `打开原页面 · ${e.owner} 维护` : '打开原页面', title: `打开原页面：${opts.title || e.title}${e.name ? `（${e.name}${e.owner ? '，' + e.owner + ' 维护' : ''}）` : ''}`, icon: ICON.open, onClick: () => ask({ type: 'openEmbed', key }) });
+    if (e.src) tool({ tip: '导出 Excel', title: '导出 Excel：这个报表当前的数据', icon: ICON.excel, onClick: async () => {
       try {
         const data = await askEmbed(x, 'export');
         if (!data || !sheetsOf(data).some(sh => sh.rows.length)) return alert('这个报表没有可导出的数据');
