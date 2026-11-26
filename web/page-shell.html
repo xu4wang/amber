@@ -46,8 +46,8 @@ function confirmRun(app, args) {
   });
 }
 
-async function call(app, args, confirm) {
-  const r = await fetch(`/web/api/pages/${PAGE.id}/run`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ app, args, confirm }) });
+async function call(pageId, app, args, confirm) {
+  const r = await fetch(`/web/api/pages/${pageId}/run`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ app, args, confirm }) });
   let j = await r.json().catch(() => ({ ok: false, error: 'internal', message: '服务器返回异常' }));
   if (r.status === 401) return { ok: false, error: 'login_required', message: '登录已过期：请在飞书里私聊 Amber 发「登录」，再刷新这个页面' };
   // A long run: ask for it until it ends.
@@ -72,13 +72,29 @@ function allowed(url) {
   });
 }
 
+// Embedded pages the viewer may open, by page id: their frames (inside the page) call their own apps through here.
+const EMBEDDED = new Map(Object.values(PAGE.embeds || {}).filter(e => e.src).map(e => [e.page, e]));
+
 window.addEventListener('message', async ev => {
-  if (ev.origin !== PAGE.pagesOrigin || ev.source !== frame.contentWindow) return;
+  if (ev.origin !== PAGE.pagesOrigin || !ev.source) return;
   const m = ev.data || {};
   if (m.amber !== 1 || typeof m.id !== 'number') return;
-  const reply = body => frame.contentWindow.postMessage({ amber: 1, id: m.id, ...body }, PAGE.pagesOrigin);
+  // The page itself, or a page it embeds (any other frame on the page origin must name one the viewer may open).
+  const host = ev.source === frame.contentWindow;
+  const emb = host ? null : EMBEDDED.get(String(m.page || ''));
+  if (!host && !emb) return;
+  const pageId = host ? PAGE.id : emb.page;
+  const reply = body => ev.source.postMessage({ amber: 1, id: m.id, ...body }, PAGE.pagesOrigin);
   try {
-    if (m.type === 'me') return reply({ ok: true, result: { name: PAGE.me, page: PAGE.name } });
+    if (m.type === 'me') return reply({ ok: true, result: { name: PAGE.me, page: host ? PAGE.name : emb.name, embedded: !host } });
+    // The page asks what it embeds: links for the pages the viewer may open, a reason for the others.
+    if (m.type === 'embeds') return reply(host ? { ok: true, result: PAGE.embeds || {} } : { ok: false, message: '嵌入的页面里不能再嵌入页面' });
+    if (m.type === 'openEmbed') {
+      const e = host && (PAGE.embeds || {})[String(m.key || '')];
+      if (!e || !e.page) return reply({ ok: false, message: '没有这个嵌入的页面' });
+      window.open(`/p/${e.page}/`, '_blank', 'noopener');
+      return reply({ ok: true });
+    }
     if (m.type === 'open') {
       if (!allowed(String(m.url))) return reply({ ok: false, message: '这个地址不在网络白名单里，不能打开' });
       window.open(String(m.url), '_blank', 'noopener,noreferrer');
@@ -86,10 +102,10 @@ window.addEventListener('message', async ev => {
     }
     if (m.type === 'run') {
       const app = String(m.app || ''), args = m.args && typeof m.args === 'object' ? m.args : {};
-      let j = await call(app, args, false);
+      let j = await call(pageId, app, args, false);
       if (!j.ok && j.error === 'needs_confirm') {
         if (!(await confirmRun(app, args))) return reply({ ok: false, error: 'canceled', message: '已取消' });
-        j = await call(app, args, true);
+        j = await call(pageId, app, args, true);
       }
       return reply(j.ok ? { ok: true, result: j } : { ok: false, error: j.error, message: j.message || j.error || '执行失败' });
     }

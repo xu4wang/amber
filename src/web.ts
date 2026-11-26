@@ -234,8 +234,9 @@ export function startWeb(port: number, store: Store, deps: WebDeps): import('nod
   if (pagesOrigin && (pagesOrigin === deps.origin || pagesHost === new URL(deps.origin).host)) throw new Error('pagesBaseUrl must be a different host from Amber\'s website (see docs/install.md)');
   const sdk = readFileSync(join(import.meta.dirname, '..', 'web', 'page-sdk.js'), 'utf8').replace('__AMBER_ORIGIN__', JSON.stringify(deps.origin));
   const shellTpl = readFileSync(join(import.meta.dirname, '..', 'web', 'page-shell.html'), 'utf8');
+  // frame-src/frame-ancestors 'self': a page may frame the pages it embeds (same page origin, links from the shell).
   const PAGE_CSP = `default-src 'self' data: blob:; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; `
-    + `connect-src 'self'; media-src 'self' data: blob:; frame-src 'none'; object-src 'none'; form-action 'none'; base-uri 'self'; frame-ancestors ${deps.origin}`;
+    + `connect-src 'self'; media-src 'self' data: blob:; frame-src 'self'; object-src 'none'; form-action 'none'; base-uri 'self'; frame-ancestors ${deps.origin} 'self'`;
   const pageFile = (res: ServerResponse, status: number, type: string, body: string | Buffer) => {
     res.writeHead(status, { 'content-type': type, 'content-security-policy': PAGE_CSP, 'x-content-type-options': 'nosniff', 'referrer-policy': 'no-referrer', 'cache-control': 'no-store' });
     res.end(body);
@@ -302,7 +303,8 @@ export function startWeb(port: number, store: Store, deps: WebDeps): import('nod
         noteOpen(p, who.unionId);
         // An admin opening a page that is not shared with them: always on record.
         if (!(await deps.pages.sharedWith(p, who.unionId))) store.audit(who.unionId, 'page.admin_open', { id: p.id, name: p.name, owner: p.ownerUnionId, chatId: p.chatId });
-        const data = JSON.stringify({ id: p.id, name: p.name, src: `${pagesOrigin}/c/${deps.pages.token(p, who.unionId)}/`, pagesOrigin, me: (await deps.nameOf(who.unionId)) ?? '', allowHosts: getGlobalAllowHosts(store) }).replace(/</g, '\\u003c');
+        const embeds = await deps.pages.embedsFor(p, who.unionId, pagesOrigin, u => deps.nameOf(u));
+        const data = JSON.stringify({ id: p.id, name: p.name, src: `${pagesOrigin}/c/${deps.pages.token(p, who.unionId)}/`, pagesOrigin, me: (await deps.nameOf(who.unionId)) ?? '', allowHosts: getGlobalAllowHosts(store), embeds }).replace(/</g, '\\u003c');
         return send(res, 200, 'text/html; charset=utf-8', shellTpl.replace('__TITLE__', escHtml(p.name)).replace('__PAGE_DATA__', data), {
           'content-security-policy': `default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; frame-src ${pagesOrigin}; base-uri 'none'; form-action 'none'; frame-ancestors 'none'`,
         });

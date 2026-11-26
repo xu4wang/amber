@@ -104,7 +104,7 @@ export interface PageRow {
   id: string; name: string; chatId: string; chatType: ScopeType; ownerUnionId: string; ownerOpenId: string | null;
   access: PageAccess; members: string[]; apps: PageApp[]; version: number; status: 'pending' | 'active' | 'deleted';
   /** An upload waiting for the owner's confirmation (new page, or the apps it calls changed). */
-  pending: { version: number; apps: string[]; requestedBy: string; machine: string; messageId?: string | null; at: number } | null;
+  pending: { version: number; apps: string[]; embeds?: string[]; requestedBy: string; machine: string; messageId?: string | null; at: number } | null;
   createdAt: number; updatedAt: number;
 }
 

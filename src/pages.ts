@@ -9,6 +9,11 @@
 //     chosen members. Checked on every open and every call, with fresh group membership. Admins may open any page
 //     (as themselves: its apps run as the admin, and apps using the owner's secrets stay the owner's); each such
 //     open is audited as page.admin_open.
+//   - Embeds: a page may show other pages inside it (amber.json "embeds"), each in a frame of its own. The embedded
+//     page opts in ("embeddable"), the owner confirms the list like apps, and every open checks the viewer may open
+//     each embedded page: one they may not shows a notice instead. An embedded page calls only its own apps, as the
+//     viewer. Pages share one origin and cannot reach the network, so a page reading its embeds sees nothing its
+//     viewer could not; shared parameters and click filters pass between the frames in the page SDK.
 //   - Apps: bound by name when the owner confirms — the owner's own apps in that chat, or global apps. Viewers run
 //     them as themselves; apps that use secrets run only for the owner (a viewer would otherwise use the owner's
 //     credentials).
@@ -23,6 +28,9 @@ import { emitEvent } from './events.ts';
 export const MAX_PAGE_FILES = 200;
 export const MAX_PAGE_BYTES = 10 * 1024 * 1024;
 export const MAX_PAGE_APPS = 20;
+export const MAX_PAGE_EMBEDS = 10;
+const FIELD = /^[A-Za-z_][A-Za-z0-9_]{0,39}$/;
+const KEY = /^[A-Za-z0-9_-]{1,40}$/;
 const NAME = /^[a-z0-9][a-z0-9-]{0,39}$/;
 const PATH = /^[A-Za-z0-9_\-][A-Za-z0-9._\-]*(\/[A-Za-z0-9_\-][A-Za-z0-9._\-]*)*$/;
 /** Static file types a page may contain, and how they are served. */
@@ -78,14 +86,67 @@ export function checkFiles(files: unknown): { path: string; bytes: Buffer }[] {
 
 /** amber.json: {"apps": ["应用名", ...]} — the apps the page will call. Absent = none. */
 export function appsOf(files: { path: string; bytes: Buffer }[]): string[] {
-  const f = files.find(x => x.path === 'amber.json');
-  if (!f) return [];
-  let j: any;
-  try { j = JSON.parse(f.bytes.toString('utf8')); } catch { throw new AmberError('bad_page', 'amber.json 不是合法的 JSON'); }
-  const apps = j?.apps ?? [];
+  const apps = manifestOf(files).apps ?? [];
   if (!Array.isArray(apps) || apps.length > MAX_PAGE_APPS || apps.some((a: unknown) => typeof a !== 'string' || !a.trim() || a.length > 40)) throw new AmberError('bad_page', `amber.json 的 apps 要是应用名数组（最多 ${MAX_PAGE_APPS} 个）`);
   return [...new Set(apps.map((a: string) => a.trim()))];
 }
+
+/** What a page lets others do when they embed it (amber.json "embeddable"); absent = it cannot be embedded. */
+export interface Embeddable { title?: string; params: string[]; receive: string[]; emit: string[] }
+/** One embedded page (amber.json "embeds"): `page` is a page id, or a page name in the same chat. `params` maps the
+ *  embedded page's parameters to the host's ({"embedded": "host"}); `receive`/`emit` turn click filters on. */
+export interface EmbedSpec { key: string; page: string; title?: string; params: Record<string, string>; follow: boolean; receive: boolean; emit: boolean }
+
+function manifestOf(files: { path: string; bytes: Buffer }[]): any {
+  const f = files.find(x => x.path === 'amber.json');
+  if (!f) return {};
+  try { return JSON.parse(f.bytes.toString('utf8')) ?? {}; } catch { throw new AmberError('bad_page', 'amber.json 不是合法的 JSON'); }
+}
+const fields = (v: unknown, what: string): string[] => {
+  if (v === undefined || v === null) return [];
+  if (!Array.isArray(v) || v.length > 20 || v.some(x => typeof x !== 'string' || !FIELD.test(x))) throw new AmberError('bad_page', `amber.json 的 ${what} 要是字段名数组（字母、数字、下划线，最多 20 个）`);
+  return [...new Set(v as string[])];
+};
+const title = (v: unknown, what: string): string | undefined => {
+  if (v === undefined || v === null || v === '') return undefined;
+  if (typeof v !== 'string' || v.length > 40) throw new AmberError('bad_page', `amber.json 的 ${what} 要是 40 字以内的文字`);
+  return v.trim() || undefined;
+};
+
+/** amber.json "embeddable": {"title", "params": [...], "receive": [...], "emit": [...]} or true. */
+export function embeddableOf(files: { path: string; bytes: Buffer }[]): Embeddable | undefined {
+  const e = manifestOf(files).embeddable;
+  if (e === undefined || e === null || e === false) return undefined;
+  if (e === true) return { params: [], receive: [], emit: [] };
+  if (typeof e !== 'object' || Array.isArray(e)) throw new AmberError('bad_page', 'amber.json 的 embeddable 要是 true 或对象');
+  return { title: title(e.title, 'embeddable.title'), params: fields(e.params, 'embeddable.params'), receive: fields(e.receive, 'embeddable.receive'), emit: fields(e.emit, 'embeddable.emit') };
+}
+
+/** amber.json "embeds": [{"key", "page", "title", "params": {...}, "follow", "receive", "emit"}]. */
+export function embedsOf(files: { path: string; bytes: Buffer }[]): EmbedSpec[] {
+  const list = manifestOf(files).embeds ?? [];
+  if (!Array.isArray(list) || list.length > MAX_PAGE_EMBEDS) throw new AmberError('bad_page', `amber.json 的 embeds 要是数组（最多 ${MAX_PAGE_EMBEDS} 个）`);
+  const seen = new Set<string>();
+  return list.map((e: any, i: number) => {
+    if (!e || typeof e !== 'object') throw new AmberError('bad_page', `amber.json 的 embeds 第 ${i + 1} 项要是对象`);
+    const page = String(e.page ?? '').trim();
+    if (!/^[0-9a-f]{8}$/.test(page) && !NAME.test(page)) throw new AmberError('bad_page', `embeds 第 ${i + 1} 项的 page 要写页面 id（8 位）或同一会话里的页面名`);
+    const key = String(e.key ?? page);
+    if (!KEY.test(key)) throw new AmberError('bad_page', `embeds 第 ${i + 1} 项的 key 只能用字母、数字、_ 和 -`);
+    if (seen.has(key)) throw new AmberError('bad_page', `embeds 的 key 重复：${key}`);
+    seen.add(key);
+    const params: Record<string, string> = {};
+    if (e.params !== undefined && e.params !== null) {
+      if (typeof e.params !== 'object' || Array.isArray(e.params)) throw new AmberError('bad_page', `embeds「${key}」的 params 要写成 {"被嵌页面的参数": "本页的参数"}`);
+      for (const [k, v] of Object.entries(e.params)) {
+        if (!FIELD.test(k) || typeof v !== 'string' || !FIELD.test(v)) throw new AmberError('bad_page', `embeds「${key}」的 params 里有不合法的字段名`);
+        params[k] = v;
+      }
+    }
+    return { key, page, title: title(e.title, `embeds「${key}」的 title`), params, follow: e.follow !== false, receive: e.receive === true, emit: e.emit === true };
+  });
+}
+const embedsKey = (l: EmbedSpec[]) => JSON.stringify(l.map(e => [e.key, e.page, e.title ?? '', Object.entries(e.params).sort(), e.follow, e.receive, e.emit]));
 
 /** The output of a run, split for pages: text, tables (rows), charts (vega-lite specs) and ```json data. */
 export function outputBlocks(markdown: string): { blocks: { kind: 'markdown' | 'table' | 'chart' | 'json'; text?: string; data?: unknown }[]; json?: unknown } {
@@ -153,11 +214,13 @@ export class PageService {
     if (!NAME.test(name)) throw new AmberError('bad_page', '页面名只能用小写字母、数字和 -，以字母或数字开头，最多 40 个字符');
     const files = checkFiles(rawFiles);
     const apps = appsOf(files);
+    const embeds = embedsOf(files);
+    embeddableOf(files);   // checked now, read when another page embeds this one
     const existing = this.store.pageByName(ctx.chatId, name);
     if (existing && existing.ownerUnionId !== ctx.user.unionId) throw new AmberError('conflict', `这里已经有别人的页面叫「${name}」，换个名字`);
     const bytes = files.reduce((n, f) => n + f.bytes.length, 0);
     // Content-only update of a live page: no confirmation needed (the apps it may call did not change).
-    if (existing?.status === 'active' && !existing.pending && sameApps(existing.apps.map(a => a.name), apps)) {
+    if (existing?.status === 'active' && !existing.pending && sameApps(existing.apps.map(a => a.name), apps) && embedsKey(this.liveEmbeds(existing)) === embedsKey(embeds)) {
       const version = existing.version + 1;
       this.writeVersion(existing.id, version, files);
       this.store.updatePage(existing.id, { version });
@@ -174,11 +237,12 @@ export class PageService {
     const id = existing?.id ?? randomBytes(4).toString('hex');
     const version = Math.max(existing?.version ?? 0, existing?.pending?.version ?? 0) + 1;
     this.writeVersion(id, version, files);
-    const pending = { version, apps, requestedBy: ctx.requestedBy, machine: ctx.machine, at: Date.now() };
+    const pending = { version, apps, ...(embeds.length ? { embeds: embeds.map(e => e.key) } : {}), requestedBy: ctx.requestedBy, machine: ctx.machine, at: Date.now() };
     if (existing) this.store.updatePage(id, { pending });
     else this.store.insertPage({ id, name, chatId: ctx.chatId, chatType: ctx.chatType, ownerUnionId: ctx.user.unionId, ownerOpenId: ctx.user.openId ?? null, pending });
     const imageKey = await this.preview(id, version);
-    const card = publishCard({ id, version, imageKey, name, apps, requestedBy: ctx.requestedBy, ownerOpenId: ctx.user.openId, files: files.length, bytes, update: !!existing });
+    const embedNames = embeds.map(e => this.store.getPage(e.page)?.name ?? this.store.pageByName(ctx.chatId, e.page)?.name ?? e.page);
+    const card = publishCard({ id, version, imageKey, name, apps, embeds: embedNames, requestedBy: ctx.requestedBy, ownerOpenId: ctx.user.openId, files: files.length, bytes, update: !!existing });
     const to = ctx.chatType === 'p2p' ? { unionId: ctx.user.unionId } : ctx.replyTo ? { replyTo: ctx.replyTo, inThread: ctx.inThread } : { chatId: ctx.chatId };
     let messageId: string | undefined;
     try { messageId = await this.deps.send(to, card); } catch (e: any) {
@@ -187,7 +251,7 @@ export class PageService {
     }
     this.store.updatePage(id, { pending: { ...pending, messageId: messageId ?? null } });
     this.store.audit(null, 'page.publish_request', { id, name, version, apps, files: files.length, bytes, chatId: ctx.chatId, requestedBy: ctx.requestedBy, machine: ctx.machine, target: ctx.user.unionId });
-    return { status: 'awaiting', pageId: id, message: `已在飞书发出确认卡片，等 ${ctx.user.email} 点「确认发布」。${apps.length ? `页面会调用：${apps.join('、')}。` : ''}` };
+    return { status: 'awaiting', pageId: id, message: `已在飞书发出确认卡片，等 ${ctx.user.email} 点「确认发布」。${apps.length ? `页面会调用：${apps.join('、')}。` : ''}${embedNames.length ? `页面嵌入：${embedNames.join('、')}。` : ''}` };
   }
 
   /** A screenshot of an upload waiting for confirmation, for its card. Best effort: no browser, no picture. */
@@ -229,6 +293,15 @@ export class PageService {
       } catch { missing.push(name); }
     }
     if (missing.length) return closedCard(`没有发布：${p.name}`, 'red', `找不到你能用的应用：${missing.map(n => `「${sanitizeMarkdown(n, 40)}」`).join('、')}。页面只能调用你自己在这里的应用，或者全局应用。改好后让 agent 重新发布。`);
+    // Embedded pages: each must exist, allow embedding, and be one the person confirming may open.
+    const bad: string[] = [];
+    for (const e of this.embedsIn(p, pending.version)) {
+      const t = this.embedTarget(p, e.page);
+      if (!t) bad.push(`「${sanitizeMarkdown(e.page, 40)}」不存在`);
+      else if (!this.embeddableIn(t)) bad.push(`「${sanitizeMarkdown(t.name, 40)}」没有在它的 amber.json 里允许被嵌入（embeddable）`);
+      else if (!(await this.canView(t, clicker.unionId))) bad.push(`你没有「${sanitizeMarkdown(t.name, 40)}」的访问权限`);
+    }
+    if (bad.length) return closedCard(`没有发布：${p.name}`, 'red', `嵌入的页面有问题：${bad.join('；')}。改好后让 agent 重新发布。`);
     const first = p.status === 'pending';
     this.store.updatePage(id, { apps: bound, version: pending.version, status: 'active', pending: null, ownerOpenId: clicker.openId ?? p.ownerOpenId });
     this.prune({ ...p, version: pending.version, pending: null });
@@ -247,6 +320,43 @@ export class PageService {
         ] },
       ] },
     };
+  }
+
+  // ---------- embeds: read from the amber.json of the version in question
+
+  private manifestFiles(id: string, version: number): { path: string; bytes: Buffer }[] {
+    const f = join(this.dir(id, version), 'amber.json');
+    return existsSync(f) ? [{ path: 'amber.json', bytes: readFileSync(f) }] : [];
+  }
+  private embedsIn(p: Pick<PageRow, 'id'>, version: number): EmbedSpec[] { try { return embedsOf(this.manifestFiles(p.id, version)); } catch { return []; } }
+  private liveEmbeds(p: PageRow): EmbedSpec[] { return p.status === 'active' ? this.embedsIn(p, p.version) : []; }
+  embeddableIn(p: PageRow): Embeddable | undefined {
+    if (p.status !== 'active') return undefined;
+    try { return embeddableOf(this.manifestFiles(p.id, p.version)); } catch { return undefined; }
+  }
+  /** An embed's page: by id, or by name in the host's chat. */
+  private embedTarget(host: PageRow, ref: string): PageRow | undefined {
+    const t = /^[0-9a-f]{8}$/.test(ref) ? this.store.getPage(ref) : this.store.pageByName(host.chatId, ref);
+    return t && t.status !== 'deleted' && t.id !== host.id ? t : undefined;
+  }
+
+  /** What the shell tells a page about its embeds, for one viewer: a content link for each page they may open,
+   *  a reason for the others. The page SDK draws the frames, title bars and switches from this. */
+  async embedsFor(p: PageRow, viewer: string, origin: string, nameOf: (u: string) => Promise<string | undefined>): Promise<Record<string, object>> {
+    const out: Record<string, object> = {};
+    for (const e of this.liveEmbeds(p)) {
+      const t = this.embedTarget(p, e.page);
+      const decl = t ? this.embeddableIn(t) : undefined;
+      const base = { key: e.key, follow: e.follow, title: e.title ?? decl?.title ?? t?.name ?? e.page };
+      if (!t || t.status !== 'active') { out[e.key] = { ...base, denied: 'gone', message: '嵌入的页面已不存在' }; continue; }
+      const info = { ...base, page: t.id, name: t.name, owner: (await nameOf(t.ownerUnionId)) ?? '', url: this.url(t) };
+      if (!decl) { out[e.key] = { ...info, denied: 'not_embeddable', message: `「${t.name}」不再允许被嵌入` }; continue; }
+      if (!(await this.canView(t, viewer))) { out[e.key] = { ...info, denied: 'forbidden', message: `你没有「${t.name}」的访问权限，可以联系它的创建人开通` }; continue; }
+      // Only what both sides allow: parameters the embedded page takes, filters it declared.
+      const params = Object.fromEntries(Object.entries(e.params).filter(([k]) => decl.params.includes(k)));
+      out[e.key] = { ...info, params, receive: e.receive ? decl.receive : [], emit: e.emit ? decl.emit : [], src: `${origin}/c/${this.token(t, viewer)}/` };
+    }
+    return out;
   }
 
   /** Whether `viewer` may open the page and call its apps right now: by its access setting, or as an admin. */
@@ -340,14 +450,15 @@ export class PageService {
 
 const sameApps = (a: string[], b: string[]) => a.length === b.length && [...a].sort().join('\u0000') === [...b].sort().join('\u0000');
 
-function publishCard(o: { id: string; version: number; imageKey?: string; name: string; apps: string[]; requestedBy: string; ownerOpenId?: string; files: number; bytes: number; update: boolean }): object {
+function publishCard(o: { id: string; version: number; imageKey?: string; name: string; apps: string[]; embeds: string[]; requestedBy: string; ownerOpenId?: string; files: number; bytes: number; update: boolean }): object {
   const size = o.bytes > 1024 * 1024 ? `${(o.bytes / 1024 / 1024).toFixed(1)}MB` : `${Math.max(1, Math.round(o.bytes / 1024))}KB`;
   return {
     schema: '2.0', config: { update_multi: true },
-    header: { title: { tag: 'plain_text', content: `Amber · ${o.update ? '页面要调用新的应用' : '发布页面'}：${o.name}` }, template: 'orange' },
+    header: { title: { tag: 'plain_text', content: `Amber · ${o.update ? '页面要调用新的应用或嵌入新的页面' : '发布页面'}：${o.name}` }, template: 'orange' },
     body: { elements: [
       { tag: 'markdown', content: `${sanitizeMarkdown(o.requestedBy, 40)} 要以 ${person(o.ownerOpenId)} 的名义${o.update ? '更新' : '发布'}页面「${sanitizeMarkdown(o.name, 40)}」（${o.files} 个文件，${size}）。\n\n`
         + (o.apps.length ? `页面会调用这些应用：${o.apps.map(a => `「${sanitizeMarkdown(a, 40)}」`).join('、')}。每次调用都以打开页面的人自己的身份执行。` : '页面不调用任何应用。')
+        + (o.embeds.length ? `\n\n页面会嵌入这些页面：${o.embeds.map(a => `「${sanitizeMarkdown(a, 40)}」`).join('、')}。打开的人没有某个页面的权限时，那一块显示无权限提示。` : '')
         + (o.update ? '' : '\n\n确认后只有你能打开，之后可以在网站上设置群里谁能访问。') },
       ...(o.imageKey ? [{ tag: 'img', img_key: o.imageKey, alt: { tag: 'plain_text', content: '页面预览' }, preview: true, scale_type: 'fit_horizontal' }] : []),
       { tag: 'column_set', flex_mode: 'flow', columns: [
