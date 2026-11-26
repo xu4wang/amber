@@ -39,6 +39,8 @@ git show "${C}:client/amber" | shasum -a 256
 | botmux 里每个 bot 自己的 Claude 配置 | `~/.botmux/bots/<appId>/claude/skills/amber/SKILL.md` |
 | botmux 里每个 bot 自己的 Codex 配置 | `~/.botmux/bots/<appId>/codex/skills/amber/SKILL.md` |
 
+做报表看板的 agent 还要装 [`skills/amber-dashboard/SKILL.md`](../skills/amber-dashboard/SKILL.md)（报表看板的功能和设计规范），放在同一个 skills 目录下的 `amber-dashboard/SKILL.md`。
+
 **先确认 bot 实际用的是哪个配置目录，再决定装到哪里。** botmux 里每个 bot 可能是 Claude 也可能是 Codex（看 `~/.botmux/bots.json` 里该 bot 的 `cliId`），也可能没有自己的配置目录、直接用全局配置。判断办法：`~/.botmux/bots/<appId>/claude` 或 `…/codex` 存在并且有配置文件（Codex 是 `config.toml` 或 `auth.json`），才说明这个 bot 用它自己的目录；否则装到全局目录就行，**不要凭空新建一个 bot 专属目录**，建了也不会被加载。
 
 skill 在 agent 开新会话时加载，已经在跑的会话看不到。

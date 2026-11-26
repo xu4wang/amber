@@ -98,6 +98,7 @@ Amber 是**琥珀**。琥珀把一瞬间的东西封存起来，过很多年取�
 | [可信身份](docs/identity.md) · [完整示例](docs/identity-example.md) | 身份从哪来、网站登录、执行身份凭证与服务方验证 |
 | [运行环境定义格式](docs/environment-format.md) | 运行环境的 JSON 格式规范（amber-env/1），独立于 Amber，其他 agent 平台和沙箱可以照着移植 |
 | [给 agent 的 skill](skills/amber/SKILL.md) | agent 怎么调用 Amber、怎么提交新应用 |
+| [报表看板规范 skill](skills/amber-dashboard/SKILL.md) | agent 做报表类看板时必须遵守的功能和设计约束 |
 
 ## 快速开始
 
