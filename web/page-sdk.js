@@ -6,8 +6,8 @@
 //   Amber.open(url)            opens a link on the network allow list (Feishu by default) in a new tab
 //   Amber.me()                 { name, page, embedded }
 // Embedding other pages (amber.json "embeds"; the embedded page allows it with "embeddable"):
-//   const h = await Amber.embed(element, 'key', { height })   frame + title bar (source, maintainer, switches, open original)
-//   Amber.setParams({ date: '2026-11' })    shared parameters: embeds that follow them get theirs (mapped in amber.json)
+//   const h = await Amber.embed(element, 'key', { height })   frame + title bar (source, maintainer, filter switch, open original)
+//   Amber.setParams({ date: '2026-11' })    shared parameters: embeds get theirs (mapped in amber.json; "follow": false opts out)
 //   Amber.setFilter({ region: '泰国' })      click filter: every embed with filtering on that receives the field; null clears
 //   Amber.onFilter(fn)                      fn(filter) when the filter changes (from this page or an embed)
 //   Amber.filterBar(element, { region: '区域' })   shows 「联动筛选：区域=泰国 ×」 while a filter is on
@@ -194,16 +194,16 @@
     const saved = store(`amber-embed:${PAGE_ID}:${key}`) || {};
     const canFollow = !e.denied && Object.keys(e.params || {}).length > 0;
     const canLink = !e.denied && ((e.receive || []).length + (e.emit || []).length) > 0;
-    const x = { e, follow: canFollow && (saved.follow !== undefined ? saved.follow : e.follow), link: canLink && (saved.link !== undefined ? saved.link : true), fixed: !!opts.height };
+    // Parameters follow the host's as amber.json says (no switch for viewers); filtering can be switched off per viewer.
+    const x = { e, follow: canFollow && e.follow !== false, link: canLink && (saved.link !== undefined ? saved.link : true), fixed: !!opts.height };
     bar.innerHTML = `<b>${esc(opts.title || e.title)}</b>` + (e.name ? `<span class="src">来自「${esc(e.name)}」${e.owner ? ' · ' + esc(e.owner) + ' 维护' : ''}</span>` : '') + '<span class="sp"></span>'
-      + (canFollow ? `<label title="跟随本页顶部的参数；关掉后显示它自己的参数"><input type="checkbox" data-s="follow"${x.follow ? ' checked' : ''}>参数跟随</label>` : '')
       + (canLink ? `<label title="${esc([(e.receive || []).length ? '接收：' + e.receive.join('、') : '', (e.emit || []).length ? '发出：' + e.emit.join('、') : ''].filter(Boolean).join('；'))}"><input type="checkbox" data-s="link"${x.link ? ' checked' : ''}>点击联动</label>` : '')
       + (e.page ? '<a data-open="1">打开原页面 ↗</a>' : '');
     bar.addEventListener('change', ev => {
       const s = ev.target.getAttribute('data-s');
       if (!s) return;
       x[s] = ev.target.checked;
-      store(`amber-embed:${PAGE_ID}:${key}`, { follow: x.follow, link: x.link });
+      store(`amber-embed:${PAGE_ID}:${key}`, { link: x.link });
       push(x);
     });
     bar.addEventListener('click', ev => { if (ev.target.getAttribute('data-open')) ask({ type: 'openEmbed', key }); });
