@@ -304,7 +304,10 @@ export function startWeb(port: number, store: Store, deps: WebDeps): import('nod
         // An admin opening a page that is not shared with them: always on record.
         if (!(await deps.pages.sharedWith(p, who.unionId))) store.audit(who.unionId, 'page.admin_open', { id: p.id, name: p.name, owner: p.ownerUnionId, chatId: p.chatId });
         const embeds = await deps.pages.embedsFor(p, who.unionId, pagesOrigin, u => deps.nameOf(u));
-        const data = JSON.stringify({ id: p.id, name: p.name, src: `${pagesOrigin}/c/${deps.pages.token(p, who.unionId)}/`, pagesOrigin, me: (await deps.nameOf(who.unionId)) ?? '', allowHosts: getGlobalAllowHosts(store), embeds }).replace(/</g, '\\u003c');
+        // Opened from a page that embeds this one (打开原页面): a way back, when the viewer may open that page.
+        const from = /^[0-9a-f]{8}$/.test(url.searchParams.get('from') ?? '') ? store.getPage(url.searchParams.get('from')!) : undefined;
+        const back = from && from.id !== p.id && (await deps.pages.canView(from, who.unionId)) ? { url: `/p/${from.id}/`, name: from.name } : null;
+        const data = JSON.stringify({ id: p.id, name: p.name, src: `${pagesOrigin}/c/${deps.pages.token(p, who.unionId)}/`, pagesOrigin, me: (await deps.nameOf(who.unionId)) ?? '', allowHosts: getGlobalAllowHosts(store), embeds, back }).replace(/</g, '\\u003c');
         return send(res, 200, 'text/html; charset=utf-8', shellTpl.replace('__TITLE__', escHtml(p.name)).replace('__PAGE_DATA__', data), {
           'content-security-policy': `default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; frame-src ${pagesOrigin}; base-uri 'none'; form-action 'none'; frame-ancestors 'none'`,
         });

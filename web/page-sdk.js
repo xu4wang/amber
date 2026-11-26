@@ -123,14 +123,14 @@
     st.textContent = `.amber-embed{position:relative;border:1px dashed transparent;border-radius:6px;min-width:0;transition:border-color .15s}
 .amber-embed:hover,.amber-embed.tools-on{border-color:#f0b45e}
 .amber-embed iframe{border:0;width:100%;display:block;min-height:120px;background:transparent}
-.amber-embed-tools{position:absolute;left:8px;top:8px;z-index:3;display:none;flex-direction:column;gap:4px;padding:5px;background:#fff;border:1px solid #e5e6eb;border-radius:10px;box-shadow:0 6px 20px rgba(31,35,41,.14)}
+.amber-embed-tools{position:absolute;right:100%;margin-right:6px;top:50%;transform:translateY(-50%);z-index:3;display:none;flex-direction:column;gap:2px;padding:3px;background:#fff;border:1px solid #e5e6eb;border-radius:8px;box-shadow:0 4px 16px rgba(31,35,41,.12)}
 .amber-embed.tools-on .amber-embed-tools{display:flex}
-.amber-embed-tools button{all:unset;box-sizing:border-box;position:relative;width:36px;height:36px;display:flex;align-items:center;justify-content:center;border-radius:8px;cursor:pointer;color:#4e5969;transition:background .12s,color .12s}
+.amber-embed-tools button{all:unset;box-sizing:border-box;position:relative;width:30px;height:32px;display:flex;align-items:center;justify-content:center;border-radius:8px;cursor:pointer;color:#4e5969;transition:background .12s,color .12s}
 .amber-embed-tools button:hover{background:#f2f3f5;color:#1f2329}
 .amber-embed-tools button.on{background:#e8efff;color:#3370ff}
 .amber-embed-tools button.on:hover{background:#d9e5ff}
-.amber-embed-tools button svg{width:20px;height:20px;display:block}
-.amber-embed-tools button[data-tip]:hover::after{content:attr(data-tip);position:absolute;left:44px;top:50%;transform:translateY(-50%);white-space:nowrap;background:#1f2329;color:#fff;font:12px/1.5 -apple-system,"PingFang SC",system-ui,sans-serif;padding:4px 8px;border-radius:4px;pointer-events:none;z-index:4}
+.amber-embed-tools button svg{width:18px;height:18px;display:block}
+.amber-embed-tools button[data-tip]:hover::after{content:attr(data-tip);position:absolute;right:38px;top:50%;transform:translateY(-50%);white-space:nowrap;background:#1f2329;color:#fff;font:12px/1.5 -apple-system,"PingFang SC",system-ui,sans-serif;padding:4px 8px;border-radius:4px;pointer-events:none;z-index:4}
 .amber-embed-deny{padding:40px 16px;text-align:center;color:#646a73;font:13px/1.7 -apple-system,"PingFang SC",system-ui,sans-serif;background:#fafbfc;border-radius:6px}
 .amber-embed-deny::before{content:"🔒";display:block;font-size:22px;margin-bottom:4px}
 .amber-filter{display:none;align-items:center;gap:8px;flex-wrap:wrap;font:13px/1.6 -apple-system,"PingFang SC",system-ui,sans-serif;color:#3370ff}
@@ -303,7 +303,7 @@
       } });
       b.classList.toggle('on', x.link);
     }
-    if (e.page) tool({ tip: e.owner ? `打开原页面 · ${e.owner} 维护` : '打开原页面', title: `打开原页面：${opts.title || e.title}${e.name ? `（${e.name}${e.owner ? '，' + e.owner + ' 维护' : ''}）` : ''}`, icon: ICON.open, onClick: () => ask({ type: 'openEmbed', key }) });
+    if (e.page) tool({ tip: e.owner ? `打开原页面 · ${e.owner} 维护` : '打开原页面', title: `打开原页面：${opts.title || e.title}${e.name ? `（${e.name}${e.owner ? '，' + e.owner + ' 维护' : ''}）` : ''}`, icon: ICON.open, onClick: () => ask({ type: 'openEmbed', key, state: { params: stateFor(x).params, filter: stateFor(x).filter } }) });
     if (e.src) tool({ tip: '导出 Excel', title: '导出 Excel：这个报表当前的数据', icon: ICON.excel, onClick: async () => {
       try {
         const data = await askEmbed(x, 'export');
@@ -368,6 +368,13 @@
   Amber.embedded = EMBEDDED;
   Amber.onParams = fn => { paramFns.push(fn); if (got) fn(lastParams, { follow }); };
   Amber.emit = f => { if (!EMBEDDED) return false; window.parent.postMessage({ amberEmbed: 1, type: 'emit', filter: f || {} }, ME); return true; };
+  // Opened from a host page (打开原页面): start from the host's parameters and filter, with its own controls shown.
+  if (!EMBEDDED && /^#amber=/.test(location.hash)) {
+    try {
+      const st = JSON.parse(decodeURIComponent(location.hash.slice(7)));
+      lastParams = st.params || null; filter = st.filter || {}; lastFilter = JSON.stringify(filter); got = true; follow = false;
+    } catch (_) {}
+  }
   if (EMBEDDED) {
     const hello = () => window.parent.postMessage({ amberEmbed: 1, type: 'hello' }, ME);
     hello();

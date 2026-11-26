@@ -7,7 +7,14 @@
 <style>
 /* The shell of a page app: the page fills the window; Amber only shows a confirmation dialog when an app needs one. */
 html, body { margin: 0; height: 100%; background: #fff; }
-iframe { border: 0; width: 100%; height: 100%; display: block; }
+body { display: flex; flex-direction: column; }
+iframe { border: 0; width: 100%; flex: 1; min-height: 0; display: block; }
+/* Opened from a page that embeds this one: a slim bar back to it. */
+.back { display: none; align-items: center; height: 36px; padding: 0 16px; background: #f5f6f8; font: 13px/1 -apple-system, "PingFang SC", system-ui, sans-serif; flex: none; }
+.back.on { display: flex; }
+.back a { display: inline-flex; align-items: center; gap: 4px; color: #646a73; text-decoration: none; padding: 6px 10px; margin-left: -10px; border-radius: 6px; }
+.back a:hover { background: #f2f3f5; color: #3370ff; }
+.back svg { width: 16px; height: 16px; }
 .mask { position: fixed; inset: 0; background: rgba(0,0,0,.45); display: none; align-items: center; justify-content: center; z-index: 10; }
 .mask.on { display: flex; }
 .dlg { background: #fff; color: #151515; max-width: 460px; width: calc(100% - 32px); padding: 24px; font: 14px/1.7 -apple-system, "PingFang SC", system-ui, sans-serif; box-shadow: 0 12px 40px rgba(0,0,0,.3); }
@@ -20,6 +27,7 @@ iframe { border: 0; width: 100%; height: 100%; display: block; }
 </style>
 </head>
 <body>
+<div class="back" id="back"><a id="back-link"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg><span id="back-name"></span></a></div>
 <iframe id="page" sandbox="allow-scripts allow-same-origin allow-forms allow-downloads allow-modals" referrerpolicy="no-referrer"></iframe>
 <div class="mask" id="mask"><div class="dlg">
   <h3 id="dlg-title"></h3>
@@ -31,7 +39,14 @@ iframe { border: 0; width: 100%; height: 100%; display: block; }
 <script>
 const PAGE = __PAGE_DATA__;
 const frame = document.getElementById('page');
-frame.src = PAGE.src;
+// The host's parameters and filter ride along in the hash (打开原页面), for the page SDK to start from.
+frame.src = PAGE.src + (/^#amber=/.test(location.hash) ? location.hash : '');
+if (PAGE.back) {
+  document.getElementById('back-name').textContent = '返回';
+  document.getElementById('back-link').title = `返回「${PAGE.back.name}」`;
+  document.getElementById('back-link').href = PAGE.back.url;
+  document.getElementById('back').classList.add('on');
+}
 
 // Only Amber's own dialog may approve an app that changes data.
 function confirmRun(app, args) {
@@ -92,7 +107,9 @@ window.addEventListener('message', async ev => {
     if (m.type === 'openEmbed') {
       const e = host && (PAGE.embeds || {})[String(m.key || '')];
       if (!e || !e.page) return reply({ ok: false, message: '没有这个嵌入的页面' });
-      window.open(`/p/${e.page}/`, '_blank', 'noopener');
+      // Drill down in the same tab; the embedded page shows a way back here.
+      const st = m.state && typeof m.state === 'object' ? '#amber=' + encodeURIComponent(JSON.stringify(m.state)).slice(0, 4000) : '';
+      location.href = `/p/${e.page}/?from=${PAGE.id}${st}`;
       return reply({ ok: true });
     }
     if (m.type === 'open') {

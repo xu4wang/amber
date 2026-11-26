@@ -98,6 +98,14 @@ test('page embeds: confirm, per-viewer access, embedded pages call their own app
     const run = await post(carolC, `/web/api/pages/${trade.id}/run`, { app: '订单数', args: {} });
     assert.deepEqual(run.body.json, { who: carol.unionId });
 
+    // Opened from the host (打开原页面): a way back for viewers who may open the host; nothing for other pages.
+    const viaHost = async (cookie: string, from: string) => JSON.parse(/const PAGE = (\{.*\});/.exec(await (await fetch(`${web}/p/${trade.id}/?from=${from}`, { headers: { cookie } })).text())![1]);
+    assert.deepEqual((await viaHost(carolC, host.id)).back, { url: `/p/${host.id}/`, name: 'overview' });
+    assert.equal((await viaHost(carolC, trade.id)).back, null, 'not back to itself');
+    assert.equal((await viaHost(carolC, 'zzzz')).back, null);
+    assert.equal((await post(bobC, `/web/api/pages/${host.id}/access`, { access: 'owner' })).body.ok, true);
+    assert.equal((await viaHost(carolC, host.id)).back, null, 'no way back to a page they may not open');
+
     // The embedded page withdraws: the host shows a notice instead.
     await publish('trade', { apps: ['订单数'] }, '<h1>不再允许</h1>');
     assert.equal((await shellData(bobC, host.id)).embeds.orders.denied, 'not_embeddable');
