@@ -124,7 +124,7 @@
 .amber-embed-bar input::after{content:"";position:absolute;width:10px;height:10px;border-radius:50%;background:#fff;top:2px;left:2px;transition:.15s}
 .amber-embed-bar input:checked{background:#3370ff}.amber-embed-bar input:checked::after{left:14px}
 .amber-embed-bar a{color:#b26a00;cursor:pointer;text-decoration:none}.amber-embed-bar a:hover{text-decoration:underline}
-.amber-embed iframe{border:0;width:100%;display:block;min-height:120px;flex:1;background:#fff}
+.amber-embed iframe{border:0;width:100%;display:block;min-height:120px;flex:1 0 auto;background:#fff}
 .amber-embed-deny{padding:40px 16px;text-align:center;color:#646a73;font:13px/1.7 -apple-system,"PingFang SC",system-ui,sans-serif}
 .amber-embed-deny::before{content:"🔒";display:block;font-size:22px;margin-bottom:4px}
 .amber-filter{display:none;align-items:center;gap:8px;flex-wrap:wrap;font:13px/1.6 -apple-system,"PingFang SC",system-ui,sans-serif;color:#3370ff}
