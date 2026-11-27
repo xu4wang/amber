@@ -199,9 +199,10 @@ details.node > .leaf, details.node > .empty-leaf { margin-left: 13px; border-lef
 details.node > .leaf.sel { border-left-color: var(--accent); }
 details.node > .empty-leaf { padding: 6px 8px 6px 20px; }
 /* A page row: clicking it opens the page; the ⋮ at its right end holds everything else about it. */
-.leaf .more { letter-spacing: 0; font-weight: 400; margin-left: auto; flex: none; width: 22px; height: 22px; padding: 0; border: 0; border-radius: 4px; background: none; color: var(--muted); font-size: 16px; line-height: 22px; cursor: pointer; visibility: hidden; }
-.leaf .sub + .more { margin-left: 4px; }
+.leaf { position: relative; }
+.leaf .more { position: absolute; right: 4px; top: 50%; transform: translateY(-50%); letter-spacing: 0; font-weight: 400; width: 22px; height: 22px; padding: 0; border: 0; border-radius: 4px; background: none; color: var(--muted); font-size: 16px; line-height: 22px; cursor: pointer; visibility: hidden; }
 .leaf:hover .more, .leaf .more.on { visibility: visible; }
+.leaf .more { background: var(--hover); }
 .leaf .more:hover, .leaf .more.on { background: var(--line); color: var(--ink); }
 @media (hover: none) { .leaf .more { visibility: visible; } }
 .menu { position: fixed; z-index: 50; min-width: 168px; background: var(--bg); border: 1px solid var(--line); border-radius: 6px; box-shadow: 0 6px 20px rgba(0,0,0,.12); padding: 4px 0; font-size: 13px; }
@@ -219,7 +220,7 @@ details.node > .empty-leaf { padding: 6px 8px 6px 20px; }
 .dir-row .acts { margin-left: auto; display: flex; gap: 2px; visibility: hidden; }
 .dir-row:hover .acts, .dir-row.editing .acts { visibility: visible; }
 @media (hover: none) { .dir-row .acts { visibility: visible; } }
-.dir-row .acts button, .dir-new button.lnk { border: 0; background: none; padding: 4px 8px; font-size: 13px; font-weight: 400; letter-spacing: 0; text-transform: none; color: var(--accent-ink); cursor: pointer; border-radius: 4px; }
+.dir-row .acts button, .dir-row button.lnk, .dir-new button.lnk { border: 0; background: none; padding: 4px 8px; font-size: 13px; font-weight: 400; letter-spacing: 0; text-transform: none; color: var(--accent-ink); cursor: pointer; border-radius: 4px; }
 .dir-row .acts button:hover { background: var(--hover); }
 .dir-row .acts button.danger { color: var(--warn); }
 .dir-row input, .dir-new input { font: inherit; padding: 4px 8px; border: 1px solid var(--line); border-radius: 4px; background: var(--bg); color: var(--ink); width: 180px; }
@@ -514,7 +515,7 @@ const node = (id, summary, inner) => `<details class="node" data-node="${esc(id)
 function pageLeaf(pg, scope) {
   const key = 'pg:' + pg.id;
   ITEMS.set(key, { kind: 'page', pg, scope });
-  return `<div class="leaf" data-key="${esc(key)}" data-open="${esc(pg.url)}" data-search="${esc((pg.name + ' ' + (pg.folder || '')).toLowerCase())} 页面"><span class="name">${esc(pg.name)}</span><span class="chip">页面</span>${pg.mine ? '' : '<span class="sub">别人分享</span>'}${moreBtn(key)}</div>`;
+  return `<div class="leaf" data-key="${esc(key)}" data-open="${esc(pg.url)}" data-search="${esc((pg.name + ' ' + (pg.folder || '')).toLowerCase())} 页面"><span class="name">${esc(pg.name)}</span><span class="chip">页面</span>${pg.mine || DATA.isAdmin ? '' : '<span class="sub">别人分享</span>'}${moreBtn(key)}</div>`;
 }
 
 // The folders people filed apps and pages under ("财务/上账"), inside a chat's node: sub-folders first, then the rest.
@@ -1070,7 +1071,7 @@ function dirsPane() {
   }).join('');
   document.getElementById('pane').innerHTML = `${backBtn}
     <div class="pane-head"><h1>目录管理</h1></div>
-    <div class="field"><select id="dir-chat" style="max-width:320px">${DATA.groups.map(x => `<option value="${esc(x.chatId)}"${x.chatId === g.chatId ? ' selected' : ''}>${esc(x.name)}</option>`).join('')}</select></div>
+    <div class="field" style="margin:16px 0 8px"><select id="dir-chat" style="max-width:320px">${DATA.groups.map(x => `<option value="${esc(x.chatId)}"${x.chatId === g.chatId ? ' selected' : ''}>${esc(x.name)}</option>`).join('')}</select></div>
     <div class="dirs">${rows || '<p class="note">这个群还没有目录。</p>'}</div>
     <div class="dir-new">${DIREDIT && DIREDIT.op === 'add' && DIREDIT.path === '' ? editor('', 'add-save', '') : '<button class="btn small" data-dir="add" data-path="">新建目录</button>'}</div>`;
   document.getElementById('dir-chat').addEventListener('change', e => { DIRCHAT = e.target.value; DIREDIT = null; dirsPane(); });
