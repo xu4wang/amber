@@ -18,6 +18,15 @@ export function normFolder(raw: unknown): string {
   return parts.join('/');
 }
 
+/** Where `f` ends up when the folder `from` becomes `to` ('' = the top level): `from` itself and everything under it
+ *  move, anything else stays. Renaming 财务/上账 to 财务/结算 moves 财务/上账/明细 to 财务/结算/明细; removing the level
+ *  财务/上账 (to = 财务) moves 财务/上账/明细 up to 财务/明细. */
+export function movedPath(f: string, from: string, to: string): string {
+  if (f === from) return to;
+  if (!f.startsWith(from + '/')) return f;
+  return (to ? to + '/' : '') + f.slice(from.length + 1);
+}
+
 /** The folder key of a page or an app in its chat. An app's versions share its line, so they share the folder. */
 export const pageFolderKey = (id: string) => `page:${id}`;
 export const appFolderKey = (c: { line?: string | null; name: string }) => `line:${c.line || c.name}`;

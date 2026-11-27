@@ -199,17 +199,31 @@ details.node > .leaf, details.node > .empty-leaf { margin-left: 13px; border-lef
 details.node > .leaf.sel { border-left-color: var(--accent); }
 details.node > .empty-leaf { padding: 6px 8px 6px 20px; }
 /* A page row: clicking it opens the page; the ⋮ at its right end holds everything else about it. */
-.leaf .more { margin-left: auto; flex: none; width: 22px; height: 22px; padding: 0; border: 0; border-radius: 4px; background: none; color: var(--muted); font-size: 16px; line-height: 22px; cursor: pointer; visibility: hidden; }
+.leaf .more { letter-spacing: 0; font-weight: 400; margin-left: auto; flex: none; width: 22px; height: 22px; padding: 0; border: 0; border-radius: 4px; background: none; color: var(--muted); font-size: 16px; line-height: 22px; cursor: pointer; visibility: hidden; }
 .leaf .sub + .more { margin-left: 4px; }
 .leaf:hover .more, .leaf .more.on { visibility: visible; }
 .leaf .more:hover, .leaf .more.on { background: var(--line); color: var(--ink); }
 @media (hover: none) { .leaf .more { visibility: visible; } }
 .menu { position: fixed; z-index: 50; min-width: 168px; background: var(--bg); border: 1px solid var(--line); border-radius: 6px; box-shadow: 0 6px 20px rgba(0,0,0,.12); padding: 4px 0; font-size: 13px; }
-.menu button { display: flex; align-items: center; gap: 8px; width: 100%; border: 0; background: none; color: var(--ink); font: inherit; text-align: left; padding: 7px 14px; cursor: pointer; }
+.menu button { letter-spacing: 0; font-weight: 400; text-transform: none; border-radius: 0; line-height: 1.4; display: flex; align-items: center; gap: 8px; width: 100%; border: 0; background: none; color: var(--ink); font: inherit; text-align: left; padding: 7px 14px; cursor: pointer; }
 .menu button:hover { background: var(--hover); }
 .menu button svg { width: 15px; height: 15px; flex: none; stroke: currentColor; fill: none; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; opacity: .75; }
 .menu button.danger { color: var(--warn); }
 .menu hr { border: 0; border-top: 1px solid var(--line); margin: 4px 0; }
+/* 目录管理: one row per folder, its actions at the right end on hover. */
+.dirs { margin-top: 8px; }
+.dir-row { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-bottom: 1px solid var(--line); font-size: 14px; }
+.dir-row .fold { display: inline-flex; align-items: center; gap: 6px; }
+.dir-row .fold::before { content: ''; width: 14px; height: 11px; flex: none; border: 1.5px solid currentColor; border-radius: 2px; border-top-left-radius: 0; box-sizing: border-box; clip-path: polygon(0 0, 40% 0, 50% 18%, 100% 18%, 100% 100%, 0 100%); opacity: .7; }
+.dir-row .count { color: var(--muted); font-size: 12px; }
+.dir-row .acts { margin-left: auto; display: flex; gap: 2px; visibility: hidden; }
+.dir-row:hover .acts, .dir-row.editing .acts { visibility: visible; }
+@media (hover: none) { .dir-row .acts { visibility: visible; } }
+.dir-row .acts button, .dir-new button.lnk { border: 0; background: none; padding: 4px 8px; font-size: 13px; font-weight: 400; letter-spacing: 0; text-transform: none; color: var(--accent-ink); cursor: pointer; border-radius: 4px; }
+.dir-row .acts button:hover { background: var(--hover); }
+.dir-row .acts button.danger { color: var(--warn); }
+.dir-row input, .dir-new input { font: inherit; padding: 4px 8px; border: 1px solid var(--line); border-radius: 4px; background: var(--bg); color: var(--ink); width: 180px; }
+.dir-new { display: flex; gap: 8px; align-items: center; margin-top: 12px; }
 .toast { position: fixed; z-index: 60; left: 50%; bottom: 32px; transform: translateX(-50%); background: var(--ink); color: var(--bg); padding: 8px 16px; border-radius: 6px; font-size: 13px; }
 details.node details.node { margin-left: 13px; padding-left: 0; border-left: 2px solid var(--line); }
 .pane-head h1 { font-size: 36px; font-weight: 500; letter-spacing: -0.36px; line-height: 1.2; }
@@ -504,8 +518,15 @@ function pageLeaf(pg, scope) {
 }
 
 // The folders people filed apps and pages under ("财务/上账"), inside a chat's node: sub-folders first, then the rest.
-function filed(scope, entries) {
+function filed(scope, entries, dirs = []) {
   const root = { subs: new Map(), items: [], n: 0 };
+  for (const d of dirs) {   // folders an admin made, shown even while empty
+    let at = root;
+    for (const part of d.split('/').filter(Boolean)) {
+      if (!at.subs.has(part)) at.subs.set(part, { subs: new Map(), items: [], n: 0 });
+      at = at.subs.get(part);
+    }
+  }
   for (const e of entries) {
     let at = root;
     root.n++;
@@ -521,13 +542,13 @@ function filed(scope, entries) {
   return draw(root, '');
 }
 
-function folder(title, scope, cmds, schs, pages = []) {
+function folder(title, scope, cmds, schs, pages = [], dirs = []) {
   const ids = new Set(cmds.map(c => c.id));
   const orphans = schs.filter(s => !ids.has(s.commandId));   // e.g. the command was retired; the schedule is paused
-  const inner = (cmds.length || pages.length ? filed(scope, [
+  const inner = (cmds.length || pages.length || dirs.length ? filed(scope, [
     ...cmds.map(c => ({ folder: c.folder, html: cmdLeaf(c, scope) + schs.filter(s => s.commandId === c.id).map(s => schLeaf(s, scope, false)).join('') })),
     ...pages.map(pg => ({ folder: pg.folder, html: pageLeaf(pg, scope) })),
-  ]) : '<div class="empty-leaf">还没有应用</div>') + orphans.map(s => schLeaf(s, scope, true)).join('');
+  ], dirs) : '<div class="empty-leaf">还没有应用</div>') + orphans.map(s => schLeaf(s, scope, true)).join('');
   return node(scope, `${esc(title)}<span class="count">${cmds.length + pages.length}</span>`, inner);
 }
 
@@ -535,6 +556,7 @@ function folder(title, scope, cmds, schs, pages = []) {
 function folderBox(kind, cur, can, scope) {
   const all = new Set();
   const g = scope === 'p2p' ? DATA.p2p : scope === 'global' ? { commands: DATA.global, pages: [] } : DATA.groups.find(x => 'group:' + x.chatId === scope) || { commands: [], pages: [] };
+  for (const d of g.dirs || []) all.add(d);
   for (const x of [...(g.commands || []), ...(g.pages || [])]) { const parts = (x.folder || '').split('/').filter(Boolean); for (let i = 1; i <= parts.length; i++) all.add(parts.slice(0, i).join('/')); }
   return `<div class="box"><h3>目录</h3>${can ? `<div class="field"><span class="examples"><input data-folder-input list="folder-list" value="${esc(cur || '')}" placeholder="比如：财务/上账（不填放在最外层）" style="max-width:280px">
     <datalist id="folder-list">${[...all].sort().map(f => `<option value="${esc(f)}">`).join('')}</datalist> <button type="button" class="btn small" data-folder="${kind}">保存</button></span></div>
@@ -549,7 +571,7 @@ function renderTree() {
   html += folder('我的私聊', 'p2p', o.p2p.commands, o.p2p.schedules, o.p2p.pages || []);
   const groupApps = o.groups.reduce((n, g) => n + g.commands.length + (g.pages || []).length, 0);
   html += node('groups', `我的群聊<span class="count">${groupApps}</span>`,
-    o.groups.map(g => folder(g.name, 'group:' + g.chatId, g.commands, g.schedules, g.pages || [])).join('') || '<div class="empty-leaf">还没有群里的应用</div>');
+    o.groups.map(g => folder(g.name, 'group:' + g.chatId, g.commands, g.schedules, g.pages || [], g.dirs || [])).join('') || '<div class="empty-leaf">还没有群里的应用</div>');
   html += folder('全局应用', 'global', o.global, []);
   if (STORE && STORE.ok) {
     html += node('store', `Amber Store<span class="count">${STORE.apps.length}</span>`, STORE.apps.map(a => {
@@ -585,6 +607,10 @@ function renderTree() {
         ITEMS.set(key, { kind: 'page', pg, scope: pg.where });
         return `<div class="leaf" data-key="${esc(key)}" data-open="${esc(pg.url)}" data-search="${esc((pg.name + ' ' + pg.owner + ' ' + (pg.chatName || '')).toLowerCase())} 页面"><span class="name">${esc(pg.name)}</span><span class="sub">${esc(pg.owner)} · 调用 ${u ? u.calls : 0}</span>${moreBtn(key)}</div>`;
       }).join('') || '<div class="empty-leaf">还没有页面</div>');
+    }
+    if (o.groups.length) {
+      ITEMS.set('dirs', { kind: 'dirs' });
+      admin += '<div class="leaf" data-key="dirs" data-search="目录管理 文件夹"><span class="name">目录管理</span></div>';
     }
     ITEMS.set('audit', { kind: 'audit' });
     admin += '<div class="leaf" data-key="audit" data-search="审计日志 audit"><span class="name">审计日志</span></div>';
@@ -640,6 +666,7 @@ function select(key, push = true) {
   else if (it.kind === 'set-limits') limitsPane();
   else if (it.kind === 'set-hosts') hostsPane();
   else if (it.kind === 'audit') auditPane();
+  else if (it.kind === 'dirs') dirsPane();
   else if (it.kind === 'page') pagePane(it, PGSEC);
   else if (it.kind === 'tg') trigPane(it.t);
   else if (it.kind === 'tg-new') trigNewPane();
@@ -935,7 +962,7 @@ const AUDIT_LABEL = {
   'config.delete': '删除配置项', 'config.drop_all': '删除全部配置项', 'secret.delete': '删除密钥', 'request.cancel': '取消确认请求',
   'review.feishu_check_failed': '飞书审批状态查询失败', 'schedule.missed': '定时任务错过（Amber 未运行）', 'web.logout_all': '退出所有网站登录',
   'trigger.request': '请求新建触发器', 'trigger.create': '新建触发器', 'trigger.cancel': '取消新建触发器', 'trigger.pause': '暂停触发器', 'trigger.resume': '恢复触发器', 'trigger.delete': '删除触发器', 'trigger.deliver_failed': '触发器通知发送失败',
-  'page.publish_request': '请求发布页面', 'page.open': '打开页面', 'page.publish': '发布页面', 'page.publish_cancel': '取消发布页面', 'page.update': '更新页面内容', 'page.access': '修改页面访问范围', 'page.delete': '删除页面', 'page.call': '页面调用应用',
+  'page.publish_request': '请求发布页面', 'page.open': '打开页面', 'page.publish': '发布页面', 'page.publish_cancel': '取消发布页面', 'page.update': '更新页面内容', 'page.access': '修改页面访问范围', 'page.delete': '删除页面', 'page.folder': '移动页面目录', 'command.folder': '移动应用目录', 'folder.add': '新建目录', 'folder.rename': '重命名目录', 'folder.delete': '删除目录', 'page.call': '页面调用应用',
   'startup.seed': '首次启动写入默认设置', 'startup.interrupted_runs': '重启时标记中断的执行', 'startup.unrunnable': '发现不能执行的应用',
 };
 let AUDIT = { rows: [], cat: '', q: '', chat: '', trigger: '', done: false, categories: [], chats: [] };
@@ -1015,6 +1042,66 @@ function pagePane({ pg, scope }, part = 'info') {
     }));
     if (pg.access === 'members') showMembers();
   }
+}
+
+// 目录管理 (admins): the folders of one group, made, renamed and removed here. What is in a folder is everyone's pages
+// and apps in that group; removing a folder moves them (and its sub-folders) up one level, nothing is deleted.
+let DIRCHAT = null, DIREDIT = null;   // the group shown; the row being edited: { path, op: 'rename'|'add' }
+function dirsPane() {
+  const g = DATA.groups.find(x => x.chatId === DIRCHAT) || DATA.groups[0];
+  DIRCHAT = g.chatId;
+  const count = new Map(), paths = new Set(g.dirs || []);
+  for (const x of [...g.commands, ...(g.pages || [])]) {
+    const parts = (x.folder || '').split('/').filter(Boolean);
+    for (let i = 1; i <= parts.length; i++) { const p = parts.slice(0, i).join('/'); paths.add(p); count.set(p, (count.get(p) || 0) + 1); }
+  }
+  for (const d of g.dirs || []) { const parts = d.split('/'); for (let i = 1; i < parts.length; i++) paths.add(parts.slice(0, i).join('/')); }
+  // Depth first, siblings by name: "财务", "财务/上账", "财务/上账/明细", "运营".
+  const sorted = [...paths].sort((a, b) => { const x = a.split('/'), y = b.split('/'); for (let i = 0; i < Math.min(x.length, y.length); i++) { const c = x[i].localeCompare(y[i], 'zh'); if (c) return c; } return x.length - y.length; });
+  const editor = (val, op, path) => `<input data-dir-input value="${esc(val)}" maxlength="20" placeholder="目录名"> <button class="lnk" data-dir="${op}" data-path="${esc(path)}">保存</button><button class="lnk" data-dir="cancel">取消</button>`;
+  const rows = sorted.map(p => {
+    const depth = p.split('/').length, name = p.split('/').pop();
+    const editing = DIREDIT && DIREDIT.path === p;
+    const head = editing && DIREDIT.op === 'rename' ? `<span class="fold"></span>${editor(name, 'rename-save', p)}` : `<span class="fold">${esc(name)}</span><span class="count">${count.get(p) || 0}</span>`;
+    const row = `<div class="dir-row${editing ? ' editing' : ''}" style="padding-left:${10 + (depth - 1) * 24}px">${head}
+      ${editing ? '' : `<span class="acts">${depth < 3 ? `<button data-dir="add" data-path="${esc(p)}">新建子目录</button>` : ''}<button data-dir="rename" data-path="${esc(p)}">重命名</button><button class="danger" data-dir="delete" data-path="${esc(p)}">删除</button></span>`}</div>`;
+    const sub = editing && DIREDIT.op === 'add' ? `<div class="dir-row editing" style="padding-left:${10 + depth * 24}px"><span class="fold"></span>${editor('', 'add-save', p)}</div>` : '';
+    return row + sub;
+  }).join('');
+  document.getElementById('pane').innerHTML = `${backBtn}
+    <div class="pane-head"><h1>目录管理</h1></div>
+    <div class="field"><select id="dir-chat" style="max-width:320px">${DATA.groups.map(x => `<option value="${esc(x.chatId)}"${x.chatId === g.chatId ? ' selected' : ''}>${esc(x.name)}</option>`).join('')}</select></div>
+    <div class="dirs">${rows || '<p class="note">这个群还没有目录。</p>'}</div>
+    <div class="dir-new">${DIREDIT && DIREDIT.op === 'add' && DIREDIT.path === '' ? editor('', 'add-save', '') : '<button class="btn small" data-dir="add" data-path="">新建目录</button>'}</div>`;
+  document.getElementById('dir-chat').addEventListener('change', e => { DIRCHAT = e.target.value; DIREDIT = null; dirsPane(); });
+  const inp = document.querySelector('[data-dir-input]');
+  if (inp) { inp.focus(); inp.select(); inp.addEventListener('keydown', e => { if (e.key === 'Enter') inp.parentElement.querySelector('[data-dir$="-save"]').click(); if (e.key === 'Escape') { DIREDIT = null; dirsPane(); } }); }
+}
+async function dirsDo(btn) {
+  const op = btn.dataset.dir, path = btn.dataset.path || '';
+  if (op === 'cancel') { DIREDIT = null; return dirsPane(); }
+  if (op === 'add' || op === 'rename') { DIREDIT = { path, op }; return dirsPane(); }
+  let body;
+  if (op === 'delete') {
+    const parent = path.split('/').slice(0, -1).join('/');
+    if (!confirm(`删除目录「${path}」？里面的页面、应用和子目录移到${parent ? `「${parent}」` : '最外层'}，不会删除任何东西。`)) return;
+    body = { op: 'delete', path };
+  } else {
+    const name = document.querySelector('[data-dir-input]').value.trim();
+    if (!name) return;
+    if (name.includes('/')) return alert('目录名里不能有 /');
+    body = op === 'add-save' ? { op: 'add', path: path ? path + '/' + name : name } : { op: 'rename', path, name };
+  }
+  btn.disabled = true;
+  const r = await post('/web/api/folders', { chatId: DIRCHAT, ...body }).catch(e => ({ ok: false, message: e.message }));
+  if (!r.ok) { btn.disabled = false; return alert(r.message || '操作失败'); }
+  DIREDIT = null;
+  // Keep the folders open in the tree on the way to the result.
+  const scope = 'group:' + DIRCHAT;
+  OPEN.add('groups'); OPEN.add(scope);
+  let at = scope + '/';
+  for (const part of (r.path || '').split('/').filter(Boolean)) { at += part; OPEN.add(at); at += '/'; }
+  await reload('dirs');
 }
 
 // Page usage (creator and admins): totals, then who called what and who opened it.
@@ -1284,6 +1371,8 @@ document.addEventListener('click', async ev => {
     if (!r.ok) return alert(r.message || '操作失败');
     await reload(op === 'delete' ? null : SEL); if (op === 'delete') welcome(); return;
   }
+  const dirBtn = ev.target.closest('[data-dir]');
+  if (dirBtn) return dirsDo(dirBtn);
   const more = ev.target.closest('[data-more]');
   if (more) { ev.stopPropagation(); return pageMenu(more); }
   const mi = ev.target.closest('[data-menu]');

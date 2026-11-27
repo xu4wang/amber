@@ -24,7 +24,7 @@ import { showFingerprint } from './exec-proto.ts';
 import { describeRule, formatAt, defaultTz, timezones } from './schedule-rule.ts';
 import { CARD_FOOTER_KEY, CARD_FOOTER_MAX, DEFAULT_CARD_FOOTER, cleanFooter } from './cards.ts';
 import { getLimits, saveLimits, timeoutLabel, DEFAULT_LIMITS, TIMEOUT_BOUNDS, CONCURRENCY_BOUNDS, getLocalAllowHosts, getGlobalAllowHosts, saveAllowHosts, checkAllowHosts, FEISHU_HOSTS, SLOTS } from './limits.ts';
-import { normFolder, appFolderKey, pageFolderKey } from './folder.ts';
+import { normFolder, movedPath, appFolderKey, pageFolderKey } from './folder.ts';
 
 export const LOGIN_TTL_MS = 5 * 60_000;
 const SESSION_TTL_MS = 7 * 24 * 3600_000;
@@ -106,7 +106,7 @@ const AUDIT_CATEGORIES: Record<string, { label: string; prefixes: string[] }> = 
   schedule: { label: '定时任务', prefixes: ['schedule.'] },
   executor: { label: '执行端', prefixes: ['executor.', 'web.executor'] },
   gateway: { label: '外网网关', prefixes: ['gateway.'] },
-  settings: { label: '设置、配置项与密钥', prefixes: ['web.card_footer', 'web.assistant', 'web.run_limits', 'web.allow_hosts', 'config.', 'secret.set', 'secret.delete', 'secret.drop'] },
+  settings: { label: '设置、目录、配置项与密钥', prefixes: ['folder.', 'web.card_footer', 'web.assistant', 'web.run_limits', 'web.allow_hosts', 'config.', 'secret.set', 'secret.delete', 'secret.drop'] },
   page: { label: '页面应用', prefixes: ['page.'] },
   trigger: { label: '触发器', prefixes: ['trigger.'] },
   login: { label: '登录', prefixes: ['web.login', 'web.logout', 'web.selftest'] },
@@ -554,6 +554,35 @@ export function startWeb(port: number, store: Store, deps: WebDeps): import('nod
             args, rule: parseRule(String(body.at ?? ''), String(body.tz || defaultTz())), requestedBy: 'web', via: { via: 'web' } });
           return json(res, 200, { ok: true, scheduleId: sch.id, rule: describeRule(sch.rule), next: formatAt(sch.nextRunAt, sch.rule.tz) });
         }
+        // 目录管理 (admins): make, rename or remove a folder in a group. Removing one moves what is in it up a level.
+        if (url.pathname === '/web/api/folders') {
+          if (!deps.isAdmin(who.unionId)) throw new AmberError('forbidden', '只有管理员可以管理目录');
+          const chatId = String(body.chatId ?? ''), op = String(body.op ?? '');
+          if (!/^oc_[A-Za-z0-9]{1,64}$/.test(chatId)) throw new AmberError('bad_request', '要选一个群');
+          const path = normFolder(body.path);
+          if (op === 'add') {
+            if (!path) throw new AmberError('bad_folder', '要填目录名');
+            store.addDir(chatId, path);
+            store.audit(who.unionId, 'folder.add', { chatId, path });
+            return json(res, 200, { ok: true, path });
+          }
+          if (!path) throw new AmberError('bad_folder', '要选一个目录');
+          const parent = path.split('/').slice(0, -1).join('/');
+          if (op === 'rename') {
+            const name = normFolder(body.name);
+            if (!name || name.includes('/')) throw new AmberError('bad_folder', '新名字只写这一层的名字，不带 /');
+            const to = parent ? parent + '/' + name : name;
+            const moved = store.moveFolders(chatId, f => movedPath(f, path, to));
+            store.audit(who.unionId, 'folder.rename', { chatId, path, to, moved });
+            return json(res, 200, { ok: true, path: to, moved });
+          }
+          if (op === 'delete') {
+            const moved = store.moveFolders(chatId, f => movedPath(f, path, parent));
+            store.audit(who.unionId, 'folder.delete', { chatId, path, moved });
+            return json(res, 200, { ok: true, path: parent, moved });
+          }
+          throw new AmberError('bad_request', '不认识的操作');
+        }
         if ((m = /^\/web\/api\/commands\/([A-Za-z0-9-]{1,40})\/folder$/.exec(url.pathname))) {
           const t = await target(store, deps, who.unionId, String(body.scope ?? ''), m[1], true);
           const c = t.cmd;
@@ -812,7 +841,7 @@ function schView(store: Store, s: ScheduleRow, viewer?: string, isAdmin?: (u: st
 /** What this person can see: their own commands (in their private chat and in groups they are in) and global
  *  commands (#4). An admin also sees everyone's commands, in every group, to look at and take offline. */
 async function overview(store: Store, deps: WebDeps, unionId: string) {
-  const groups: { chatId: string; name: string; commands: unknown[]; schedules: unknown[]; pages: unknown[] }[] = [];
+  const groups: { chatId: string; name: string; commands: unknown[]; schedules: unknown[]; pages: unknown[]; dirs: string[] }[] = [];
   const admin = deps.isAdmin(unionId);
   let membershipUnknown = false;
   const allPages = deps.pages ? store.listPages().filter(p => p.status === 'active') : [];
@@ -831,12 +860,14 @@ async function overview(store: Store, deps: WebDeps, unionId: string) {
     if (admin) for (const c of commands) if (await deps.isOrphan(c) === true) orphans.add(c.id);
     const schedules = store.schedulesInChat(chatId).filter(s => admin || s.creatorUnionId === unionId);
     const pages = pagesIn(chatId);
-    if (!commands.length && !schedules.length && !pages.length) continue;
+    const dirs = store.dirsOf(chatId);
+    if (!commands.length && !schedules.length && !pages.length && !(admin && dirs.length)) continue;
     groups.push({
       chatId, name: (await deps.chatName(chatId)) ?? chatId,
       commands: commands.map(c => ({ ...cmdView(c, unionId, deps.isAdmin, store, deps.apps), orphan: orphans.has(c.id) })),
       schedules: schedules.map(s => schView(store, s, unionId, deps.isAdmin)),
       pages,
+      dirs,
     });
   }
   return {

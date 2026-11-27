@@ -380,6 +380,8 @@ export class Store {
     // Page apps: a directory of static files an agent publishes; it calls the apps bound to it (apps_json).
     // Where a page or an app is filed on the website, per chat: key = page:<id> or line:<line> (folder.ts).
     this.db.exec(`CREATE TABLE IF NOT EXISTS folders (chat_id TEXT NOT NULL, key TEXT NOT NULL, folder TEXT NOT NULL, PRIMARY KEY (chat_id, key))`);
+    // Folders an admin made on the website, so they show while nothing is filed in them yet.
+    this.db.exec(`CREATE TABLE IF NOT EXISTS folder_dirs (chat_id TEXT NOT NULL, path TEXT NOT NULL, PRIMARY KEY (chat_id, path))`);
     this.db.exec(`CREATE TABLE IF NOT EXISTS pages (
       id TEXT PRIMARY KEY,
       name TEXT NOT NULL,
@@ -1066,6 +1068,31 @@ export class Store {
   setFolder(chatId: string, key: string, folder: string): void {
     if (folder) this.db.prepare('INSERT INTO folders (chat_id, key, folder) VALUES (?, ?, ?) ON CONFLICT(chat_id, key) DO UPDATE SET folder = excluded.folder').run(chatId, key, folder);
     else this.db.prepare('DELETE FROM folders WHERE chat_id = ? AND key = ?').run(chatId, key);
+  }
+  /** The folders made on the website in a chat (filed ones come from what is in them). */
+  dirsOf(chatId: string): string[] { return (this.db.prepare('SELECT path FROM folder_dirs WHERE chat_id = ? ORDER BY path').all(chatId) as { path: string }[]).map(r => r.path); }
+  addDir(chatId: string, path: string): void { this.db.prepare('INSERT OR IGNORE INTO folder_dirs (chat_id, path) VALUES (?, ?)').run(chatId, path); }
+  /** Rewrites every folder path in a chat with `move` (folder.ts movedPath), filed entries and made folders alike, in one go.
+   *  Returns how many pages and apps moved. */
+  moveFolders(chatId: string, move: (f: string) => string): number {
+    let n = 0;
+    this.db.exec('BEGIN');
+    try {
+      for (const r of this.db.prepare('SELECT key, folder FROM folders WHERE chat_id = ?').all(chatId) as { key: string; folder: string }[]) {
+        const to = move(r.folder);
+        if (to === r.folder) continue;
+        n++;
+        this.setFolder(chatId, r.key, to);
+      }
+      for (const r of this.db.prepare('SELECT path FROM folder_dirs WHERE chat_id = ?').all(chatId) as { path: string }[]) {
+        const to = move(r.path);
+        if (to === r.path) continue;
+        this.db.prepare('DELETE FROM folder_dirs WHERE chat_id = ? AND path = ?').run(chatId, r.path);
+        if (to) this.addDir(chatId, to);
+      }
+      this.db.exec('COMMIT');
+    } catch (e) { this.db.exec('ROLLBACK'); throw e; }
+    return n;
   }
   getPage(id: string): PageRow | undefined { return this.pageRow(this.db.prepare('SELECT * FROM pages WHERE id = ?').get(id) as Record<string, unknown> | undefined); }
   pageByName(chatId: string, name: string): PageRow | undefined { return this.pageRow(this.db.prepare(`SELECT * FROM pages WHERE chat_id = ? AND name = ? AND status != 'deleted'`).get(chatId, name) as Record<string, unknown> | undefined); }
