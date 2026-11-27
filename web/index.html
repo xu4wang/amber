@@ -198,6 +198,19 @@ details.node details.node > summary { font-size: 13px; font-weight: 500; color: 
 details.node > .leaf, details.node > .empty-leaf { margin-left: 13px; border-left: 2px solid var(--line); }
 details.node > .leaf.sel { border-left-color: var(--accent); }
 details.node > .empty-leaf { padding: 6px 8px 6px 20px; }
+/* A page row: clicking it opens the page; the ⋮ at its right end holds everything else about it. */
+.leaf .more { margin-left: auto; flex: none; width: 22px; height: 22px; padding: 0; border: 0; border-radius: 4px; background: none; color: var(--muted); font-size: 16px; line-height: 22px; cursor: pointer; visibility: hidden; }
+.leaf .sub + .more { margin-left: 4px; }
+.leaf:hover .more, .leaf .more.on { visibility: visible; }
+.leaf .more:hover, .leaf .more.on { background: var(--line); color: var(--ink); }
+@media (hover: none) { .leaf .more { visibility: visible; } }
+.menu { position: fixed; z-index: 50; min-width: 168px; background: var(--bg); border: 1px solid var(--line); border-radius: 6px; box-shadow: 0 6px 20px rgba(0,0,0,.12); padding: 4px 0; font-size: 13px; }
+.menu button { display: flex; align-items: center; gap: 8px; width: 100%; border: 0; background: none; color: var(--ink); font: inherit; text-align: left; padding: 7px 14px; cursor: pointer; }
+.menu button:hover { background: var(--hover); }
+.menu button svg { width: 15px; height: 15px; flex: none; stroke: currentColor; fill: none; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; opacity: .75; }
+.menu button.danger { color: var(--warn); }
+.menu hr { border: 0; border-top: 1px solid var(--line); margin: 4px 0; }
+.toast { position: fixed; z-index: 60; left: 50%; bottom: 32px; transform: translateX(-50%); background: var(--ink); color: var(--bg); padding: 8px 16px; border-radius: 6px; font-size: 13px; }
 details.node details.node { margin-left: 13px; padding-left: 0; border-left: 2px solid var(--line); }
 .pane-head h1 { font-size: 36px; font-weight: 500; letter-spacing: -0.36px; line-height: 1.2; }
 .where { font-size: 11px; font-weight: 600; letter-spacing: 1.1px; text-transform: uppercase; color: var(--muted-2); margin-top: 8px; }
@@ -481,12 +494,13 @@ function schLeaf(s, scope, orphan) {
 // is redrawn after an action.
 const OPEN = new Set();
 let searching = false;
+const moreBtn = key => `<button type="button" class="more" data-more="${esc(key)}" title="更多" aria-label="更多">⋮</button>`;
 const node = (id, summary, inner) => `<details class="node" data-node="${esc(id)}"${OPEN.has(id) ? ' open' : ''}><summary>${summary}</summary>${inner}</details>`;
 
 function pageLeaf(pg, scope) {
   const key = 'pg:' + pg.id;
   ITEMS.set(key, { kind: 'page', pg, scope });
-  return `<div class="leaf" data-key="${esc(key)}" data-search="${esc((pg.name + ' ' + (pg.folder || '')).toLowerCase())} 页面"><span class="name">${esc(pg.name)}</span><span class="chip">页面</span>${pg.mine ? '' : '<span class="sub">别人分享</span>'}</div>`;
+  return `<div class="leaf" data-key="${esc(key)}" data-open="${esc(pg.url)}" data-search="${esc((pg.name + ' ' + (pg.folder || '')).toLowerCase())} 页面"><span class="name">${esc(pg.name)}</span><span class="chip">页面</span>${pg.mine ? '' : '<span class="sub">别人分享</span>'}${moreBtn(key)}</div>`;
 }
 
 // The folders people filed apps and pages under ("财务/上账"), inside a chat's node: sub-folders first, then the rest.
@@ -569,7 +583,7 @@ function renderTree() {
       admin += node('all-pages', `页面应用<span class="count">${o.allPages.length}</span>`, o.allPages.map(pg => {
         const key = 'apg:' + pg.id, u = pg.usage;
         ITEMS.set(key, { kind: 'page', pg, scope: pg.where });
-        return `<div class="leaf" data-key="${esc(key)}" data-search="${esc((pg.name + ' ' + pg.owner + ' ' + (pg.chatName || '')).toLowerCase())} 页面"><span class="name">${esc(pg.name)}</span><span class="sub">${esc(pg.owner)} · 调用 ${u ? u.calls : 0}</span></div>`;
+        return `<div class="leaf" data-key="${esc(key)}" data-open="${esc(pg.url)}" data-search="${esc((pg.name + ' ' + pg.owner + ' ' + (pg.chatName || '')).toLowerCase())} 页面"><span class="name">${esc(pg.name)}</span><span class="sub">${esc(pg.owner)} · 调用 ${u ? u.calls : 0}</span>${moreBtn(key)}</div>`;
       }).join('') || '<div class="empty-leaf">还没有页面</div>');
     }
     ITEMS.set('audit', { kind: 'audit' });
@@ -626,7 +640,7 @@ function select(key, push = true) {
   else if (it.kind === 'set-limits') limitsPane();
   else if (it.kind === 'set-hosts') hostsPane();
   else if (it.kind === 'audit') auditPane();
-  else if (it.kind === 'page') pagePane(it);
+  else if (it.kind === 'page') pagePane(it, PGSEC);
   else if (it.kind === 'tg') trigPane(it.t);
   else if (it.kind === 'tg-new') trigNewPane();
   else if (it.kind === 'tg-all') trigAllPane();
@@ -959,8 +973,10 @@ async function auditPane(more = false) {
   document.getElementById('audit-more')?.addEventListener('click', () => auditPane(true));
 }
 
-// A page app: open it (new tab), who may open it (owner), the apps it calls, delete.
-function pagePane({ pg, scope }) {
+// A page app, one part at a time as picked from its ⋮ menu (opening it is a click on its row):
+// 'info' what it calls and how much it is used, 'access' who may open it, 'folder' where it is filed.
+let PGSEC = 'info';
+function pagePane({ pg, scope }, part = 'info') {
   const ACC = { owner: '仅我', group: '群里所有人', members: '指定的群成员' };
   const ACC_DESC = { owner: '只有你自己能打开', group: '这个群里的人都能打开', members: '只有你勾选的群成员能打开' };
   const appLine = a => a.missing ? `<li><span class="name">${esc(a.name)}</span> <span class="chip warn">${esc(a.missing)}</span></li>`
@@ -970,10 +986,9 @@ function pagePane({ pg, scope }) {
   document.getElementById('pane').innerHTML = `${backBtn}
     <div class="pane-head"><h1>${esc(pg.name)}</h1><span class="chip">页面</span></div>
     <div class="where">${esc(scope === 'p2p' && !pg.mine ? `私聊（创建人 ${pg.owner || '未知'}）` : scopeName(scope))}${pg.folder ? ' / ' + esc(pg.folder) : ''} · 第 ${esc(pg.version)} 版 · 更新于 ${fmtTime(pg.updatedAt)}${pg.mine ? '' : pg.owner ? ` · 创建人 ${esc(pg.owner)}` : ' · 别人分享给你的'}</div>
-    <p class="desc">页面由 agent 发布，在新标签页打开。页面里查数、写飞书都通过下面这些应用，每次都以打开页面的人自己的身份执行。</p>
-    <div class="actions" style="margin-bottom:24px"><a class="btn primary" href="${esc(pg.url)}" target="_blank" rel="noopener">打开页面</a></div>
-    <div class="box"><h3>页面会调用的应用</h3>${pg.apps.length ? `<ul class="pg-apps">${pg.apps.map(appLine).join('')}</ul>` : '<p class="note">这个页面不调用任何应用。</p>'}</div>
-    ${pg.access !== undefined ? `<div class="box"><h3>谁能访问</h3>
+    ${part === 'info' ? `<div class="box"><h3>页面会调用的应用</h3>${pg.apps.length ? `<ul class="pg-apps">${pg.apps.map(appLine).join('')}</ul>` : '<p class="note">这个页面不调用任何应用。</p>'}<p class="note">页面里查数、写飞书都通过这些应用，以打开页面的人自己的身份执行。</p></div>
+    ${pg.usage !== undefined ? `<div class="box"><h3>使用情况</h3>${pageUsageLine(pg.usage)}<div id="pg-usage"><p class="note">加载调用记录……</p></div></div>` : ''}` : ''}
+    ${part === 'access' && pg.access !== undefined ? `<div class="box"><h3>谁能访问</h3>
       ${pg.mine ? `${group ? `<div class="pg-opts">
         ${['owner', 'group', 'members'].map(k => `<label class="pg-opt"><input type="radio" name="pg-access" value="${k}"${pg.access === k ? ' checked' : ''}><div><b>${ACC[k]}</b><span>${ACC_DESC[k]}</span></div></label>`).join('')}
       </div>
@@ -982,11 +997,9 @@ function pagePane({ pg, scope }) {
       <div class="pg-foot"><p class="note" style="margin:0">每次打开和调用都会检查：在名单里，并且现在还在这个群里。退群的人自动失去访问权限。</p>
         <button class="btn primary" data-pg="access">保存</button></div>` : '<p class="note">私聊里的页面只有你自己能访问。</p>'}`
       : `<p>${ACC[pg.access]}${pg.access === 'members' ? `（${pg.members.length} 人）` : ''}</p>`}</div>` : ''}
-    ${folderBox('page', pg.folder, pg.canDelete, scope)}
-    ${pg.usage !== undefined ? `<div class="box"><h3>使用情况</h3>${pageUsageLine(pg.usage)}<div id="pg-usage"><p class="note">加载调用记录……</p></div></div>` : ''}
-    ${pg.canDelete ? `<div class="manage"><h3>删除页面</h3><p class="note">删除后链接立即失效，页面文件一起删除。应用不受影响。</p><button class="btn danger" data-pg="delete">删除这个页面</button></div>` : ''}`;
-  if (pg.usage !== undefined) loadPageUsage(pg);
-  if (pg.mine && group) {
+    ${part === 'folder' ? folderBox('page', pg.folder, pg.canDelete, scope) : ''}`;
+  if (part === 'info' && pg.usage !== undefined) loadPageUsage(pg);
+  if (part === 'access' && pg.mine && group) {
     const chat = scope.slice(6);
     const showMembers = async () => {
       const box = document.getElementById('pg-members');
@@ -1271,16 +1284,15 @@ document.addEventListener('click', async ev => {
     if (!r.ok) return alert(r.message || '操作失败');
     await reload(op === 'delete' ? null : SEL); if (op === 'delete') welcome(); return;
   }
+  const more = ev.target.closest('[data-more]');
+  if (more) { ev.stopPropagation(); return pageMenu(more); }
+  const mi = ev.target.closest('[data-menu]');
+  if (mi) { const key = document.getElementById('pg-menu').dataset.key; closeMenu(); return pageMenuDo(key, mi.dataset.menu); }
+  if (!ev.target.closest('#pg-menu')) closeMenu();
   const pgBtn = ev.target.closest('[data-pg]');
   if (pgBtn) {
     const it = ITEMS.get(SEL);
     if (!it || it.kind !== 'page') return;
-    if (pgBtn.dataset.pg === 'delete') {
-      if (!confirm(`删除页面「${it.pg.name}」？链接会立即失效。`)) return;
-      const r = await post(`/web/api/pages/${it.pg.id}/delete`, {}).catch(e => ({ ok: false, message: e.message }));
-      if (!r.ok) return alert(r.message || '删除失败');
-      SEL = null; await reload(null); return;
-    }
     const access = document.querySelector('input[name=pg-access]:checked')?.value;
     const members = [...document.querySelectorAll('input[name=pg-member]:checked')].map(i => i.value);
     const r = await post(`/web/api/pages/${it.pg.id}/access`, { access, members }).catch(e => ({ ok: false, message: e.message }));
@@ -1343,6 +1355,7 @@ document.addEventListener('click', async ev => {
     return reload(SEL);
   }
   const leaf = ev.target.closest('#tree .leaf');
+  if (leaf && leaf.dataset.open) { window.open(leaf.dataset.open, '_blank', 'noopener'); return; }
   if (leaf) return select(leaf.dataset.key);
   if (ev.target.closest('[data-back]')) { history.replaceState(null, '', '#'); return welcome(); }
   const ex = ev.target.closest('[data-ex]');
@@ -1607,6 +1620,67 @@ document.addEventListener('click', async ev => {
     if (op === 'delete') welcome();
   }
 });
+
+// The ⋮ menu of a page row. Fixed to the window so the tree's scrolling does not clip it.
+const ICON = {
+  info: '<circle cx="8" cy="8" r="6.2"/><path d="M8 7.2v4M8 4.9v.1"/>',
+  access: '<circle cx="6" cy="5.5" r="2.4"/><path d="M1.8 13.5c.4-2.4 2.1-3.8 4.2-3.8s3.8 1.4 4.2 3.8M10.8 3.4a2.3 2.3 0 0 1 0 4.4M12.4 9.9c1 .6 1.6 1.9 1.8 3.6"/>',
+  folder: '<path d="M1.8 4.2V12.6h12.4V5.4H7.6L6.2 3.6H1.8z"/>',
+  link: '<path d="M6.8 9.2a2.6 2.6 0 0 0 3.7 0l2.2-2.2a2.6 2.6 0 0 0-3.7-3.7l-.8.8M9.2 6.8a2.6 2.6 0 0 0-3.7 0L3.3 9a2.6 2.6 0 0 0 3.7 3.7l.8-.8"/>',
+  delete: '<path d="M2.8 4.4h10.4M6.4 4.4V2.8h3.2v1.6M4.2 4.4l.6 8.8h6.4l.6-8.8"/>',
+};
+function closeMenu() {
+  document.getElementById('pg-menu')?.remove();
+  document.querySelectorAll('#tree .more.on').forEach(b => b.classList.remove('on'));
+}
+function pageMenu(btn) {
+  const key = btn.dataset.more, was = document.getElementById('pg-menu')?.dataset.key;
+  closeMenu();
+  if (was === key) return;
+  const { pg } = ITEMS.get(key);
+  const item = (op, label, cls = '') => `<button type="button" data-menu="${op}" class="${cls}"><svg viewBox="0 0 16 16">${ICON[op]}</svg>${label}</button>`;
+  const m = document.createElement('div');
+  m.id = 'pg-menu'; m.className = 'menu'; m.dataset.key = key;
+  m.innerHTML = item('info', '页面信息') + (pg.access !== undefined ? item('access', '授权') : '') + (pg.canDelete ? item('folder', '移动到目录') : '')
+    + item('link', '复制链接') + (pg.canDelete ? '<hr>' + item('delete', '删除', 'danger') : '');
+  document.body.appendChild(m);
+  btn.classList.add('on');
+  const r = btn.getBoundingClientRect(), h = m.offsetHeight, w = m.offsetWidth;
+  m.style.top = (r.bottom + 4 + h > innerHeight ? Math.max(8, r.top - h - 4) : r.bottom + 4) + 'px';
+  m.style.left = Math.max(8, Math.min(r.left, innerWidth - w - 8)) + 'px';
+}
+function toast(text) {
+  const t = document.createElement('div');
+  t.className = 'toast'; t.textContent = text;
+  document.body.appendChild(t);
+  setTimeout(() => t.remove(), 1600);
+}
+async function pageMenuDo(key, op) {
+  const it = ITEMS.get(key);
+  if (!it) return;
+  if (op === 'link') {
+    // The site may be plain http, where navigator.clipboard does not exist.
+    const url = new URL(it.pg.url, location.href).href, ta = document.createElement('textarea');
+    ta.value = url; ta.style.position = 'fixed'; ta.style.opacity = '0';
+    document.body.appendChild(ta); ta.select();
+    let ok = false;
+    try { ok = document.execCommand('copy'); } catch {}
+    ta.remove();
+    return ok ? toast('链接已复制') : prompt('复制这个链接', url);
+  }
+  if (op === 'delete') {
+    if (!confirm(`删除页面「${it.pg.name}」？链接立即失效，页面文件一起删除，应用不受影响。`)) return;
+    const r = await post(`/web/api/pages/${it.pg.id}/delete`, {}).catch(e => ({ ok: false, message: e.message }));
+    if (!r.ok) return alert(r.message || '删除失败');
+    if (SEL === key) { SEL = null; await reload(null); return welcome(); }
+    return reload(SEL);
+  }
+  PGSEC = op;
+  select(key);
+}
+addEventListener('keydown', e => { if (e.key === 'Escape') closeMenu(); });
+document.addEventListener('scroll', closeMenu, true);
+addEventListener('resize', closeMenu);
 
 async function main() {
   const me = await fetch('/web/api/me').then(r => r.json()).catch(() => null);
